@@ -8,7 +8,7 @@ app = FastAPI(title="NuNet Local API", version="1.0.0")
 # CORS for Electron
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "app://.", "capacitor://localhost"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

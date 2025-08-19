@@ -1,6 +1,7 @@
 # nunet_api/app/schemas.py
 from dataclasses import Field
 from pydantic import BaseModel
+from pydantic import Field as PydField
 from typing import Optional, List
 
 __all__ = [
@@ -142,9 +143,9 @@ class ConnectedPeer(BaseModel):
     peer_id: str
     did: Optional[str] = None
     context: Optional[str] = None
-    local_addrs: List[str] = Field(default_factory=list)
-    public_addrs: List[str] = Field(default_factory=list)
-    relay_addrs: List[str] = Field(default_factory=list)
+    local_addrs: List[str] = PydField(default_factory=list)
+    public_addrs: List[str] = PydField(default_factory=list)
+    relay_addrs: List[str] = PydField(default_factory=list)
     is_relayed: Optional[bool] = None
 
 class ConnectedPeers(BaseModel):
@@ -154,6 +155,6 @@ class ConnectedPeers(BaseModel):
     raw: Optional[str] = None
 
 class FullStatusCombined(BaseModel):
-    resources: "ResourcesInfo"
-    dms: "DmsStatus"
+    resources: ResourcesInfo
+    dms: DmsStatus
     summary_text: str
