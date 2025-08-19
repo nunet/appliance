@@ -1,0 +1,24 @@
+# Core API stack
+fastapi>=0.110,<0.115
+uvicorn[standard]>=0.29,<0.32
+
+# Pydantic v2 (FastAPI>=0.110 already expects v2)
+pydantic>=2.6,<3.0
+
+# YAML support for reading ensemble files
+PyYAML>=6.0.1,<7.0
+
+# Typing backports (keeps pydantic/fastapi happy on some Python builds)
+typing-extensions>=4.8
+
+
+# pip install -r requirements.txt
+# uvicorn nunet_api.app.main:app --host 127.0.0.1 --port 8081 --reload
+
+
+# /etc/sudoers.d/nunet-api
+# ubuntu ALL=(root) NOPASSWD: /usr/bin/tail
+# ubuntu ALL=(ubuntu) NOPASSWD: /home/ubuntu/menu/scripts/configure-dms.sh
+# ubuntu ALL=(root) NOPASSWD: /home/ubuntu/menu/scripts/onboard-max.sh
+# Optional if you switch to journal:
+# ubuntu ALL=(root) NOPASSWD: /bin/journalctl
