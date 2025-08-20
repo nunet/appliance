@@ -61,17 +61,9 @@ def docker_containers(include_all: bool = Query(False, alias="all", description=
         try:
             obj = json.loads(ln)
             containers.append({
-                "id": obj.get("ID"),
                 "name": obj.get("Names"),
                 "image": obj.get("Image"),
-                "command": obj.get("Command"),
-                "created_at": obj.get("CreatedAt"),
                 "running_for": obj.get("RunningFor"),
-                "state": obj.get("State"),
-                "status": obj.get("Status"),
-                "ports": obj.get("Ports"),
-                "labels": obj.get("Labels"),
-                "networks": obj.get("Networks"),
             })
         except json.JSONDecodeError:
             # We'll fall back to TSV parsing below if nothing parsed

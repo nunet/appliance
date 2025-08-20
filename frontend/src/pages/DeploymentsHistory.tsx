@@ -19,6 +19,8 @@ import DeploymentsTable from "../components/deployments/DeploymentsTable";
 import { Button } from "../components/ui/button";
 
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useTemplates() {
@@ -34,33 +36,7 @@ export function useTemplates() {
 }
 
 export default function Page() {
-  const { data: templates = [], isLoading, isError } = useTemplates();
-  const [selectedTemplate, setSelectedTemplate] = React.useState("");
-  const connectDeployWebSocket = (file, timeout = 60) => {
-    const ws = new WebSocket(
-      `${
-        import.meta.env.VITE_SOCKET_URL
-      }/ensemble/ws/deploy?file=${encodeURIComponent(file)}&timeout=${timeout}`
-    );
-    ws.onopen = () => {
-      console.log("WebSocket connected");
-    };
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        console.log("Message from server:", data);
-      } catch {
-        console.log("Raw message:", event.data);
-      }
-    };
-    ws.onerror = (err) => {
-      console.error("WebSocket error:", err);
-    };
-    ws.onclose = () => {
-      console.log("WebSocket closed");
-    };
-    return ws;
-  };
+  const navigate = useNavigate();
 
   return (
     <div className="flex flex-1 flex-col">
@@ -68,8 +44,18 @@ export default function Page() {
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
           <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-3 lg:px-6 items-start">
             {/* Card 1 → default goes second on small, first on lg */}
-            <Card className="lg:col-span-3 px-3">
-              <CardTitle>Deployments</CardTitle>
+            <Card className="lg:col-span-3 px-3 ">
+              <div className="flex items-center justify-between mb-4">
+                <CardTitle>Deployments</CardTitle>
+                <Button
+                  variant="outline"
+                  className="border-green-500 text-green-500 hover:bg-green-50 hover:text-green-600 flex items-center gap-2"
+                  onClick={() => navigate("/deploy/new")}
+                >
+                  <Plus className="w-4 h-4" />
+                  New Deployment
+                </Button>
+              </div>
               <DeploymentsTable />
             </Card>
           </div>

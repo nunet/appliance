@@ -47,6 +47,8 @@ import { Button } from "./ui/button";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { SectionCardsSkeleton } from "./dashboard/DashboardSkeleton";
+import { CopyButton } from "./ui/CopyButton";
+import { cn } from "../lib/utils";
 
 export function SectionCards() {
   const { data: info, isLoading: load1 } = useQuery({
@@ -93,6 +95,7 @@ export function SectionCards() {
               <CardDescription>DMS:</CardDescription>
               <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl text-wrap break-words">
                 {info.dms_did.slice(-6)}
+                <CopyButton text={info.dms_did.slice(-6)} className={"ml-2"} />
               </CardTitle>
             </CardHeader>
             <CardFooter className="flex-col items-start gap-1.5 text-sm">
@@ -104,7 +107,7 @@ export function SectionCards() {
                     <Button
                       variant="outline"
                       size="icon"
-                      className="h-7 w-7"
+                      className="h-7 w-7 ml-2"
                       onClick={() => handleCopy(info.dms_did, "all")}
                     >
                       {copied === "all" ? (
@@ -133,11 +136,22 @@ export function SectionCards() {
                   <b>Version:</b> <code>{info.dms_version}</code>
                 </p>
                 <p>
-                  <b>Peer ID:</b> <code>{info.dms_peer_id}</code>
+                  <b>Peer ID:</b>{" "}
+                  <code>
+                    {info.dms_peer_id}{" "}
+                    <CopyButton text={info.dms_peer_id} className={"ml-2"} />
+                  </code>
                 </p>
               </div>
               <div className="flex justify-center align-middle border-2 w-full main_board p-2 mt-2">
-                <div className="main_board_info">
+                <div
+                  className={cn(
+                    "main_board_info",
+                    info.dms_status.includes("not")
+                      ? "text-red-500"
+                      : "text-green-500"
+                  )}
+                >
                   <span>
                     {" "}
                     <DownloadCloudIcon className="size-3" />
@@ -148,7 +162,7 @@ export function SectionCards() {
                   className={
                     info.dms_running
                       ? "main_board_info text-green-500"
-                      : "main_board_info text-red-500"
+                      : "main_board_info text-yellow-500"
                   }
                 >
                   <span>
@@ -161,10 +175,23 @@ export function SectionCards() {
                   </span>
                   <span>{info.dms_running ? "Running" : "Not Running"}</span>
                 </div>
-                <div className="main_board_info">
+                <div
+                  className={cn(
+                    "main_board_info",
+                    info.onboarding_status.includes("not") ||
+                      info.onboarding_status.includes("NOT")
+                      ? "text-yellow-500"
+                      : "text-green-500"
+                  )}
+                >
                   {info.onboarding_status.replace(/\x1b\[[0-9;]*m/g, "")}
                 </div>
-                <div className="main_board_info">
+                <div
+                  className={cn(
+                    "main_board_info",
+                    !info.dms_status ? "text-yellow-500" : "text-green-500"
+                  )}
+                >
                   {info.dms_is_relayed ? "Relayed" : "Not Relayed"}
                 </div>
               </div>
@@ -174,10 +201,12 @@ export function SectionCards() {
                   <div className="main_board_info">
                     <span className="font-bold">Public IP</span>
                     <span>{sysinfo?.publicIp}</span>
+                    <CopyButton text={sysinfo?.publicIp} className={"ml-1"} />
                   </div>
                   <div className="main_board_info">
                     <span className="font-bold">Local IP</span>
                     <span>{sysinfo?.localIp}</span>
+                    <CopyButton text={sysinfo?.localIp} className={"ml-1"} />
                   </div>
                   <div className="main_board_info">
                     <span className="font-bold">Appliance Version</span>
@@ -291,60 +320,27 @@ export function SectionCards() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2 xl:grid-cols-3 lg:px-6">
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
+        <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-3 lg:px-6">
+          {/* Card 1 → 1/3 on large screens */}
+          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] lg:col-span-1">
             <CardHeader className="p-0 px-3">
-              <CardDescription className=" flex items-center gap-1 py-1">
-                Local Addresses
+              <CardDescription className="flex items-center gap-1 py-1">
+                Resources Allocated
               </CardDescription>
               <CardTitle className="tabular-nums">
-                <div className="codeBlock mt-2">
-                  {info.local_addrs.length > 0 ? (
-                    info.local_addrs.map((add) => {
-                      return <p className="font-normal ">{add}</p>;
-                    })
-                  ) : (
-                    <p className="font-normal ">No Addresses</p>
-                  )}
-                </div>
+                <div className="codeBlock mt-2">Resources</div>
               </CardTitle>
             </CardHeader>
           </Card>
 
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
+          {/* Card 2 → 2/3 on large screens */}
+          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] lg:col-span-2">
             <CardHeader className="p-0 px-3">
-              <CardDescription className=" flex items-center gap-1 py-1">
-                Public Addresses
+              <CardDescription className="flex items-center gap-1 py-1">
+                Docker
               </CardDescription>
               <CardTitle className="tabular-nums">
-                <div className="codeBlock mt-2">
-                  {info.public_addrs.length > 0 ? (
-                    info.public_addrs.map((add) => {
-                      return <p className="font-normal ">{add}</p>;
-                    })
-                  ) : (
-                    <p className="font-normal ">No Addresses</p>
-                  )}
-                </div>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
-            <CardHeader className="p-0 px-3">
-              <CardDescription className=" flex items-center gap-1 py-1">
-                Relay Addresses
-              </CardDescription>
-              <CardTitle className="tabular-nums">
-                <div className="codeBlock mt-2">
-                  {info.relay_addrs.length > 0 ? (
-                    info.relay_addrs.map((add) => {
-                      return <p className="font-normal ">{add}</p>;
-                    })
-                  ) : (
-                    <p className="font-normal ">No Addresses</p>
-                  )}
-                </div>
+                <div className="codeBlock mt-2">Docker Containers & Images</div>
               </CardTitle>
             </CardHeader>
           </Card>

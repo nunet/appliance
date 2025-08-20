@@ -13,6 +13,15 @@ import DeploymentStepOne from "../components/deployments/DeploymentStep1";
 import DeploymentStepTwo from "../components/deployments/DeploymentStep2";
 import DeploymentStepThree from "../components/deployments/DeploymentStep3";
 import DeploymentStepFour from "../components/deployments/DeploymentStep4";
+import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import {
+  deployFromTemplate,
+  fetchTemplates,
+  type Template,
+} from "../api/deployments";
+
+import { toast } from "sonner";
 
 const steps = [
   { id: 1, title: "Select Ensemble" },
@@ -22,6 +31,7 @@ const steps = [
 ];
 
 export default function NewDeployment() {
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
 
   const nextStep = () => {
@@ -32,9 +42,58 @@ export default function NewDeployment() {
     if (currentStep > 1) setCurrentStep(currentStep - 1);
   };
 
-  const handleSubmit = () => {
-    alert("Form submitted ✅");
+  const handleSubmit = async () => {
+    try {
+      const payload = {
+        template_path: yaml_path,
+        deployment_type,
+        timeout: 60,
+        peer_id: peer_id || "",
+        values: {
+          peer_id: peer_id || "",
+          dns_name: formData.domain || "0.0.0.0", // fallback if empty
+          proxy_port: Number(formData.proxyPort),
+          bird_color: "blue",
+          allocations_alloc1_resources_cpu_cores: Number(formData.cpu),
+          allocations_alloc1_resources_ram_size: Number(formData.ram),
+          allocations_alloc1_resources_disk_size: Number(formData.disk),
+          domain_name: formData.domain || "",
+          private_key: formData.privateKey || "",
+          log_level: formData.logLevel || "info",
+        },
+      };
+
+      const res = await deployFromTemplate(payload);
+      console.log("Deployment response:", res);
+      navigate("/deploy/" + res.deployment_id); // Redirect to the deployment details page
+      toast.success("Deployment started successfully!");
+
+      // you might want to navigate to a "success" screen
+    } catch (err) {
+      console.error("Deployment failed:", err);
+      toast.error("Deployment failed. Please check the console for details.");
+      console.log("Deployment error:", err);
+      // Optionally, you can handle specific error cases here
+    }
   };
+
+  const [template_path, set_template_path] = useState("");
+  const [yaml_path, set_yaml_path] = useState("");
+  const [category, setCategory] = useState("");
+  const [deployment_type, set_deployment_type] = useState("");
+  const [peer_id, set_peer_id] = useState("");
+
+  const [formData, setFormData] = useState({
+    cpu: "",
+    disk: "",
+    ram: "",
+    domain: "",
+    logLevel: "",
+    peerId: "",
+    privateKey: "",
+    proxyPort: "",
+  });
+  const [formValid, setFormValid] = useState(false);
 
   return (
     <div className="flex flex-col items-center justify-center mt-10 px-4 py-1">
@@ -76,23 +135,48 @@ export default function NewDeployment() {
         <CardContent>
           {/* Dummy form inputs for demo */}
           {currentStep === 1 && (
-            <div className="space-y-4">
-              <DeploymentStepOne onNext={() => {}} />
+            <div>
+              <DeploymentStepOne
+                path={template_path}
+                set_yaml_path={set_yaml_path}
+                setter={set_template_path}
+                category={category}
+                setCategory={setCategory}
+              />
             </div>
           )}
           {currentStep === 2 && (
             <div className="space-y-4">
-              <DeploymentStepTwo />
+              <DeploymentStepTwo
+                deployment_type={deployment_type}
+                peer_id={peer_id}
+                set_deployment_type={set_deployment_type}
+                set_peer_id={set_peer_id}
+              />
             </div>
           )}
           {currentStep === 3 && (
             <div className="space-y-4">
-              <DeploymentStepThree />
+              <DeploymentStepThree
+                template={template_path}
+                formData={formData}
+                setFormData={setFormData}
+                formValid={formValid}
+                setFormValid={setFormValid}
+                peer_id={peer_id}
+                deployment_type={deployment_type}
+              />
             </div>
           )}
           {currentStep === 4 && (
             <div className="space-y-4">
-              <DeploymentStepFour />
+              <DeploymentStepFour
+                template_path={template_path}
+                category={category}
+                formData={formData}
+                deployment_type={deployment_type}
+                peer_id={peer_id}
+              />
             </div>
           )}
           <Separator className="mt-7" />
@@ -101,13 +185,24 @@ export default function NewDeployment() {
         <CardFooter className="flex justify-between">
           <Button
             variant="outline"
-            onClick={prevStep}
-            disabled={currentStep === 1}
+            onClick={() =>
+              currentStep === 1 ? navigate("/deploy") : prevStep()
+            }
           >
             Back
           </Button>
           {currentStep < steps.length ? (
-            <Button onClick={nextStep}>Next</Button>
+            <Button
+              onClick={nextStep}
+              disabled={
+                (currentStep === 1 && template_path.length === 0) ||
+                (currentStep === 2 && deployment_type.length === 0) ||
+                (deployment_type === "target" && peer_id.length === 0) ||
+                (currentStep === 3 && !formValid)
+              }
+            >
+              Next
+            </Button>
           ) : (
             <Button onClick={handleSubmit}>Deploy</Button>
           )}

@@ -65,10 +65,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route element={<ProtectedRoutes />}>
               <Route path="*" element={<NotFound />} />
               <Route path="/" element={<App />} />
-              <Route path="/dms" element={<DMS />} />
-              <Route path="/deploy/history" element={<DeploymentsHistory />} />
+              <Route path="/deploy/" element={<DeploymentsHistory />} />
               <Route path="/deploy/new" element={<NewDeployment />} />
               <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
+              <Route path="/appliance/dms" element={<DMS />} />
               <Route path="/ensembles" element={<Ensembles />} />
             </Route>
           </Routes>

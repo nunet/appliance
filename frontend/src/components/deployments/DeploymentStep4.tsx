@@ -1,20 +1,41 @@
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
+import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
+import { fetchTemplates } from "../../api/deployments";
 
-export default function DeploymentStepFour() {
+interface DeploymentStepFourProps {
+  template_path: string; // e.g. an id or path to pick the template
+  category?: string; // optional category for the template
+  formData: {
+    cpu: number;
+    disk: number;
+    ram: number;
+    proxyPort: number;
+  };
+  deployment_type: string;
+  peer_id?: string;
+}
+
+export default function DeploymentStepFour({
+  template_path,
+  formData,
+  deployment_type,
+  peer_id,
+  category,
+}: DeploymentStepFourProps) {
   const summaryItems = [
-    { label: "Ensemble", value: "Floppybird" },
-    { label: "Category", value: "Auki" },
-    { label: "Deployment Type", value: "Local Deployment" },
-    { label: "Target", value: "local appliance" },
-    { label: "CPU Cores", value: "3" },
-    { label: "Disk Size", value: `15 GB` },
-    { label: "RAM Size", value: `13.2 GB` },
-    { label: "Log Level", value: "Debug" },
-    { label: "Peer ID", value: "peer:example:123456789" },
-    { label: "Proxy Port", value: "8080" },
+    { label: "Ensemble", value: template_path },
+    { label: "Category", value: category || "N/A" },
+    { label: "Deployment Type", value: deployment_type },
+    { label: "CPU Cores", value: formData.cpu },
+    { label: "Disk Size", value: `${formData.disk} GB` },
+    { label: "RAM Size", value: `${formData.ram} GB` },
+    { label: "Proxy Port", value: formData.proxyPort },
   ];
+
+  if (deployment_type === "targeted" && peer_id) {
+    summaryItems.push({ label: "Peer ID", value: peer_id });
+  }
 
   return (
     <div className="flex flex-col items-center w-full">

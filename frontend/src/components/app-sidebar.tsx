@@ -42,19 +42,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     {
       title: "Deployments",
       url: "/deploy",
-      icon: IconCloudUpload,
-      items: [
-        {
-          title: "New Deployment",
-          url: "/deploy/new",
-          icon: CopyPlusIcon,
-        },
-        {
-          title: "Deployments History",
-          url: "/deploy/history",
-          icon: IconListDetails,
-        },
-      ],
+      icon: IconCloudUpload,  
     },
     {
       title: "Organizations",
@@ -110,16 +98,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </span>
               </a>
             </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          {/* Switch mode button */}
-          <SidebarMenuItem className="mt-2">
-            <button
-              onClick={switchMode}
-              className="w-full rounded-md bg-white text-gray-900 font-medium py-1.5 px-3 text-sm shadow hover:bg-gray-100 transition"
-            >
-              Switch to {mode === "simple" ? "Advanced" : "Simple"} Mode
-            </button>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

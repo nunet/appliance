@@ -75,3 +75,44 @@ export async function getDeploymentDetails(id: string) {
   ]);
   return { status, manifest, logs, allocations };
 }
+
+export interface TemplatesResponse {
+  root: string;
+  page: number;
+  page_size: number;
+  total: number;
+  category_totals: Record<string, number>;
+  groups: Record<string, Template[]>;
+  items: Template[];
+}
+
+export interface Template {
+  category: string;
+  name: string;
+  stem: string;
+  path: string;
+  yaml_path: string;
+  title: string;
+  description: string;
+  size: number;
+  modified_at: string;
+  schema: any; // could type this more strictly
+}
+
+export async function fetchTemplates(page: number): Promise<TemplatesResponse> {
+  const res = await axios.get<TemplatesResponse>(
+    `${API_BASE}/ensemble/templates/forms?page=${page}&page_size=10&include_schema=true&require_yaml_match=true`
+  );
+  return res.data;
+}
+
+export async function deployFromTemplate(payload: any) {
+  const res = await axios.post(
+    `${API_BASE}/ensemble/deploy/from-template`,
+    payload,
+    {
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+  return res.data;
+}

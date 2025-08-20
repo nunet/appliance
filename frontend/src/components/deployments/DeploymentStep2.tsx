@@ -19,23 +19,20 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { useConnectedPeers } from "../../hooks/getConnectedPeers";
 
-export default function DeploymentStepTwo() {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [selectedPeer, setSelectedPeer] = useState<string | null>(null);
+export default function DeploymentStepTwo({
+  deployment_type,
+  peer_id,
+  set_deployment_type,
+  set_peer_id,
+}) {
   const [search, setSearch] = useState("");
 
-  const peers = [
-    { id: "peer-1" },
-    { id: "peer-3" },
-    { id: "peer-2" },
-    { id: "peer-10" },
-    { id: "peer-20" },
-    { id: "peer-12" },
-  ];
+  const { data: peers = [], isLoading, error } = useConnectedPeers();
 
   const filteredPeers = peers.filter((p) =>
-    p.id.toLowerCase().includes(search.toLowerCase())
+    p.toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -46,13 +43,13 @@ export default function DeploymentStepTwo() {
         {/* Card 1: Deploy locally */}
         <Card
           onClick={() => {
-            setSelected("local");
-            setSelectedPeer("current-peer-id-123");
+            set_deployment_type("local");
+            set_peer_id("");
           }}
           className={cn(
-            "cursor-pointer transition-all duration-500 border-2 relative",
-            selected === "local"
-              ? "bg-gradient-to-r from-green-500/60 to-transparent border-green-500 shadow-md"
+            "cursor-pointer transition-all duration-1000 border-2 relative",
+            deployment_type === "local"
+              ? "bg-gradient-to-br from-blue-500/60 to-transparent border-blue-500 shadow-md"
               : "hover:border-blue-400"
           )}
         >
@@ -62,9 +59,10 @@ export default function DeploymentStepTwo() {
           </CardHeader>
           <CardContent>
             <div className="p-2 rounded-md bg-muted text-xs text-muted-foreground">
-              Current Peer ID:{" "}
               <span className="font-mono">
-                {selected === "local" ? selectedPeer : "Not Selected"}
+                {deployment_type === "local"
+                  ? "Deployed Locally"
+                  : "Not Selected"}
               </span>
             </div>
           </CardContent>
@@ -72,12 +70,12 @@ export default function DeploymentStepTwo() {
 
         {/* Card 2: Target deployment */}
         <Card
-          onClick={() => setSelected("target")}
+          onClick={() => set_deployment_type("targeted")}
           className={cn(
-            "cursor-pointer transition-all duration-500 border-2 relative",
-            selected === "target"
-              ? "bg-gradient-to-r from-green-500/60 to-transparent border-green-500 shadow-md"
-              : "hover:border-blue-400"
+            "cursor-pointer transition-all duration-1000 border-2 relative",
+            deployment_type === "targeted"
+              ? "bg-gradient-to-br from-yellow-500/60 to-transparent border-yellow-500 shadow-md"
+              : "hover:border-yellow-400"
           )}
         >
           <CardHeader>
@@ -113,13 +111,15 @@ export default function DeploymentStepTwo() {
                 <TableBody>
                   {filteredPeers.map((peer) => (
                     <TableRow
-                      key={peer.id}
+                      key={peer}
                       className="cursor-pointer"
-                      onClick={() => setSelectedPeer(peer.id)}
+                      onClick={() => set_peer_id(peer)}
                     >
-                      <TableCell className="font-mono">{peer.id}</TableCell>
+                      <TableCell className="font-mono">
+                        <span title={peer}>{"..." + peer.slice(-9)}</span>
+                      </TableCell>
                       <TableCell className="text-center">
-                        {selectedPeer === peer.id ? (
+                        {peer_id === peer ? (
                           <span className="text-blue-600 font-bold text-lg">
                             ●
                           </span>
@@ -139,25 +139,24 @@ export default function DeploymentStepTwo() {
             <div className="mt-3 p-2 rounded-md bg-muted text-xs text-muted-foreground">
               Selected Peer ID:{" "}
               <span className="font-mono">
-                {selected === "target" && selectedPeer
-                  ? selectedPeer
+                {deployment_type === "targeted" && peer_id
+                  ? "..." + peer_id.slice(-9)
                   : "Not Selected"}
               </span>
             </div>
           </CardContent>
         </Card>
 
-        {/* Card 3: Non-targeted deployment */}
         <Card
           onClick={() => {
-            setSelected("non-target");
-            setSelectedPeer(null);
+            set_deployment_type("non_targeted");
+            set_peer_id("");
           }}
           className={cn(
-            "cursor-pointer transition-all duration-500 border-2 relative",
-            selected === "non-target"
-              ? "bg-gradient-to-r from-green-500/60 to-transparent border-green-500 shadow-md"
-              : "hover:border-blue-400"
+            "cursor-pointer transition-all duration-1000 border-2 relative",
+            deployment_type === "non_targeted"
+              ? "bg-gradient-to-br from-pink-500/60 to-transparent border-pink-500 shadow-md"
+              : "hover:border-pink-400"
           )}
         >
           <CardHeader>
@@ -166,9 +165,10 @@ export default function DeploymentStepTwo() {
           </CardHeader>
           <CardContent>
             <div className="p-2 rounded-md bg-muted text-xs text-muted-foreground">
-              Selection:{" "}
               <span className="font-mono">
-                {selected === "non-target" ? "Network decides" : "Not Selected"}
+                {deployment_type === "non_targeted"
+                  ? "Network decides"
+                  : "Not Selected"}
               </span>
             </div>
           </CardContent>

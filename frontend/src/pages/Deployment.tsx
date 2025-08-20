@@ -83,7 +83,7 @@ export default function DeploymentDetailsPage() {
         </p>
         <Button
           variant="outline"
-          onClick={() => navigate("/deploy/history")}
+          onClick={() => navigate("/deploy")}
           className="flex items-center gap-2"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -105,7 +105,7 @@ export default function DeploymentDetailsPage() {
           <CardHeader>
             <Button
               variant="outline"
-              onClick={() => navigate("/deploy/history")}
+              onClick={() => navigate("/deploy")}
               className="my-2"
             >
               <ArrowLeft className="h-4 w-4" />

@@ -5,21 +5,11 @@ import { DataTable } from "../components/data-table";
 import { SectionCards } from "../components/section-cards";
 import { SiteHeader } from "../components/site-header";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
-
-import data from "./data.json";
-import { getSelfPeers, type PeerInfo } from "../api/api";
+import { useConnectedPeers } from "../hooks/getConnectedPeers";
+import { Separator } from "../components/ui/separator";
 
 export default function Page() {
-  const [peerIds, setPeerIds] = useState<any>([]);
-
-  const getPeers = async () => {
-    const peers = await getSelfPeers();
-    setPeerIds(peers);
-  };
-
-  useEffect(() => {
-    getPeers();
-  }, []);
+  const { data: peers = [], isLoading, error } = useConnectedPeers();
 
   return (
     <div className="flex flex-1 flex-col">
@@ -29,7 +19,8 @@ export default function Page() {
           {/* <div className="px-4 lg:px-6">
                 <ChartAreaInteractive />
               </div> */}
-          <DataTable data={data} />
+          
+          <DataTable ids={peers} />
         </div>
       </div>
     </div>

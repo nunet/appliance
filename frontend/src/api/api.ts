@@ -142,3 +142,35 @@ export const allSysInfo = () => {
     sshStatus,
   }));
 }
+
+export async function getConnectedPeers(): Promise<string[]> {
+  try {
+    const res = await api.get("/dms/peers/connected");
+
+    // The backend gives a "raw" string with line breaks and indentation
+    const raw = res.data?.raw || "";
+
+    // Extract peer IDs safely
+    const peers = raw
+      .split("\n") // break into lines
+      .map(line => line.trim()) // trim spaces
+      .filter(
+        line =>
+          line.length > 0 && // remove empty
+          !line.startsWith("{") && // remove { or JSON braces
+          !line.startsWith("}") &&
+          !line.startsWith('"Peers"') &&
+          !line.includes("[") &&
+          !line.includes("]") &&
+          !line.includes(":")
+      )
+      .map(line =>
+        line.replace(/["',]/g, "") // remove quotes and commas
+      );
+
+    return peers;
+  } catch (err) {
+    console.error("Failed to fetch connected peers:", err);
+    return [];
+  }
+}
