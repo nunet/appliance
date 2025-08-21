@@ -1,26 +1,50 @@
-import { useEffect, useState } from "react";
-import { AppSidebar } from "../components/app-sidebar";
-// import { ChartAreaInteractive } from "../components/chart-area-interactive";
-import { DataTable } from "../components/data-table";
-import { SectionCards } from "../components/section-cards";
-import { SiteHeader } from "../components/site-header";
-import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";
-import { useConnectedPeers } from "../hooks/getConnectedPeers";
-import { Separator } from "../components/ui/separator";
+import { useEffect } from "react";
+import { SectionCards } from "../components/dashboard/section-cards";
+import { getConnectedPeers } from "../api/api";
+import { useQuery } from "@tanstack/react-query";
+import { PeersList } from "../components/dashboard/PeersList";
+import { Card } from "../components/ui/card";
 
 export default function Page() {
-  const { data: peers = [], isLoading, error } = useConnectedPeers();
+  const {
+    data: peers = [],
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ["connected-peers-main"],
+    queryFn: getConnectedPeers,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    staleTime: 0,
+    retry: 1,
+  });
+
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
 
   return (
     <div className="flex flex-1 flex-col">
       <div className="container/main flex flex-1 flex-col gap-2">
         <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
           <SectionCards />
-          {/* <div className="px-4 lg:px-6">
-                <ChartAreaInteractive />
-              </div> */}
-          
-          <DataTable ids={peers} />
+          {isLoading && (
+            <div className="grid grid-cols-1 gap-4 px-4">
+              <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words p-2">
+                <p>Loading peers...</p>
+              </Card>
+            </div>
+          )}
+          {error && (
+            <div className="grid grid-cols-1 gap-4 px-4">
+              <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words p-2">
+                <p className="text-red-500">Error loading peers</p>
+              </Card>
+            </div>
+          )}
+          {!isLoading && !error && <PeersList peers={peers} />}
         </div>
       </div>
     </div>

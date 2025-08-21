@@ -113,20 +113,31 @@ export const getApplianceVersion = () =>
 export const getSshStatus = () =>
   api.get<SshStatus>("/sys/ssh-status").then((res) => res.data);
 
+export const getDockerContainer = () =>
+  api
+    .get<{
+      count: number;
+      containers: {
+        id: string;
+        name: string;
+        image: string;
+        running_for: string;
+      }[];
+    }>("/sys/docker/containers")
+    .then((res) => res.data);
+
 // ==== HEALTH ====
 export const getHealth = () =>
   api.get<{ ok: boolean }>("/health").then((res) => res.data);
 
 export const allInfo = () => {
-  return Promise.all([
-    getDmsStatus(),
-    getDmsFullStatus(),
-    getSelfPeers(),
-  ]).then(([status, fullStats, peerData]) => ({
-    ...status,
-    ...fullStats,
-    ...peerData,
-  }));
+  return Promise.all([getDmsStatus(), getDmsFullStatus(), getSelfPeers()]).then(
+    ([status, fullStats, peerData]) => ({
+      ...status,
+      ...fullStats,
+      ...peerData,
+    })
+  );
 };
 
 export const allSysInfo = () => {
@@ -135,13 +146,15 @@ export const allSysInfo = () => {
     getPublicIp(),
     getApplianceVersion(),
     getSshStatus(),
-  ]).then(([localIp, publicIp, applianceVersion, sshStatus]) => ({
+    getDockerContainer(),
+  ]).then(([localIp, publicIp, applianceVersion, sshStatus, docker]) => ({
     localIp,
     publicIp,
     applianceVersion,
     sshStatus,
+    docker,
   }));
-}
+};
 
 export async function getConnectedPeers(): Promise<string[]> {
   try {
@@ -153,9 +166,9 @@ export async function getConnectedPeers(): Promise<string[]> {
     // Extract peer IDs safely
     const peers = raw
       .split("\n") // break into lines
-      .map(line => line.trim()) // trim spaces
+      .map((line) => line.trim()) // trim spaces
       .filter(
-        line =>
+        (line) =>
           line.length > 0 && // remove empty
           !line.startsWith("{") && // remove { or JSON braces
           !line.startsWith("}") &&
@@ -164,8 +177,8 @@ export async function getConnectedPeers(): Promise<string[]> {
           !line.includes("]") &&
           !line.includes(":")
       )
-      .map(line =>
-        line.replace(/["',]/g, "") // remove quotes and commas
+      .map(
+        (line) => line.replace(/["',]/g, "") // remove quotes and commas
       );
 
     return peers;

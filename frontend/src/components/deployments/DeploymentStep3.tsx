@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,6 @@ interface Props {
   setFormData: React.Dispatch<React.SetStateAction<Record<string, any>>>;
   formValid: boolean;
   setFormValid: (valid: boolean) => void;
-  peer_id: string;
   deployment_type: string;
 }
 
@@ -35,16 +34,7 @@ type FieldSpec = {
   max?: number;
   step?: number;
   options?: Array<{ value: string; label: string }>;
-};
-
-const FIELD_MAP: Record<string, keyof Props["formData"]> = {
-  domain_name: "domain",
-  proxy_port: "proxyPort",
-  private_key: "privateKey",
-  log_level: "logLevel",
-  allocations_alloc1_resources_cpu_cores: "cpu",
-  allocations_alloc1_resources_ram_size: "ram",
-  allocations_alloc1_resources_disk_size: "disk",
+  category?: string;
 };
 
 export default function DeploymentStepThree({
@@ -53,11 +43,10 @@ export default function DeploymentStepThree({
   setFormData,
   formValid,
   setFormValid,
-  peer_id,
   deployment_type,
 }: Props) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["templates-forms-page-1"],
+    queryKey: ["templates-forms"],
     queryFn: () => fetchTemplates(1),
   });
 
@@ -68,182 +57,174 @@ export default function DeploymentStepThree({
 
   const fields = (tpl?.schema?.fields ?? {}) as Record<string, FieldSpec>;
 
-  // apply defaults
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // Initialize formData with defaults
   useEffect(() => {
     if (!tpl) return;
     const next: Record<string, any> = {};
-    for (const [apiKey, spec] of Object.entries(fields)) {
-      const localKey = FIELD_MAP[apiKey];
-      if (!localKey) continue;
-      const hasValue =
-        formData[localKey] !== undefined && formData[localKey] !== "";
-      if (!hasValue && spec.default !== undefined) {
-        next[localKey] = spec.default;
+    for (const [key, spec] of Object.entries(fields)) {
+      if (key === "peer_id") continue;
+      if (formData[key] === undefined || formData[key] === "") {
+        next[key] = spec.default ?? "";
       }
     }
     if (Object.keys(next).length) {
       setFormData((prev) => ({ ...prev, ...next }));
     }
-  }, [tpl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tpl]);
 
-  // validation
+  // Dynamic validation
   useEffect(() => {
     if (!tpl) return;
+
+    const nextErrors: Record<string, string> = {};
     let valid = true;
 
     const checkNumber = (val: any, min?: number, max?: number) => {
-      const num = Number(val);
-      if (Number.isNaN(num)) return false;
-      if (min !== undefined && num < min) return false;
-      if (max !== undefined && num > max) return false;
+      const n = Number(val);
+      if (Number.isNaN(n)) return false;
+      if (min !== undefined && n < min) return false;
+      if (max !== undefined && n > max) return false;
       return true;
     };
 
-    for (const [apiKey, spec] of Object.entries(fields)) {
-      const localKey = FIELD_MAP[apiKey];
-      if (!localKey) continue;
+    for (const [key, spec] of Object.entries(fields)) {
+      if (key === "peer_id") continue;
+      const val = formData[key];
 
-      // skip peer_id unless targeted
-      if (apiKey === "peer_id" && deployment_type !== "targeted") continue;
-
-      const val = formData[localKey];
-
-      if (spec.required) {
-        if (val === undefined || val === null || `${val}`.trim() === "") {
-          valid = false;
-          break;
-        }
+      if (spec.required && (!val || `${val}`.trim() === "")) {
+        nextErrors[key] = "This field is required.";
+        valid = false;
+        continue;
       }
 
-      if (spec.type === "number") {
-        if (!checkNumber(val, spec.min, spec.max)) {
-          valid = false;
-          break;
-        }
+      if (spec.type === "number" && !checkNumber(val, spec.min, spec.max)) {
+        nextErrors[key] = `Value must be between ${spec.min ?? "-"} and ${
+          spec.max ?? "-"
+        }`;
+        valid = false;
+        continue;
       }
 
-      if (apiKey === "proxy_port" && val !== undefined && val !== "") {
+      if (key === "proxy_port" && val) {
         const n = Number(val);
         if (!Number.isInteger(n) || n < 1 || n > 65535) {
+          nextErrors[key] = "Port must be an integer between 1-65535";
           valid = false;
-          break;
+          continue;
         }
       }
+
+      if (!nextErrors[key]) nextErrors[key] = "";
     }
 
+    setFieldErrors(nextErrors);
     setFormValid(valid);
-  }, [formData, tpl, deployment_type]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [formData, tpl, deployment_type]);
 
-  const handleChange = (field: keyof Props["formData"], value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+  const handleChange = (key: string, value: any) => {
+    setFormData((prev) => ({ ...prev, [key]: value }));
   };
 
-  const resetToDefault = (field: keyof Props["formData"]) => {
-    const entry = Object.entries(FIELD_MAP).find(([, v]) => v === field);
-    const apiKey = entry?.[0];
-    if (apiKey) {
-      const spec = fields[apiKey];
-      if (spec && spec.default !== undefined) {
-        setFormData((prev) => ({ ...prev, [field]: spec.default }));
-      }
+  const resetToDefault = (key: string) => {
+    const spec = fields[key];
+    if (spec?.default !== undefined) {
+      setFormData((prev) => ({ ...prev, [key]: spec.default }));
     }
   };
 
-  if (!template)
-    return <p className="text-muted-foreground">Select a template first.</p>;
-  if (isLoading) return <p>Loading schema...</p>;
-  if (isError) return <p>Error loading templates.</p>;
-  if (!tpl) return <p>No template found for path: {template}</p>;
-
-  const specByLocal = (localKey: keyof Props["formData"]) => {
-    const entry = Object.entries(FIELD_MAP).find(([, v]) => v === localKey);
-    const apiKey = entry?.[0];
-    return apiKey ? fields[apiKey] : undefined;
-  };
-
-  const renderField = (
-    localKey: keyof Props["formData"],
-    readonly?: boolean,
-    externalValue?: string
-  ) => {
-    const spec = specByLocal(localKey);
+  const renderField = (key: string) => {
+    if (key === "peer_id") return null;
+    const spec = fields[key];
     if (!spec) return null;
+    const val = formData[key] ?? "";
+    const error = fieldErrors[key];
 
-    const val = externalValue ?? formData[localKey] ?? "";
+    // Custom select using Shadcn style
+    if (spec.type === "select" && spec.options) {
+      return (
+        <div className="grid gap-1 my-2" key={key}>
+          <Label>{spec.label || key}</Label>
+          <select
+            className={`px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              error ? "border-red-500" : "border-gray-600"
+            } bg-gray-800 text-white`}
+            value={val}
+            onChange={(e) => handleChange(key, e.target.value)}
+          >
+            {spec.options.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+      );
+    }
 
+    // Text / Number field
     return (
-      <div className="grid gap-2 my-3">
-        <Label htmlFor={localKey}>{spec.label ?? localKey}</Label>
+      <div className="grid gap-1 my-2" key={key}>
+        <Label>{spec.label || key}</Label>
         <div className="flex items-center gap-2">
           <Input
-            id={localKey}
             type={spec.type === "number" ? "number" : "text"}
             value={val}
             placeholder={spec.placeholder}
-            min={spec.min as number | undefined}
-            max={spec.max as number | undefined}
-            step={spec.step as number | undefined}
-            readOnly={readonly}
-            onChange={(e) =>
-              !readonly && handleChange(localKey, e.target.value)
-            }
+            min={spec.min}
+            max={spec.max}
+            step={spec.step}
+            onChange={(e) => handleChange(key, e.target.value)}
+            className={error ? "border-red-500" : ""}
           />
-          {!readonly && (
-            <Button
-              variant="outline"
-              size="sm"
-              type="button"
-              onClick={() => resetToDefault(localKey)}
-            >
-              Reset
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => resetToDefault(key)}
+          >
+            Reset
+          </Button>
         </div>
-        {spec.min !== undefined && spec.max !== undefined && (
-          <p className="text-xs text-muted-foreground">
-            Min: {spec.min}, Max: {spec.max}
-          </p>
-        )}
+        {error && <p className="text-xs text-red-500">{error}</p>}
       </div>
     );
   };
 
+  if (!template)
+    return <p className="text-muted-foreground">Select a template first.</p>;
+  if (isLoading) return <p>Loading template schema...</p>;
+  if (isError) return <p>Error loading templates</p>;
+  if (!tpl) return <p>No template found for path: {template}</p>;
+
+  // Use category to filter resources
+  const resourceFields = Object.keys(fields).filter(
+    (k) => fields[k].category === "resources"
+  );
+  const otherFields = Object.keys(fields).filter(
+    (k) => fields[k].category !== "resources"
+  );
+
   return (
-    <div className="flex flex-col items-center w-full">
-      <h2 className="text-2xl font-semibold mb-6">Configure</h2>
-      <Separator className="mb-6" />
+    <div className="flex flex-col w-full max-w-3xl mx-auto">
+      <h2 className="text-xl font-semibold mb-4">{tpl.schema.name}</h2>
+      <Separator className="mb-4" />
 
-      <div className="grid gap-6 w-full max-w-3xl">
-        <Collapsible defaultOpen={false}>
-          <CollapsibleTrigger className="flex items-center justify-between bg-muted px-4 py-2 rounded-md cursor-pointer w-full mb-4">
-            <span className="font-medium">Resource Configuration</span>
-            <ChevronDown className="w-4 h-4 transition-transform data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2 grid gap-2">
-            {renderField("cpu")}
-            {renderField("disk")}
-            {renderField("ram")}
-          </CollapsibleContent>
-        </Collapsible>
+      {/* Resource fields */}
+      <Collapsible>
+        <CollapsibleTrigger className="flex justify-between bg-muted px-4 py-2 rounded-md cursor-pointer mb-4 w-full">
+          <span className="font-medium">Resources</span>
+          <ChevronDown className="w-4 h-4 transition-transform data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="grid gap-2">
+          {resourceFields.map(renderField)}
+        </CollapsibleContent>
+      </Collapsible>
+      <Separator className="mb-4" />
 
-        <Separator className="my-4" />
-
-        {renderField("domain")}
-        {renderField("logLevel")}
-
-        {/* Peer ID only if targeted */}
-        {deployment_type === "targeted" &&
-          renderField("peerId" as keyof Props["formData"], true, peer_id)}
-
-        {renderField("privateKey")}
-        {renderField("proxyPort")}
-
-        {!formValid && (
-          <p className="text-sm text-red-600">
-            Some fields are invalid or missing. Please review the constraints.
-          </p>
-        )}
-      </div>
+      {/* Other fields */}
+      {otherFields.map(renderField)}
     </div>
   );
 }

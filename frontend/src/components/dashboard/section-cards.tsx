@@ -1,7 +1,7 @@
 "use client";
 
 import { IconTrendingDown, IconTrendingUp } from "@tabler/icons-react";
-import { Badge } from "../components/ui/badge";
+import { Badge } from "../ui/badge";
 import {
   Card,
   CardAction,
@@ -10,7 +10,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "../components/ui/card";
+} from "../ui/card";
 import { useEffect, useState } from "react";
 import {
   allInfo,
@@ -23,7 +23,7 @@ import {
   restartDms,
   stopDms,
   updateDms,
-} from "../api/api";
+} from "../../api/api";
 import {
   Check,
   Circle,
@@ -42,13 +42,20 @@ import {
   Wrench,
   XIcon,
 } from "lucide-react";
-import { Separator } from "@radix-ui/react-separator";
-import { Button } from "./ui/button";
+import { Separator } from "../ui/separator";
+import { Button } from "../ui/button";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
-import { SectionCardsSkeleton } from "./dashboard/DashboardSkeleton";
-import { CopyButton } from "./ui/CopyButton";
-import { cn } from "../lib/utils";
+import { SectionCardsSkeleton } from "./DashboardSkeleton";
+import { CopyButton } from "../ui/CopyButton";
+import { cn } from "../../lib/utils";
+
+type DockerContainer = {
+  id: string;
+  name: string;
+  image: string;
+  running_for: string;
+};
 
 export function SectionCards() {
   const { data: info, isLoading: load1 } = useQuery({
@@ -94,15 +101,23 @@ export function SectionCards() {
             <CardHeader>
               <CardDescription>DMS:</CardDescription>
               <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl text-wrap break-words">
-                {info.dms_did.slice(-6)}
-                <CopyButton text={info.dms_did.slice(-6)} className={"ml-2"} />
+                {info.dms_peer_id.slice(-6)}
+                <CopyButton
+                  text={info.dms_peer_id.slice(-6)}
+                  className={"ml-2"}
+                />
               </CardTitle>
             </CardHeader>
             <CardFooter className="flex-col items-start gap-1.5 text-sm">
-              <div className="text-muted-foreground">
+              <div className="text-muted-foreground w-full">
                 <p className="flex items-center gap-2 flex-wrap">
                   <b>DID Key:</b>
-                  <code className="text-sm">{info.dms_did}</code>
+                  <code
+                    className="text-sm  truncate max-w-[250px]"
+                    title={info.dms_did}
+                  >
+                    {info.dms_did}
+                  </code>
                   <div className="flex gap-1">
                     <Button
                       variant="outline"
@@ -135,96 +150,121 @@ export function SectionCards() {
                 <p>
                   <b>Version:</b> <code>{info.dms_version}</code>
                 </p>
-                <p>
+                <p className="flex items-center gap-2 w-full">
                   <b>Peer ID:</b>{" "}
-                  <code>
+                  <code
+                    className="truncate max-w-[250px]"
+                    title={info.dms_peer_id}
+                  >
                     {info.dms_peer_id}{" "}
-                    <CopyButton text={info.dms_peer_id} className={"ml-2"} />
                   </code>
+                  <CopyButton text={info.dms_peer_id} className={"ml-2"} />
                 </p>
               </div>
-              <div className="flex justify-center align-middle border-2 w-full main_board p-2 mt-2">
-                <div
-                  className={cn(
-                    "main_board_info",
-                    info.dms_status.includes("not")
-                      ? "text-red-500"
-                      : "text-green-500"
-                  )}
-                >
-                  <span>
-                    {" "}
-                    <DownloadCloudIcon className="size-3" />
-                  </span>
-                  <span>{info.dms_status}</span>
-                </div>
-                <div
-                  className={
-                    info.dms_running
-                      ? "main_board_info text-green-500"
-                      : "main_board_info text-yellow-500"
-                  }
-                >
-                  <span>
-                    {" "}
-                    {info.dms_running ? (
-                      <LoaderPinwheelIcon className="size-3" />
-                    ) : (
-                      <XIcon className="size-3" />
+              <div className="w-full mt-2 flex flex-col lg:flex-row gap-4 items-start">
+                {/* Left column */}
+                <div className="flex-1 flex flex-col border-2 p-2 gap-2 main_board flex-grow-1 w-full">
+                  <h2 className="font-bold text-sm lg:text-lg my-2">Status:</h2>
+                  <Separator />
+                  <div
+                    className={cn(
+                      "main_board_info",
+                      info.dms_status.includes("not")
+                        ? "text-red-500"
+                        : "text-green-500"
                     )}
-                  </span>
-                  <span>{info.dms_running ? "Running" : "Not Running"}</span>
-                </div>
-                <div
-                  className={cn(
-                    "main_board_info",
-                    info.onboarding_status.includes("not") ||
-                      info.onboarding_status.includes("NOT")
-                      ? "text-yellow-500"
-                      : "text-green-500"
-                  )}
-                >
-                  {info.onboarding_status.replace(/\x1b\[[0-9;]*m/g, "")}
-                </div>
-                <div
-                  className={cn(
-                    "main_board_info",
-                    !info.dms_status ? "text-yellow-500" : "text-green-500"
-                  )}
-                >
-                  {info.dms_is_relayed ? "Relayed" : "Not Relayed"}
-                </div>
-              </div>
-
-              {!load2 && (
-                <div className="flex justify-center align-middle border-2 w-full main_board p-2 mt-2">
-                  <div className="main_board_info">
-                    <span className="font-bold">Public IP</span>
-                    <span>{sysinfo?.publicIp}</span>
-                    <CopyButton text={sysinfo?.publicIp} className={"ml-1"} />
-                  </div>
-                  <div className="main_board_info">
-                    <span className="font-bold">Local IP</span>
-                    <span>{sysinfo?.localIp}</span>
-                    <CopyButton text={sysinfo?.localIp} className={"ml-1"} />
-                  </div>
-                  <div className="main_board_info">
-                    <span className="font-bold">Appliance Version</span>
-                    <span>{sysinfo?.applianceVersion}</span>
-                  </div>
-                  <div className="main_board_info">
-                    <span className="font-bold">SSH</span>
+                  >
                     <span>
-                      {sysinfo?.sshStatus.running ? "Running" : "Not Running"}
+                      <DownloadCloudIcon className="size-3" />
                     </span>
+                    <span>{info.dms_status}</span>
                   </div>
-                  <div className="main_board_info">
-                    <span className="font-bold">
-                      {sysinfo?.sshStatus.authorized_keys} SSH Authorized Keys
+                  <div
+                    className={
+                      info.dms_running
+                        ? "main_board_info text-green-500"
+                        : "main_board_info text-yellow-500"
+                    }
+                  >
+                    <span>
+                      {info.dms_running ? (
+                        <LoaderPinwheelIcon className="size-3" />
+                      ) : (
+                        <XIcon className="size-3" />
+                      )}
                     </span>
+                    <span>{info.dms_running ? "Running" : "Not Running"}</span>
+                  </div>
+                  <div
+                    className={cn(
+                      "main_board_info",
+                      info.onboarding_status.includes("not") ||
+                        info.onboarding_status.includes("NOT")
+                        ? "text-yellow-500"
+                        : "text-green-500"
+                    )}
+                  >
+                    {info.onboarding_status.replace(/\x1b\[[0-9;]*m/g, "")}
+                  </div>
+                  <div
+                    className={cn(
+                      "main_board_info",
+                      !info.dms_status ? "text-yellow-500" : "text-green-500"
+                    )}
+                  >
+                    {info.dms_is_relayed ? "Relayed" : "Not Relayed"}
                   </div>
                 </div>
-              )}
+
+                {/* Right column */}
+                {!load2 && (
+                  <div className="flex-1 flex flex-col border-2 p-2 gap-2 main_board flex-grow-1 w-full">
+                    <div className="flex main_board_info">
+                      <span className="font-bold">Public IP</span>
+                      <div className="flex items-center gap-1">
+                        <span className="truncate max-w-[120px]">
+                          {sysinfo?.publicIp}
+                        </span>
+                        <CopyButton
+                          text={sysinfo?.publicIp}
+                          className={undefined}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex main_board_info">
+                      <span className="font-bold">Local IP</span>
+                      <div className="flex items-center gap-1">
+                        <span className="truncate max-w-[120px]">
+                          {sysinfo?.localIp}
+                        </span>
+                        <CopyButton
+                          text={sysinfo?.localIp}
+                          className={undefined}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex main_board_info">
+                      <span className="font-bold">Appliance Version</span>
+                      <span>{sysinfo?.applianceVersion}</span>
+                    </div>
+
+                    <div className="flex main_board_info">
+                      <span className="font-bold">SSH</span>
+                      <span>
+                        {sysinfo?.sshStatus.running ? "Running" : "Not Running"}
+                      </span>
+                    </div>
+
+                    <div className="flex main_board_info">
+                      <span className="font-bold">
+                        {sysinfo?.sshStatus.authorized_keys} SSH Authorized Keys
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </CardFooter>
           </Card>
         </div>
@@ -320,29 +360,45 @@ export function SectionCards() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-3 lg:px-6">
-          {/* Card 1 → 1/3 on large screens */}
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] lg:col-span-1">
+        <div className="grid grid-cols-1 gap-4 px-4">
+          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
             <CardHeader className="p-0 px-3">
-              <CardDescription className="flex items-center gap-1 py-1">
-                Resources Allocated
-              </CardDescription>
-              <CardTitle className="tabular-nums">
-                <div className="codeBlock mt-2">Resources</div>
-              </CardTitle>
-            </CardHeader>
-          </Card>
-
-          {/* Card 2 → 2/3 on large screens */}
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] lg:col-span-2">
-            <CardHeader className="p-0 px-3">
-              <CardDescription className="flex items-center gap-1 py-1">
+              <CardDescription className="flex items-center gap-2 py-1">
                 Docker
-              </CardDescription>
-              <CardTitle className="tabular-nums">
-                <div className="codeBlock mt-2">Docker Containers & Images</div>
-              </CardTitle>
+                <Badge className="bg-blue-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/40">
+                  {sysinfo?.docker.count} containers
+                </Badge>
+              </CardDescription>{" "}
             </CardHeader>
+
+            <CardContent className="mt-4">
+              <div className="grid gap-3">
+                {sysinfo?.docker.containers.length === 0 && (
+                  <div className="text-center text-muted-foreground">
+                    No Docker containers found.
+                  </div>
+                )}
+                {sysinfo?.docker.containers.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex flex-col md:flex-row md:items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-muted/30"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-sm truncate">{c.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        <span className="font-bold">Image:</span> {c.image}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 mt-2 md:mt-0">
+                      <Badge variant="outline" className="text-xs">
+                        {c.running_for}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
           </Card>
         </div>
       </>

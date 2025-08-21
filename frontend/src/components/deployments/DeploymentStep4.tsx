@@ -1,20 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { fetchTemplates } from "../../api/deployments";
 
 interface DeploymentStepFourProps {
-  template_path: string; // e.g. an id or path to pick the template
-  category?: string; // optional category for the template
-  formData: {
-    cpu: number;
-    disk: number;
-    ram: number;
-    proxyPort: number;
-  };
+  template_path: string; // e.g., an id or path to pick the template
+  category?: string;
+  formData: Record<string, any>; // dynamic formData
   deployment_type: string;
   peer_id?: string;
 }
+
+// Utility to make camelCase or snake_case keys readable
+const formatLabel = (key: string) => {
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2") // camelCase -> spaces
+    .replace(/\b\w/g, (l) => l.toUpperCase()); // capitalize
+};
 
 export default function DeploymentStepFour({
   template_path,
@@ -23,18 +24,20 @@ export default function DeploymentStepFour({
   peer_id,
   category,
 }: DeploymentStepFourProps) {
+  // Build summary items dynamically
   const summaryItems = [
     { label: "Ensemble", value: template_path },
     { label: "Category", value: category || "N/A" },
     { label: "Deployment Type", value: deployment_type },
-    { label: "CPU Cores", value: formData.cpu },
-    { label: "Disk Size", value: `${formData.disk} GB` },
-    { label: "RAM Size", value: `${formData.ram} GB` },
-    { label: "Proxy Port", value: formData.proxyPort },
+    ...Object.entries(formData).map(([key, value]) => ({
+      label: formatLabel(key),
+      value,
+    })),
   ];
 
+  // Add peer_id if deployment_type is targeted
   if (deployment_type === "targeted" && peer_id) {
-    summaryItems.push({ label: "Peer ID", value: peer_id });
+    summaryItems.push({ label: "Peer ID", value: "..." + peer_id.slice(-6) });
   }
 
   return (

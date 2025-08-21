@@ -176,19 +176,13 @@ html {
 }
 
 .main_board_info {
-  flex-grow: 1;
-  text-align: center;
+  margin: 0.5rem 0;
+  text-align: left;
   display: flex;
-  justify-content: center;
   align-items: center;
   gap: 4px;
 }
 
-@media (max-width: 640px) {
-  .main_board_info {
-    flex-direction: column;
-  }
-}
 
 .codeBlock {
   font-family: monospace;

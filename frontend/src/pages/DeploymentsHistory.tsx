@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { AppSidebar } from "../components/app-sidebar";
 // import { ChartAreaInteractive } from "../components/chart-area-interactive";
 import { DataTable } from "../components/data-table";
-import { SectionCards } from "../components/section-cards";
+import { SectionCards } from "../components/dashboard/section-cards";
 import { SiteHeader } from "../components/site-header";
 import { Card, CardFooter, CardTitle } from "../components/ui/card";
 import { SidebarInset, SidebarProvider } from "../components/ui/sidebar";

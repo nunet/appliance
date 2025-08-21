@@ -14,14 +14,8 @@ import DeploymentStepTwo from "../components/deployments/DeploymentStep2";
 import DeploymentStepThree from "../components/deployments/DeploymentStep3";
 import DeploymentStepFour from "../components/deployments/DeploymentStep4";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import {
-  deployFromTemplate,
-  fetchTemplates,
-  type Template,
-} from "../api/deployments";
-
 import { toast } from "sonner";
+import { deployFromTemplate } from "../api/deployments";
 
 const steps = [
   { id: 1, title: "Select Ensemble" },
@@ -34,6 +28,15 @@ export default function NewDeployment() {
   const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
 
+  const [templatePath, setTemplatePath] = useState("");
+  const [yamlPath, setYamlPath] = useState("");
+  const [category, setCategory] = useState("");
+  const [deploymentType, setDeploymentType] = useState("");
+  const [peerId, setPeerId] = useState("");
+
+  const [formData, setFormData] = useState<Record<string, any>>({});
+  const [formValid, setFormValid] = useState(false);
+
   const nextStep = () => {
     if (currentStep < steps.length) setCurrentStep(currentStep + 1);
   };
@@ -44,60 +47,30 @@ export default function NewDeployment() {
 
   const handleSubmit = async () => {
     try {
+      // Merge general info into formData dynamically
       const payload = {
-        template_path: yaml_path,
-        deployment_type,
+        template_path: yamlPath,
+        deployment_type: deploymentType,
         timeout: 60,
-        peer_id: peer_id || "",
+        peer_id: peerId || "",
         values: {
-          peer_id: peer_id || "",
-          dns_name: formData.domain || "0.0.0.0", // fallback if empty
-          proxy_port: Number(formData.proxyPort),
-          bird_color: "blue",
-          allocations_alloc1_resources_cpu_cores: Number(formData.cpu),
-          allocations_alloc1_resources_ram_size: Number(formData.ram),
-          allocations_alloc1_resources_disk_size: Number(formData.disk),
-          domain_name: formData.domain || "",
-          private_key: formData.privateKey || "",
-          log_level: formData.logLevel || "info",
+          ...formData,
+          peer_id: peerId || "",
         },
       };
 
       const res = await deployFromTemplate(payload);
       console.log("Deployment response:", res);
-      navigate("/deploy/" + res.deployment_id); // Redirect to the deployment details page
+      navigate("/deploy/" + res.deployment_id);
       toast.success("Deployment started successfully!");
-
-      // you might want to navigate to a "success" screen
     } catch (err) {
       console.error("Deployment failed:", err);
-      toast.error("Deployment failed. Please check the console for details.");
-      console.log("Deployment error:", err);
-      // Optionally, you can handle specific error cases here
+      toast.error("Deployment failed. Check console for details.");
     }
   };
 
-  const [template_path, set_template_path] = useState("");
-  const [yaml_path, set_yaml_path] = useState("");
-  const [category, setCategory] = useState("");
-  const [deployment_type, set_deployment_type] = useState("");
-  const [peer_id, set_peer_id] = useState("");
-
-  const [formData, setFormData] = useState({
-    cpu: "",
-    disk: "",
-    ram: "",
-    domain: "",
-    logLevel: "",
-    peerId: "",
-    privateKey: "",
-    proxyPort: "",
-  });
-  const [formValid, setFormValid] = useState(false);
-
   return (
     <div className="flex flex-col items-center justify-center mt-10 px-4 py-1">
-      {/* Title */}
       <h1 className="text-2xl font-bold mb-8 text-center">
         Deploy a New Ensemble
       </h1>
@@ -133,56 +106,46 @@ export default function NewDeployment() {
           <CardTitle>{steps[currentStep - 1].title}</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Dummy form inputs for demo */}
           {currentStep === 1 && (
-            <div>
-              <DeploymentStepOne
-                path={template_path}
-                set_yaml_path={set_yaml_path}
-                setter={set_template_path}
-                category={category}
-                setCategory={setCategory}
-              />
-            </div>
+            <DeploymentStepOne
+              path={templatePath}
+              set_yaml_path={setYamlPath}
+              setter={setTemplatePath}
+              category={category}
+              setCategory={setCategory}
+            />
           )}
           {currentStep === 2 && (
-            <div className="space-y-4">
-              <DeploymentStepTwo
-                deployment_type={deployment_type}
-                peer_id={peer_id}
-                set_deployment_type={set_deployment_type}
-                set_peer_id={set_peer_id}
-              />
-            </div>
+            <DeploymentStepTwo
+              deployment_type={deploymentType}
+              peer_id={peerId}
+              set_deployment_type={setDeploymentType}
+              set_peer_id={setPeerId}
+            />
           )}
           {currentStep === 3 && (
-            <div className="space-y-4">
-              <DeploymentStepThree
-                template={template_path}
-                formData={formData}
-                setFormData={setFormData}
-                formValid={formValid}
-                setFormValid={setFormValid}
-                peer_id={peer_id}
-                deployment_type={deployment_type}
-              />
-            </div>
+            <DeploymentStepThree
+              template={templatePath}
+              formData={formData}
+              setFormData={setFormData}
+              formValid={formValid}
+              setFormValid={setFormValid}
+              deployment_type={deploymentType}
+            />
           )}
           {currentStep === 4 && (
-            <div className="space-y-4">
-              <DeploymentStepFour
-                template_path={template_path}
-                category={category}
-                formData={formData}
-                deployment_type={deployment_type}
-                peer_id={peer_id}
-              />
-            </div>
+            <DeploymentStepFour
+              template_path={templatePath}
+              category={category}
+              formData={formData}
+              deployment_type={deploymentType}
+              peer_id={peerId}
+            />
           )}
-          <Separator className="mt-7" />
+          <Separator className="my-7" />
         </CardContent>
 
-        <CardFooter className="flex justify-between">
+        <CardFooter className="flex justify-between mt-4">
           <Button
             variant="outline"
             onClick={() =>
@@ -195,16 +158,18 @@ export default function NewDeployment() {
             <Button
               onClick={nextStep}
               disabled={
-                (currentStep === 1 && template_path.length === 0) ||
-                (currentStep === 2 && deployment_type.length === 0) ||
-                (deployment_type === "target" && peer_id.length === 0) ||
+                (currentStep === 1 && !templatePath) ||
+                (currentStep === 2 && !deploymentType) ||
+                (deploymentType === "targeted" && !peerId) ||
                 (currentStep === 3 && !formValid)
               }
             >
               Next
             </Button>
           ) : (
-            <Button onClick={handleSubmit}>Deploy</Button>
+            <Button onClick={handleSubmit} disabled={!formValid}>
+              Deploy
+            </Button>
           )}
         </CardFooter>
       </Card>

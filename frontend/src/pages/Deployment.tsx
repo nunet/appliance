@@ -1,19 +1,19 @@
 "use client";
 
-import { useNavigate, useParams } from "react-router-dom"; // if Next.js, use `useParams` from next/navigation
+import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { getDeployments, getDeploymentDetails } from "@/api/deployments";
+import {
+  getDeployments,
+  getDeploymentDetails,
+  getDeploymentManifest,
+  shutdownDeployment,
+} from "@/api/deployments";
 import {
   ArrowLeft,
-  Badge,
-  Check,
   CheckCircle,
-  Download,
-  DownloadCloudIcon,
-  LoaderPinwheelIcon,
   Repeat2Icon,
   XCircleIcon,
-  XIcon,
+  Download,
 } from "lucide-react";
 import {
   Card,
@@ -22,13 +22,13 @@ import {
   CardTitle,
   CardFooter,
   CardAction,
+  CardContent,
 } from "../components/ui/card";
-import { IconTrendingUp } from "@tabler/icons-react";
 import { Separator } from "../components/ui/separator";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
-import { shutdownDeployment } from "../api/deployments";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
+import { CopyButton } from "../components/ui/CopyButton";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -37,9 +37,7 @@ export default function DeploymentDetailsPage() {
   const handleShutdown = async (deploymentId: string) => {
     try {
       const res = await shutdownDeployment(deploymentId);
-      toast.success(res.status, {
-        description: res.message,
-      });
+      toast.success(res.status, { description: res.message });
     } catch (error: any) {
       toast.error("Shutdown Failed", {
         description:
@@ -47,24 +45,31 @@ export default function DeploymentDetailsPage() {
       });
     }
   };
-  // 1. Fetch all deployments
+
   const { data: deploymentsData, isLoading: isLoadingDeployments } = useQuery({
     queryKey: ["deployments"],
     queryFn: getDeployments,
-    refetchInterval: 1000 * 10, // auto-refresh every 10s
+    refetchOnMount: "always",
+    refetchInterval: 10000,
   });
 
-  // 2. Check if ID exists in deployments array
   const deployment = deploymentsData?.deployments?.find((d) => d.id === id);
 
-  // 3. If deployment exists, fetch details in parallel
   const { data: details, isLoading: isLoadingDetails } = useQuery({
     queryKey: ["deployment-details", id],
     queryFn: () => getDeploymentDetails(id!),
-    enabled: !!deployment, // only fetch if deployment exists
+    enabled: !!deployment,
+    refetchOnMount: "always",
   });
 
+  // const { data: manifestData, isLoading: isLoadingManifest } = useQuery({
+  //   queryKey: ["deployment-manifest", id],
+  //   queryFn: () => getDeploymentManifest(id!),
+  //   enabled: !!deployment,
+  // });
+
   const handleDownload = () => {
+    if (!details?.logs?.message) return;
     const blob = new Blob([details.logs.message], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -74,7 +79,8 @@ export default function DeploymentDetailsPage() {
     URL.revokeObjectURL(url);
   };
 
-  if (isLoadingDeployments) return <DeploymentDetailsSkeleton />;
+  if (isLoadingDeployments || isLoadingDetails)
+    return <DeploymentDetailsSkeleton />;
   if (!deployment)
     return (
       <div className="flex flex-col items-center justify-center mt-20 text-center">
@@ -86,35 +92,33 @@ export default function DeploymentDetailsPage() {
           onClick={() => navigate("/deploy")}
           className="flex items-center gap-2"
         >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Deployments
+          <ArrowLeft className="h-4 w-4" /> Back to Deployments
         </Button>
       </div>
     );
-  if (isLoadingDetails) return <DeploymentDetailsSkeleton />;
 
-  const lines = details.logs?.message ? details.logs.message.split("\n") : [];
-  const manifest = details.manifest?.message
-    ? details.manifest.message.split("\n")
-    : [];
+  const lines = details.logs?.message?.split("\n") || [];
+  const manifest = details || null;
 
   return (
     <>
+      {/* Deployment Info */}
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
-          <CardHeader>
+          <CardHeader className="w-full flex flex-col gap-2">
             <Button
               variant="outline"
               onClick={() => navigate("/deploy")}
-              className="my-2"
+              className="flex-1 sm:flex-none w-full sm:w-auto flex items-center gap-2"
             >
-              <ArrowLeft className="h-4 w-4" />
-              Back to Deployments
+              <ArrowLeft className="h-4 w-4" /> Back to Deployments
             </Button>
-            <CardDescription>Deployment Details: </CardDescription>
-            <CardTitle className=" font-semibold tabular-nums @[250px]/card:text-xl text-wrap break-words">
-              {deployment.id}
-            </CardTitle>
+            <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
+              <CardTitle className="font-semibold tabular-nums truncate max-w-[300px] sm:overflow-visible sm:whitespace-normal sm:max-w-full break-words min-w-0">
+                <span title={deployment.id}>{deployment.id}</span>
+              </CardTitle>
+              <CopyButton text={deployment.id} className={""} />
+            </div>
           </CardHeader>
           <CardFooter className="flex-col items-start gap-1.5 text-sm">
             <div className="text-muted-foreground">
@@ -131,15 +135,19 @@ export default function DeploymentDetailsPage() {
                 <b>Ensemble File:</b> <code>{deployment.ensemble_file}</code>
               </p>
             </div>
-            <Button
-              onClick={() => handleShutdown(deployment.id)}
-              className="w-full lg:w-4/5 mx-auto block bg-red-500 hover:bg-red-600 text-white mt-3"
-            >
-              Shut Down Deployment
-            </Button>
+            {details.status.status === "running" && (
+              <Button
+                onClick={() => handleShutdown(deployment.id)}
+                className="w-full lg:w-4/5 mx-auto block bg-red-500 hover:bg-red-600 text-white mt-3"
+              >
+                Shut Down Deployment
+              </Button>
+            )}
           </CardFooter>
         </Card>
       </div>
+
+      {/* Deployment Progress + Allocations */}
       <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-3 xl:grid-cols-3 lg:px-6 my-4">
         <Card className="@container/card lg:col-span-1">
           <CardHeader>
@@ -174,6 +182,7 @@ export default function DeploymentDetailsPage() {
             </div>
           </CardFooter>
         </Card>
+
         <Card className="@container/card lg:col-span-2">
           <CardHeader>
             <CardDescription>Allocations</CardDescription>
@@ -197,6 +206,7 @@ export default function DeploymentDetailsPage() {
         </Card>
       </div>
 
+      {/* Manifest */}
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
           <CardHeader>
@@ -204,23 +214,140 @@ export default function DeploymentDetailsPage() {
               <CardDescription>Deployment Manifest</CardDescription>
             </div>
             <Separator className="my-2" />
-            {manifest.length > 0 ? (
-              <div className="bg-black text-white font-mono text-sm rounded-md p-3 h-64 overflow-y-auto shadow-inner">
-                {manifest.map((line, idx) => (
-                  <div key={idx} className="whitespace-pre-wrap">
-                    {line}
-                  </div>
-                ))}
+            {isLoadingDeployments ? (
+              <p className="text-center py-10">Loading Manifest...</p>
+            ) : manifest && Object.keys(manifest).length > 0 ? (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                {/* Deployment Info */}
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                  <CardTitle className="text-sm font-semibold">
+                    Deployment Info
+                  </CardTitle>
+                  <CardContent className="font-mono text-xs">
+                    <div>
+                      <b>ID:</b> {manifest.manifest.id || "N/A"}
+                    </div>
+                    <div>
+                      <b>Subnet:</b> {JSON.stringify(manifest.manifest.subnet)}
+                    </div>
+                    {manifest.manifest.contracts && (
+                      <div>
+                        <b>Contracts:</b>{" "}
+                        {JSON.stringify(manifest.manifest.contracts)}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Orchestrator */}
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                  <CardTitle className="text-sm font-semibold">
+                    Orchestrator
+                  </CardTitle>
+                  <CardContent className="font-mono text-xs">
+                    <div>
+                      <b>Pub:</b>{" "}
+                      {manifest.manifest.orchestrator?.id?.pub || "N/A"}
+                    </div>
+                    <div>
+                      <b>DID:</b>{" "}
+                      {manifest.manifest.orchestrator?.did?.uri || "N/A"}
+                    </div>
+                    <div>
+                      <b>Host:</b>{" "}
+                      {manifest.manifest.orchestrator?.addr?.host || "N/A"}
+                    </div>
+                    <div>
+                      <b>Inbox:</b>{" "}
+                      {manifest.manifest.orchestrator?.addr?.inbox || "N/A"}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Allocations */}
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                  <CardTitle className="text-sm font-semibold">
+                    Allocations
+                  </CardTitle>
+                  <CardContent className="font-mono text-xs max-h-48 overflow-y-auto">
+                    {manifest.manifest.allocations ? (
+                      Object.entries(manifest.manifest.allocations).map(
+                        ([key, alloc]: any) => (
+                          <div
+                            key={key}
+                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-1"
+                          >
+                            <div>
+                              <b>ID:</b> {alloc.id}
+                            </div>
+                            <div>
+                              <b>Type:</b> {alloc.type}
+                            </div>
+                            <div>
+                              <b>DNS:</b> {alloc.dns_name}
+                            </div>
+                            <div>
+                              <b>Status:</b> {alloc.status}
+                            </div>
+                            <div>
+                              <b>Node ID:</b> {alloc.node_id || "N/A"}
+                            </div>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-muted-foreground text-center">
+                        No Allocations
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Nodes */}
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner lg:col-span-2">
+                  <CardTitle className="text-sm font-semibold">Nodes</CardTitle>
+                  <CardContent className="font-mono text-xs max-h-48 overflow-y-auto">
+                    {manifest.manifest.nodes ? (
+                      Object.entries(manifest.manifest.nodes).map(
+                        ([key, node]: any) => (
+                          <div
+                            key={key}
+                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-1"
+                          >
+                            <div>
+                              <b>ID:</b> {node.id}
+                            </div>
+                            <div>
+                              <b>Peer:</b> {node.peer}
+                            </div>
+                            <div>
+                              <b>Allocations:</b>{" "}
+                              {node.allocations?.join(", ") || "N/A"}
+                            </div>
+                            <div>
+                              <b>Location:</b> {JSON.stringify(node.location)}
+                            </div>
+                          </div>
+                        )
+                      )
+                    ) : (
+                      <p className="text-muted-foreground text-center">
+                        No Nodes
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
             ) : (
-              <p className="text-muted-foreground text-center">
-                No Manifest found.
+              <p className="text-muted-foreground text-center py-10">
+                No manifest available
               </p>
             )}
           </CardHeader>
         </Card>
       </div>
 
+      {/* Logs */}
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
           <CardHeader>
@@ -232,8 +359,7 @@ export default function DeploymentDetailsPage() {
                 onClick={handleDownload}
                 className="flex items-center gap-1"
               >
-                <Download className="w-4 h-4" />
-                Download
+                <Download className="w-4 h-4" /> Download
               </Button>
             </div>
             <Separator className="my-2" />
