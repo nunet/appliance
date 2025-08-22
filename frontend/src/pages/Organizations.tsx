@@ -16,7 +16,7 @@ export default function OrganizationOnboardingPage() {
   const statusQuery = useQuery<StatusResponse>({
     queryKey: ["org-status"],
     queryFn: api.getStatus,
-    refetchInterval: 1000,
+    refetchInterval: 3000,
   });
 
   const status = statusQuery.data;

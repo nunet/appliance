@@ -9,6 +9,11 @@ export const api = {
     return data;
   },
 
+  async getJoinedOrgs(): Promise<Record<string, any>> {
+    const { data } = await axios.get(`${API_BASE}/organizations/joined`);
+    return data;
+  },
+
   async postSelectOrg(org_did: string) {
     const { data } = await axios.post(`${API_BASE}/organizations/select`, {
       org_did,
@@ -22,7 +27,6 @@ export const api = {
     email: string;
     location?: string;
     discord?: string;
-    wormhole?: string;
   }) {
     const { data } = await axios.post(
       `${API_BASE}/organizations/join/submit`,
@@ -46,6 +50,13 @@ export const api = {
 
   async poll() {
     const { data } = await axios.get(`${API_BASE}/organizations/join/poll`);
+    return data;
+  },
+
+  async reset() {
+    const { data } = await axios.post(
+      `${API_BASE}/organizations/onboarding/reset`
+    );
     return data;
   },
 };

@@ -14,6 +14,8 @@ import { JoinForm } from "./JoinForm";
 import { OrgSelect } from "./OrgSelect";
 import { Stepper } from "./Stepper";
 import { StatusBanner } from "./StatusBanner";
+import { restartDms } from "../../api/api";
+import { toast } from "sonner";
 
 export function OnboardingFlow({
   status,
@@ -32,18 +34,18 @@ export function OnboardingFlow({
   const isRejected = currentStep === "rejected";
   const isComplete = currentStep === "complete";
 
-  // --- poll every 5s only if we're in email_sent step ---
+  // --- poll every 3s only if we're in join_data_sent step ---
   useQuery({
     queryKey: ["email-poll"],
-    queryFn: () => api.poll(), // <-- implement api.poll hitting /poll
-    refetchInterval: 5000,
-    enabled: currentStep === "join_data_sent", // only active at this step
+    queryFn: () => api.poll(),
+    refetchInterval: 3000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+    enabled: currentStep === "join_data_sent",
     onSuccess: () => {
-      // force refresh org-status after every poll
       qc.invalidateQueries({ queryKey: ["org-status"] });
     },
   });
-  // react-query automatically stops polling once enabled=false (when step changes)
 
   const selectMutation = useMutation({
     mutationFn: (org_did: string) => api.postSelectOrg(org_did),
@@ -60,22 +62,50 @@ export function OnboardingFlow({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
 
+  // Trigger finalize step only once after approval
+  useEffect(() => {
+    if (
+      isApproved &&
+      !finalizeMutation.isPending &&
+      !finalizeMutation.isSuccess
+    ) {
+      finalizeMutation.mutate();
+    }
+  }, [
+    isApproved,
+    finalizeMutation.isPending,
+    finalizeMutation.isSuccess,
+    finalizeMutation.mutate,
+  ]);
+
+  // --- UI flags ---
   const showSelect = currentStep === "init" || currentStep === "select_org";
   const showForm =
     currentStep === "collect_join_data" || currentStep === "submit_data";
 
+  // ✅ Fix 1: only show final "All Set" card if backend says complete
+  // AND finalize mutation has finished successfully
+  const showComplete = isComplete && finalizeMutation.isSuccess;
+
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="py-4">
-          <Stepper
-            steps={stepStates}
-            currentIndex={currentIndex}
-            currentStep={currentStep}
-          />
-        </CardContent>
-      </Card>
-      <StatusBanner status={status} />
+      {currentStep !== "init" && currentStep !== "select_org" && (
+        <>
+          <div className="text-muted-foreground text-sm mb-2">
+            Joining {status?.raw?.org_data?.name ?? "organization"}
+          </div>
+          <Card>
+            <CardContent className="py-4">
+              <Stepper
+                steps={stepStates}
+                currentIndex={currentIndex}
+                currentStep={currentStep}
+              />
+            </CardContent>
+          </Card>
+          <StatusBanner status={status} />
+        </>
+      )}
 
       {showSelect && (
         <OrgSelect
@@ -94,7 +124,7 @@ export function OnboardingFlow({
         />
       )}
 
-      {!showSelect && !showForm && !isComplete && !isRejected && (
+      {!showSelect && !showForm && !showComplete && !isRejected && (
         <Card>
           <CardHeader>
             <CardTitle>Next Steps</CardTitle>
@@ -105,21 +135,17 @@ export function OnboardingFlow({
             </div>
           </CardContent>
           <CardFooter>
-            <Button
-              className="flex-1"
-              disabled={!isApproved || finalizeMutation.isPending}
-              onClick={() => finalizeMutation.mutate()}
-            >
+            <Button className="flex-1 cursor-not-allowed" disabled>
               {finalizeMutation.isPending && (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               )}
-              {isApproved ? "Finalize" : "Waiting for approval"}
+              Waiting for approval...
             </Button>
           </CardFooter>
         </Card>
       )}
 
-      {isComplete && (
+      {showComplete && (
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -129,6 +155,17 @@ export function OnboardingFlow({
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Onboarding is complete.
+            <Button
+              className="w-full bg-white text-black border border-gray-300 hover:bg-gray-50 mt-3"
+              onClick={() => {
+                restartDms().then(() => {
+                  toast.success("DMS is restarting");
+                  qc.invalidateQueries({ queryKey: ["org-status"] });
+                });
+              }}
+            >
+              Restart DMS
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -149,7 +186,13 @@ export function OnboardingFlow({
           <CardFooter>
             <Button
               className="w-full"
-              onClick={() => qc.invalidateQueries({ queryKey: ["org-status"] })}
+              onClick={() => {
+                api
+                  .reset()
+                  .then(() =>
+                    qc.invalidateQueries({ queryKey: ["org-status"] })
+                  );
+              }}
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Retry

@@ -22,18 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-// eslint-disable-next-line react-refresh/only-export-components
-export function useTemplates() {
-  return useQuery({
-    queryKey: ["templates"],
-    queryFn: async () => {
-      const response = await getTemplates();
-      return response.items;
-    },
-    staleTime: Infinity, // data never considered stale
-    gcTime: Infinity, // keep cached forever (formerly cacheTime)
-  });
-}
+
 
 export default function Page() {
   const navigate = useNavigate();

@@ -16,6 +16,7 @@ import DeploymentStepFour from "../components/deployments/DeploymentStep4";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { deployFromTemplate } from "../api/deployments";
+import { useQueryClient } from "@tanstack/react-query"; // ⬅️ import this
 
 const steps = [
   { id: 1, title: "Select Ensemble" },
@@ -26,6 +27,7 @@ const steps = [
 
 export default function NewDeployment() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient(); // ⬅️ get client
   const [currentStep, setCurrentStep] = useState(1);
 
   const [templatePath, setTemplatePath] = useState("");
@@ -47,7 +49,6 @@ export default function NewDeployment() {
 
   const handleSubmit = async () => {
     try {
-      // Merge general info into formData dynamically
       const payload = {
         template_path: yamlPath,
         deployment_type: deploymentType,
@@ -60,8 +61,13 @@ export default function NewDeployment() {
       };
 
       const res = await deployFromTemplate(payload);
+
+      // ✅ Invalidate deployments list after success
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+
       console.log("Deployment response:", res);
-      navigate("/deploy/" + res.deployment_id);
+      // navigate("/deploy/" + res.deployment_id);
+      navigate("/deploy");
       toast.success("Deployment started successfully!");
     } catch (err) {
       console.error("Deployment failed:", err);
@@ -76,7 +82,7 @@ export default function NewDeployment() {
       </h1>
 
       {/* Timeline */}
-      <div className="flex items-center justify-center space-x-8 mb-10">
+      <div className="flex items-center justify-center space-x-8 mb-10 flex-wrap">
         {steps.map((step, index) => {
           const isCompleted = index + 1 < currentStep;
           const isActive = index + 1 === currentStep;
@@ -94,7 +100,8 @@ export default function NewDeployment() {
               >
                 {step.id}
               </div>
-              <span>{step.title}</span>
+              {/* ⬇️ hide text on small screens */}
+              <span className="hidden md:inline">{step.title}</span>
             </div>
           );
         })}

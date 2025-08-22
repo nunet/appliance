@@ -25,7 +25,6 @@ export function JoinForm({
 }) {
   const [formData, setFormData] = useState<Record<string, string>>({
     name: "",
-    wormhole: "",
     why_join: "provide", // default
   });
 
@@ -74,14 +73,6 @@ export function JoinForm({
               className={field.type === "text" ? "md:col-span-2" : ""}
             />
           ))}
-
-          {/* Optional wormhole field */}
-          <Input
-            className="md:col-span-2"
-            value={formData["wormhole"] ?? ""}
-            onChange={(e) => handleChange("wormhole", e.target.value)}
-            placeholder="Wormhole code"
-          />
         </div>
 
         {/* Why Join - radio group */}
@@ -111,7 +102,19 @@ export function JoinForm({
         <Button
           className="w-full"
           disabled={!canSubmit || submitting}
-          onClick={() => onSubmit(formData)}
+          onClick={() => {
+            const payload: Record<string, string> = { ...formData };
+            // Ensure all dynamic fields exist in payload
+            fields.forEach((field: any) => {
+              console.log(field.name, payload[field.name]);
+              console.log("Payload", payload);
+              if (!(field.name in payload)) {
+                payload[field.name] = "";
+              }
+            });
+            payload["wormhole"] = "";
+            onSubmit(payload);
+          }}
         >
           {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Submit

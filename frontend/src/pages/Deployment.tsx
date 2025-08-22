@@ -105,13 +105,13 @@ export default function DeploymentDetailsPage() {
     );
 
   const lines = details.logs?.message?.split("\n") || [];
-  const manifest = details || null;
+  const manifest = details?.manifest || null;
 
   return (
     <>
       {/* Deployment Info */}
-      <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
+      <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full">
           <CardHeader className="w-full flex flex-col gap-2">
             <Button
               variant="outline"
@@ -142,7 +142,7 @@ export default function DeploymentDetailsPage() {
                 <b>Ensemble File:</b> <code>{deployment.ensemble_file}</code>
               </p>
             </div>
-            {details.status.status === "running" && (
+            {details.status.deployment_status === "running" && (
               <Button
                 onClick={() => handleShutdown(deployment.id)}
                 className="w-full lg:w-4/5 mx-auto block bg-red-500 hover:bg-red-600 text-white mt-3"
@@ -162,9 +162,9 @@ export default function DeploymentDetailsPage() {
             <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
               <span
                 className={
-                  details.status.status === "success"
+                  details.status.deployment_status === "completed"
                     ? "text-green-500"
-                    : details.status.status === "running"
+                    : details.status.deployment_status === "running"
                     ? "text-blue-500"
                     : "text-red-500"
                 }
@@ -214,90 +214,137 @@ export default function DeploymentDetailsPage() {
       </div>
 
       {/* Manifest */}
-      <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
+      <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] break-words w-full">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardDescription>Deployment Manifest</CardDescription>
             </div>
             <Separator className="my-2" />
+
             {isLoadingDeployments ? (
               <p className="text-center py-10">Loading Manifest...</p>
             ) : manifest && Object.keys(manifest).length > 0 ? (
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="flex flex-col gap-4 w-full">
                 {/* Deployment Info */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
                   <CardTitle className="text-sm font-semibold">
                     Deployment Info
                   </CardTitle>
-                  <CardContent className="font-mono text-xs">
-                    <div>
-                      <b>ID:</b> {manifest.manifest.id || "N/A"}
+                  <CardContent className="font-mono text-xs space-y-2 overflow-x-auto">
+                    <div className="flex items-center gap-2">
+                      <b>ID:</b>
+                      <span
+                        className="truncate max-w-[200px] sm:max-w-full"
+                        title={manifest.manifest.id || "N/A"}
+                      >
+                        {manifest.manifest.id || "N/A"}
+                      </span>
+                      <CopyButton text={manifest.manifest.id || ""} />
                     </div>
                     <div>
-                      <b>Subnet:</b> {JSON.stringify(manifest.manifest.subnet)}
+                      <b>Subnet:</b>
+                      <pre className="whitespace-pre-wrap break-all">
+                        {JSON.stringify(manifest.manifest.subnet, null, 2)}
+                      </pre>
                     </div>
                     {manifest.manifest.contracts && (
                       <div>
-                        <b>Contracts:</b>{" "}
-                        {JSON.stringify(manifest.manifest.contracts)}
+                        <b>Contracts:</b>
+                        <pre className="whitespace-pre-wrap break-all">
+                          {JSON.stringify(manifest.manifest.contracts, null, 2)}
+                        </pre>
                       </div>
                     )}
                   </CardContent>
                 </Card>
 
                 {/* Orchestrator */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
                   <CardTitle className="text-sm font-semibold">
                     Orchestrator
                   </CardTitle>
-                  <CardContent className="font-mono text-xs">
-                    <div>
-                      <b>Pub:</b>{" "}
-                      {manifest.manifest.orchestrator?.id?.pub || "N/A"}
-                    </div>
-                    <div>
-                      <b>DID:</b>{" "}
-                      {manifest.manifest.orchestrator?.did?.uri || "N/A"}
-                    </div>
-                    <div>
-                      <b>Host:</b>{" "}
-                      {manifest.manifest.orchestrator?.addr?.host || "N/A"}
-                    </div>
-                    <div>
-                      <b>Inbox:</b>{" "}
-                      {manifest.manifest.orchestrator?.addr?.inbox || "N/A"}
-                    </div>
+                  <CardContent className="font-mono text-xs space-y-2 overflow-x-auto">
+                    {["pub", "did?.uri", "addr?.host", "addr?.inbox"].map(
+                      (field, i) => {
+                        const label = ["Pub", "DID", "Host", "Inbox"][i];
+                        const value =
+                          field === "pub"
+                            ? manifest.manifest.orchestrator?.id?.pub
+                            : field === "did?.uri"
+                            ? manifest.manifest.orchestrator?.did?.uri
+                            : field === "addr?.host"
+                            ? manifest.manifest.orchestrator?.addr?.host
+                            : manifest.manifest.orchestrator?.addr?.inbox;
+
+                        return (
+                          <div
+                            key={label}
+                            className="flex items-center gap-2 my-2"
+                          >
+                            <b>{label}:</b>
+                            <span
+                              className="truncate max-w-[200px] sm:max-w-full"
+                              title={value || "N/A"}
+                            >
+                              {value || "N/A"}
+                            </span>
+                            <CopyButton text={value || ""} />
+                          </div>
+                        );
+                      }
+                    )}
                   </CardContent>
                 </Card>
 
                 {/* Allocations */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner">
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
                   <CardTitle className="text-sm font-semibold">
                     Allocations
                   </CardTitle>
-                  <CardContent className="font-mono text-xs max-h-48 overflow-y-auto">
+                  <CardContent className="font-mono text-xs space-y-2 max-h-64 overflow-y-auto">
                     {manifest.manifest.allocations ? (
                       Object.entries(manifest.manifest.allocations).map(
                         ([key, alloc]: any) => (
                           <div
                             key={key}
-                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-1"
+                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-2"
                           >
-                            <div>
-                              <b>ID:</b> {alloc.id}
+                            <div className="flex items-center gap-2">
+                              <b>ID:</b>
+                              <span
+                                className="truncate max-w-[200px] sm:max-w-full"
+                                title={alloc.id}
+                              >
+                                {alloc.id}
+                              </span>
+                              <CopyButton text={alloc.id || ""} />
                             </div>
                             <div>
                               <b>Type:</b> {alloc.type}
                             </div>
-                            <div>
-                              <b>DNS:</b> {alloc.dns_name}
+                            <div className="flex items-center gap-2">
+                              <b>DNS:</b>
+                              <span
+                                className="truncate max-w-[200px] sm:max-w-full"
+                                title={alloc.dns_name}
+                              >
+                                {alloc.dns_name}
+                              </span>
+                              <CopyButton text={alloc.dns_name || ""} />
                             </div>
                             <div>
                               <b>Status:</b> {alloc.status}
                             </div>
-                            <div>
-                              <b>Node ID:</b> {alloc.node_id || "N/A"}
+                            <div className="flex items-center gap-2">
+                              <b>Node ID:</b>
+                              <span
+                                className="truncate max-w-[200px] sm:max-w-full"
+                                title={alloc.node_id || "N/A"}
+                              >
+                                {alloc.node_id || "N/A"}
+                              </span>
+                              <CopyButton text={alloc.node_id || ""} />
                             </div>
                           </div>
                         )
@@ -311,18 +358,25 @@ export default function DeploymentDetailsPage() {
                 </Card>
 
                 {/* Nodes */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner lg:col-span-2">
+                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
                   <CardTitle className="text-sm font-semibold">Nodes</CardTitle>
-                  <CardContent className="font-mono text-xs max-h-48 overflow-y-auto">
+                  <CardContent className="font-mono text-xs space-y-2 max-h-64 overflow-y-auto">
                     {manifest.manifest.nodes ? (
                       Object.entries(manifest.manifest.nodes).map(
                         ([key, node]: any) => (
                           <div
                             key={key}
-                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-1"
+                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-2"
                           >
-                            <div>
-                              <b>ID:</b> {node.id}
+                            <div className="flex items-center gap-2">
+                              <b>ID:</b>
+                              <span
+                                className="truncate max-w-[200px] sm:max-w-full"
+                                title={node.id}
+                              >
+                                {node.id}
+                              </span>
+                              <CopyButton text={node.id || ""} />
                             </div>
                             <div>
                               <b>Peer:</b> {node.peer}
@@ -332,7 +386,10 @@ export default function DeploymentDetailsPage() {
                               {node.allocations?.join(", ") || "N/A"}
                             </div>
                             <div>
-                              <b>Location:</b> {JSON.stringify(node.location)}
+                              <b>Location:</b>
+                              <pre className="whitespace-pre-wrap break-all">
+                                {JSON.stringify(node.location, null, 2)}
+                              </pre>
                             </div>
                           </div>
                         )

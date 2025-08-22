@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { CheckCircle2, XCircle } from "lucide-react";
 import type { StepState } from "../../components/organizations/OnboardFlow";
 
@@ -11,6 +12,33 @@ export function Stepper({
   currentIndex: number;
   currentStep: "complete" | "rejected" | string; // currentStep controls last one
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const stepRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Scroll into view whenever the index changes
+  useEffect(() => {
+    const container = containerRef.current;
+    const el = stepRefs.current[currentIndex];
+    if (!container || !el) return;
+
+    const containerWidth = container.clientWidth;
+    const elCenter = el.offsetLeft + el.offsetWidth / 2;
+
+    // desired scroll so that elCenter is in middle of container
+    let targetScrollLeft = elCenter - containerWidth / 2;
+
+    // clamp so we never overscroll beyond first or last
+    targetScrollLeft = Math.max(
+      0,
+      Math.min(targetScrollLeft, container.scrollWidth - containerWidth)
+    );
+
+    container.scrollTo({
+      left: targetScrollLeft,
+      behavior: "smooth",
+    });
+  }, [currentIndex]);
+
   // filter out rejected or complete depending on currentStep
   const filteredSteps = steps.filter((s) => {
     if (currentStep === "complete" && s.id === "rejected") return false;
@@ -19,10 +47,9 @@ export function Stepper({
   });
 
   return (
-    <div className="w-full overflow-x-auto py-4">
+    <div ref={containerRef} className="w-full overflow-x-auto py-4">
       <div className="flex items-center gap-4 min-w-max">
         {filteredSteps.map((s, i) => {
-          // if it's the last step, force its state to currentStep
           const isLast = i === filteredSteps.length - 1;
 
           const isRejected = isLast
@@ -36,7 +63,11 @@ export function Stepper({
           const isActive = !isRejected && !isDone && s.state === "active";
 
           return (
-            <div key={s.id} className="flex items-center gap-2">
+            <div
+              key={s.id}
+              ref={(el) => (stepRefs.current[i] = el)}
+              className="flex items-center gap-2"
+            >
               <div
                 className={[
                   "w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold border transition-all",

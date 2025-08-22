@@ -35,7 +35,7 @@ export default function DeploymentsCards() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(6); // cards per page
+  const [pageSize] = useState(6); // cards per page
 
   const deployments = data?.deployments || [];
 
@@ -102,51 +102,58 @@ export default function DeploymentsCards() {
         </Select>
       </div>
 
-      {/* Cards grid */}
+      {/* Cards list */}
       {isLoading ? (
         <p className="text-muted-foreground">Loading deployments...</p>
       ) : filteredData.length === 0 ? (
         <p className="text-muted-foreground">No deployments found</p>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             {paginatedData.map((d: any) => (
-              <Card key={d.id} className="hover:shadow-lg transition-shadow">
-                <CardHeader className="flex items-center justify-between gap-2 flex-wrap">
-                  <CardTitle className="truncate max-w-[180px] sm:max-w-full font-mono">
-                    <CopyButton text={d.id} className={"mr-2"} />
-                    <span title={d.id}>{d.id}</span>
-                  </CardTitle>
+              <Card key={d.id} className="hover:shadow-md transition-shadow">
+                {/* Responsive layout: col on mobile, row on desktop */}
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4">
+                  {/* Left side: ID + details */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <CopyButton text={d.id} className="mr-2" />
+                      <CardTitle className="truncate font-mono text-base">
+                        {d.id}
+                      </CardTitle>
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1 space-y-0.5">
+                      <p>
+                        <b>Type:</b> {d.type}
+                      </p>
+                      <p>
+                        <b>Ensemble:</b> {d.ensemble_file}
+                      </p>
+                      <p>
+                        <b>Timestamp:</b> {d.timestamp}
+                      </p>
+                    </div>
+                  </div>
 
-                  <span
-                    className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      statusColors[d.status] || "bg-gray-100 text-gray-800"
-                    }`}
-                  >
-                    {d.status.toUpperCase()}
-                  </span>
-                </CardHeader>
-                <CardContent className="space-y-1 text-sm text-muted-foreground">
-                  <p>
-                    <b>Type:</b> {d.type}
-                  </p>
-                  <p>
-                    <b>Ensemble:</b> {d.ensemble_file}
-                  </p>
-                  <p>
-                    <b>Timestamp:</b> {d.timestamp}
-                  </p>
-                </CardContent>
-                <CardFooter>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => navigate(`/deploy/${d.id}`)}
-                  >
-                    View Details
-                  </Button>
-                </CardFooter>
+                  {/* Right side: status + actions */}
+                  <div className="flex flex-col md:items-end gap-2 shrink-0">
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs font-medium self-start md:self-end ${
+                        statusColors[d.status] || "bg-gray-100 text-gray-800"
+                      }`}
+                    >
+                      {d.status.toUpperCase()}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full md:w-auto mt-2 md:mt-8"
+                      onClick={() => navigate(`/deploy/${d.id}`)}
+                    >
+                      View Details
+                    </Button>
+                  </div>
+                </div>
               </Card>
             ))}
           </div>

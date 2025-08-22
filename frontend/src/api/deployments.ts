@@ -15,7 +15,7 @@ export async function getDeploymentStatus(id) {
 
 export async function getDeploymentManifest(id) {
   const res = await axios.get(
-    `${API_BASE}/ensemble/deployments/${id}/manifest`
+    `${API_BASE}/ensemble/deployments/${id}/manifest/raw`
   );
   return res.data;
 }
