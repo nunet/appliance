@@ -11,12 +11,14 @@ import {
 import { Input } from "../ui/input";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Label } from "../ui/label";
+import { api } from "../../api/organizations";
 
 export function JoinForm({
   orgDid,
   submitting,
   onSubmit,
   knownOrgs,
+  qc,
 }: {
   orgDid?: string;
   knownOrgs?: Record<string, any>;
@@ -98,7 +100,7 @@ export function JoinForm({
           </RadioGroup>
         </div>
       </CardContent>
-      <CardFooter>
+      <CardFooter className="flex flex-col gap-2">
         <Button
           className="w-full"
           disabled={!canSubmit || submitting}
@@ -118,6 +120,19 @@ export function JoinForm({
         >
           {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Submit
+        </Button>
+
+        <Button
+          className="w-full"
+          variant={"outline"}
+          disabled={submitting}
+          onClick={() => {
+            api
+              .reset()
+              .then(() => qc.invalidateQueries({ queryKey: ["org-status"] }));
+          }}
+        >
+          Cancel
         </Button>
       </CardFooter>
     </Card>

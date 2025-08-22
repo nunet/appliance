@@ -116,12 +116,15 @@ export function OnboardingFlow({
       )}
 
       {showForm && (
-        <JoinForm
-          orgDid={status?.raw?.org_data?.did}
-          submitting={joinMutation.isPending}
-          onSubmit={(data) => joinMutation.mutate(data)}
-          knownOrgs={knownOrgs}
-        />
+        <>
+          <JoinForm
+            orgDid={status?.raw?.org_data?.did}
+            submitting={joinMutation.isPending}
+            onSubmit={(data) => joinMutation.mutate(data)}
+            knownOrgs={knownOrgs}
+            qc={qc}
+          />
+        </>
       )}
 
       {!showSelect && !showForm && !showComplete && !isRejected && (
