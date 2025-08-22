@@ -99,7 +99,7 @@ export function SectionCards() {
         <div className="grid grid-cols-1 gap-4 px-4">
           <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
             <CardHeader>
-              <CardDescription>DMS:</CardDescription>
+              <CardDescription>Peer ID:</CardDescription>
               <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl text-wrap break-words">
                 {info.dms_peer_id.slice(-6)}
                 <CopyButton
@@ -113,7 +113,7 @@ export function SectionCards() {
                 <p className="flex items-center gap-2 flex-wrap">
                   <b>DID Key:</b>
                   <code
-                    className="text-sm  truncate max-w-[250px]"
+                    className="text-sm truncate max-w-[250px] md:max-w-none"
                     title={info.dms_did}
                   >
                     {info.dms_did}
@@ -153,7 +153,7 @@ export function SectionCards() {
                 <p className="flex items-center gap-2 w-full">
                   <b>Peer ID:</b>{" "}
                   <code
-                    className="truncate max-w-[250px]"
+                    className="truncate max-w-[250px] md:max-w-none"
                     title={info.dms_peer_id}
                   >
                     {info.dms_peer_id}{" "}

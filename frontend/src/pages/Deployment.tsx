@@ -29,6 +29,7 @@ import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
+import { useEffect } from "react";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -46,11 +47,18 @@ export default function DeploymentDetailsPage() {
     }
   };
 
-  const { data: deploymentsData, isLoading: isLoadingDeployments } = useQuery({
+  const {
+    data: deploymentsData,
+    isLoading: isLoadingDeployments,
+    refetch,
+  } = useQuery({
     queryKey: ["deployments"],
     queryFn: getDeployments,
     refetchOnMount: "always",
-    refetchInterval: 10000,
+    refetchInterval: 5000,
+    refetchOnWindowFocus: true,
+    cacheTime: 0, // don’t keep cache after the query is unused
+    staleTime: 0, // data is always considered stale → always refetch
   });
 
   const deployment = deploymentsData?.deployments?.find((d) => d.id === id);
@@ -60,13 +68,12 @@ export default function DeploymentDetailsPage() {
     queryFn: () => getDeploymentDetails(id!),
     enabled: !!deployment,
     refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
-  // const { data: manifestData, isLoading: isLoadingManifest } = useQuery({
-  //   queryKey: ["deployment-manifest", id],
-  //   queryFn: () => getDeploymentManifest(id!),
-  //   enabled: !!deployment,
-  // });
+  useEffect(() => {
+    refetch();
+  }, []);
 
   const handleDownload = () => {
     if (!details?.logs?.message) return;
@@ -81,7 +88,7 @@ export default function DeploymentDetailsPage() {
 
   if (isLoadingDeployments || isLoadingDetails)
     return <DeploymentDetailsSkeleton />;
-  if (!deployment)
+  if (!deployment && !isLoadingDeployments && !isLoadingDetails && id)
     return (
       <div className="flex flex-col items-center justify-center mt-20 text-center">
         <p className="text-lg font-medium mb-4">

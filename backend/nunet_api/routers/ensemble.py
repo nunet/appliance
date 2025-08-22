@@ -25,6 +25,39 @@ from modules.ensemble_utils import (
 
 router = APIRouter()
 
+def _metadata_without_peer_requirement(meta: dict | None) -> dict | None:
+    """
+    Return a shallow copy of metadata with fields.peer_id.required = False.
+    Used for non_targeted deployments so validation does not force peer_id.
+    """
+    if not meta:
+        return meta
+    m = dict(meta)
+    fields = dict(m.get("fields", {}))
+    if "peer_id" in fields:
+        f = dict(fields["peer_id"])
+        f["required"] = False
+        fields["peer_id"] = f
+        m["fields"] = fields
+    return m
+
+def _autofill_local_peer(values: dict) -> dict:
+    """
+    If peer_id is absent, try to inject the local peer id.
+    """
+    v = dict(values or {})
+    if "peer_id" not in v or not v["peer_id"]:
+        try:
+            from modules.dms_manager import DMSManager
+            dm = DMSManager()
+            local_peer = dm.get_self_peer_info().get("peer_id")
+            if local_peer:
+                v["peer_id"] = local_peer
+        except Exception:
+            # Swallow—validation will catch if still required
+            pass
+    return v
+
 def _resolve_template_in_base(mgr: EnsembleManagerV2, p: str) -> Path:
     """
     Resolve a template path relative to ~/ensembles and ensure it stays inside.
@@ -508,37 +541,37 @@ def render_template(
     }),
     mgr: EnsembleManagerV2 = Depends(get_mgr)
 ):
-    """
-    Renders a YAML template (Jinja2) with provided values.
-    Does NOT deploy. Optionally validates values against the JSON metadata (if present).
-    """
     template_path = payload.get("template_path")
-    values = payload.get("values") or {}
+    values_in = payload.get("values") or {}
     deployment_type = (payload.get("deployment_type") or "local").lower()
 
     if deployment_type not in ("local", "targeted", "non_targeted"):
         raise HTTPException(status_code=400, detail="deployment_type must be local | targeted | non_targeted")
 
-    # Resolve and validate template path
     tpl = _resolve_template_in_base(mgr, template_path)
 
-    # Validate against metadata if present
+    # Load metadata
     meta = load_ensemble_metadata(str(tpl))
-    errors: List[str] = []
-    if meta:
-        ok, errs = validate_form_data(meta, values)
+
+    # Adjust values/validation based on type
+    if deployment_type == "local":
+        values = _autofill_local_peer(values_in)
+        meta_for_validation = meta  # peer still required, but we tried to fill it
+    elif deployment_type == "non_targeted":
+        # Ignore any provided peer_id; relax requirement
+        values = dict(values_in)
+        values.pop("peer_id", None)
+        meta_for_validation = _metadata_without_peer_requirement(meta)
+    else:
+        # targeted as-is
+        values = dict(values_in)
+        meta_for_validation = meta
+
+    # Validate after we’ve adjusted for the type
+    if meta_for_validation:
+        ok, errs = validate_form_data(meta_for_validation, values)
         if not ok:
             return {"status": "error", "errors": errs}
-
-    # Auto-fill peer_id for local deployments if missing
-    if deployment_type == "local" and "peer_id" not in values:
-        try:
-            dm = DMSManager()
-            local_peer = dm.get_self_peer_info().get("peer_id")
-            if local_peer:
-                values["peer_id"] = local_peer
-        except Exception:
-            pass  # non-fatal
 
     rendered = process_yaml_template(str(tpl), values, deployment_type)
     if not rendered:
@@ -549,9 +582,8 @@ def render_template(
         "template": str(tpl.relative_to(mgr.base_dir)),
         "deployment_type": deployment_type,
         "rendered_yaml": rendered,
-        "validation_errors": errors
+        "validation_errors": []
     }
-
 
 @router.post("/deploy/from-template", response_model=dict)
 def deploy_from_template(
@@ -563,22 +595,17 @@ def deploy_from_template(
             "bird_color": "red",
             "allocations_alloc1_resources_cpu_cores": 1,
             "allocations_alloc1_resources_ram_size": 1,
-            "allocations_alloc1_resources_disk_size": 1,
-            # optional in 'local' (auto-filled), required in 'targeted'
-            "peer_id": "12D3KooW..."  
+            "allocations_alloc1_resources_disk_size": 20,
+            "peer_id": "12D3KooW..."  # required if targeted; optional otherwise
         },
-        "deployment_type": "targeted",   # local | targeted | non_targeted
-        "timeout": 60,                   # seconds
-        "save_instance": True            # store timestamped copy under /home/ubuntu/nunet/appliance/deployments
+        "deployment_type": "local",   # local | targeted | non_targeted
+        "timeout": 60,
+        "save_instance": True
     }),
     mgr: EnsembleManagerV2 = Depends(get_mgr)
 ):
-    """
-    Renders the template with values, saves a timestamped copy, and deploys it.
-    Returns deployment_id on success.
-    """
     template_path = payload.get("template_path")
-    values = payload.get("values") or {}
+    values_in = payload.get("values") or {}
     deployment_type = (payload.get("deployment_type") or "local").lower()
     timeout = int(payload.get("timeout") or 60)
     save_instance = bool(payload.get("save_instance", True))
@@ -586,36 +613,43 @@ def deploy_from_template(
     if deployment_type not in ("local", "targeted", "non_targeted"):
         raise HTTPException(status_code=400, detail="deployment_type must be local | targeted | non_targeted")
 
-    # Resolve template path inside ~/ensembles
     tpl = _resolve_template_in_base(mgr, template_path)
 
-    # Validate against metadata if present
+    # Load metadata
     meta = load_ensemble_metadata(str(tpl))
-    if meta:
-        ok, errs = validate_form_data(meta, values)
-        if not ok:
-            raise HTTPException(status_code=400, detail={"error": "validation_failed", "errors": errs})
 
-    # peer handling
+    # Prepare values per deployment type
     if deployment_type == "targeted":
+        values = dict(values_in)
         if not values.get("peer_id"):
             raise HTTPException(status_code=400, detail="peer_id is required for targeted deployments")
+        meta_for_validation = meta
     elif deployment_type == "local":
+        values = _autofill_local_peer(values_in)
+        # If still no peer_id, fail with helpful message
         if not values.get("peer_id"):
-            try:
-                dm = DMSManager()
-                local_peer = dm.get_self_peer_info().get("peer_id")
-                if local_peer:
-                    values["peer_id"] = local_peer
-            except Exception:
-                pass  # if we can't fetch it, the template may still not require it
+            raise HTTPException(
+                status_code=400,
+                detail="Could not determine local peer_id. Ensure DMS is running, or provide peer_id explicitly."
+            )
+        meta_for_validation = meta
+    else:  # non_targeted
+        values = dict(values_in)
+        values.pop("peer_id", None)  # explicitly ignore
+        meta_for_validation = _metadata_without_peer_requirement(meta)
+
+    # Validate AFTER adjusting values/requirements
+    if meta_for_validation:
+        ok, errs = validate_form_data(meta_for_validation, values)
+        if not ok:
+            raise HTTPException(status_code=400, detail={"error": "validation_failed", "errors": errs})
 
     # Render
     rendered = process_yaml_template(str(tpl), values, deployment_type)
     if not rendered:
         raise HTTPException(status_code=500, detail="Failed to render template with provided values")
 
-    # Save timestamped copy (to appliance deployments dir)
+    # Save timestamped copy for provenance
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     saved_path: Optional[str] = None
     if save_instance:
@@ -624,7 +658,6 @@ def deploy_from_template(
             raise HTTPException(status_code=500, detail="Could not save rendered deployment")
         deploy_path = Path(saved_path)
     else:
-        # If you prefer not to save, write to a temp file under /tmp
         tmp = Path(f"/tmp/{tpl.stem}_{timestamp}.yaml")
         tmp.write_text(rendered, encoding="utf-8")
         deploy_path = tmp

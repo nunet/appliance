@@ -1,6 +1,6 @@
 # nunet_api/app/main.py
 from fastapi import FastAPI
-from .routers import dms, sysinfo, ensemble, stream, proc
+from .routers import dms, sysinfo, ensemble, stream, proc, organizations
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="NuNet Local API", version="1.0.0")
@@ -20,7 +20,7 @@ app.include_router(sysinfo.router, prefix="/sys", tags=["system"])
 app.include_router(ensemble.router, prefix="/ensemble", tags=["ensemble"])
 app.include_router(stream.router, tags=["stream"])
 app.include_router(proc.router, prefix="/proc", tags=["proc"])
-
+app.include_router(organizations.router, prefix="/organizations", tags=["organizations"])
 @app.get("/health")
 def health():
     return {"ok": True}

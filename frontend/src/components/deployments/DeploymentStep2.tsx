@@ -109,28 +109,34 @@ export default function DeploymentStepTwo({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredPeers.map((peer) => (
-                    <TableRow
-                      key={peer}
-                      className="cursor-pointer"
-                      onClick={() => set_peer_id(peer)}
-                    >
-                      <TableCell className="font-mono">
-                        <span title={peer}>{"..." + peer.slice(-9)}</span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {peer_id === peer ? (
-                          <span className="text-blue-600 font-bold text-lg">
-                            ●
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-lg">
-                            ○
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredPeers.length === 0 ? (
+                    <div className="text-center text-muted-foreground p-4">
+                      Loading Peers...
+                    </div>
+                  ) : (
+                    filteredPeers.map((peer) => (
+                      <TableRow
+                        key={peer}
+                        className="cursor-pointer"
+                        onClick={() => set_peer_id(peer)}
+                      >
+                        <TableCell className="font-mono">
+                          <span title={peer}>{"..." + peer.slice(-9)}</span>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {peer_id === peer ? (
+                            <span className="text-blue-600 font-bold text-lg">
+                              ●
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-lg">
+                              ○
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </div>
