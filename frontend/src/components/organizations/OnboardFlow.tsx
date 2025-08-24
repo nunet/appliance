@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 import { api } from "../../api/organizations";
 import { Button } from "../ui/button";
@@ -14,19 +14,100 @@ import { JoinForm } from "./JoinForm";
 import { OrgSelect } from "./OrgSelect";
 import { Stepper } from "./Stepper";
 import { StatusBanner } from "./StatusBanner";
-import { restartDms } from "../../api/api";
+import RestartDmsButton from "./RestartDMSButton";
 import { toast } from "sonner";
 
 export function OnboardingFlow({
   status,
   knownOrgs,
   qc,
+  setStartOperation,
 }: {
   status?: StatusResponse;
   knownOrgs: Record<string, any>;
   qc: any;
+  setStartOperation: (val: boolean) => void;
 }) {
-  const stepStates = status?.step_states ?? [];
+  const stepStates = status?.step_states ?? [
+    {
+      id: "init",
+      label: "Init",
+      virtual: false,
+      state: "done",
+    },
+    {
+      id: "select_org",
+      label: "Select Organization",
+      virtual: false,
+      state: "done",
+    },
+    {
+      id: "collect_join_data",
+      label: "Fill Join Form",
+      virtual: false,
+      state: "active",
+    },
+    {
+      id: "submit_data",
+      label: "Submit Data",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "join_data_sent",
+      label: "Data Sent",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "email_verified",
+      label: "Email Verified",
+      virtual: true,
+      state: "todo",
+    },
+    {
+      id: "pending_authorization",
+      label: "Pending Authorization",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "join_data_received",
+      label: "Join Data Received",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "capabilities_applied",
+      label: "Capabilities Applied",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "telemetry_configured",
+      label: "Telemetry Configured",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "mtls_certs_saved",
+      label: "mTLS Certs Saved",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "complete",
+      label: "Complete",
+      virtual: false,
+      state: "todo",
+    },
+    {
+      id: "rejected",
+      label: "Rejected",
+      virtual: false,
+      state: "todo",
+    },
+  ];
   const currentIndex = status?.current_index ?? 0;
   const currentStep = status?.current_step ?? "init";
   const apiStatus = status?.api_status ?? null;
@@ -34,14 +115,33 @@ export function OnboardingFlow({
   const isRejected = currentStep === "rejected";
   const isComplete = currentStep === "complete";
 
+  // ---- guard key (unique per org; include user id if you have it)
+  const finalizeKey = useMemo(() => {
+    const did = status?.raw?.org_data?.did ?? "global";
+    return `onboarding:finalize:${did}`;
+  }, [status?.raw?.org_data?.did]);
+
+  // ---- in-memory lock (per component instance)
+  const finalizeLockRef = useRef(false);
+
   // --- poll every 3s only if we're in join_data_sent step ---
+  const shouldPoll =
+    currentStep === "join_data_sent" ||
+    currentStep === "pending_authorization" ||
+    apiStatus === "email_sent" ||
+    apiStatus === "email_verified" ||
+    apiStatus === "pending" ||
+    apiStatus === "processing" ||
+    apiStatus === null ||
+    apiStatus === "";
+
   useQuery({
-    queryKey: ["email-poll"],
+    queryKey: ["email-poll", currentStep, apiStatus],
     queryFn: () => api.poll(),
     refetchInterval: 3000,
     refetchIntervalInBackground: true,
     staleTime: 0,
-    enabled: currentStep === "join_data_sent",
+    enabled: shouldPoll,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["org-status"] });
     },
@@ -57,35 +157,68 @@ export function OnboardingFlow({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
 
+  // ✅ Make finalize mutation explicit and non-retrying
   const finalizeMutation = useMutation({
+    // If your API can accept an idempotency key, pass finalizeKey below
+    // mutationFn: () => api.postProcess({ idempotencyKey: finalizeKey }),
     mutationFn: () => api.postProcess(),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
+    retry: 0, // do not auto-retry mutations
   });
 
-  // Trigger finalize step only once after approval
+  /**
+   * SINGLE-SHOT FINALIZE
+   * - runs once when `isApproved` first becomes true
+   * - guarded by ref + localStorage to survive Strict Mode remounts/refresh
+   */
   useEffect(() => {
+    if (!isApproved) return;
+
+    const stored =
+      typeof window !== "undefined" ? localStorage.getItem(finalizeKey) : null;
+
+    // do nothing if we are already inflight or done (this tab or another)
     if (
-      isApproved &&
-      !finalizeMutation.isPending &&
-      !finalizeMutation.isSuccess
-    ) {
-      finalizeMutation.mutate();
+      finalizeLockRef.current ||
+      stored === "inflight" ||
+      stored === "success"
+    )
+      return;
+
+    finalizeLockRef.current = true;
+    if (typeof window !== "undefined")
+      localStorage.setItem(finalizeKey, "inflight");
+
+    finalizeMutation.mutate(undefined, {
+      onSuccess: () => {
+        if (typeof window !== "undefined")
+          localStorage.setItem(finalizeKey, "success");
+      },
+      onError: () => {
+        // allow a future retry (manual or automatic) if it truly failed
+        finalizeLockRef.current = false;
+        if (typeof window !== "undefined") localStorage.removeItem(finalizeKey);
+      },
+    });
+  }, [isApproved, finalizeKey, finalizeMutation.mutate]);
+
+  // Clear the guard if the flow is rejected/reset so user can try again
+  useEffect(() => {
+    if (!isRejected) return;
+    finalizeLockRef.current = false;
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(finalizeKey);
+      setStartOperation(false);
     }
-  }, [
-    isApproved,
-    finalizeMutation.isPending,
-    finalizeMutation.isSuccess,
-    finalizeMutation.mutate,
-  ]);
+  }, [isRejected, finalizeKey]);
 
   // --- UI flags ---
   const showSelect = currentStep === "init" || currentStep === "select_org";
   const showForm =
     currentStep === "collect_join_data" || currentStep === "submit_data";
 
-  // ✅ Fix 1: only show final "All Set" card if backend says complete
-  // AND finalize mutation has finished successfully
-  const showComplete = isComplete && finalizeMutation.isSuccess;
+  // Consider "success" from storage so a refresh still shows the final card
+  const showComplete = isComplete;
 
   return (
     <div className="space-y-4">
@@ -112,19 +245,19 @@ export function OnboardingFlow({
           known={knownOrgs}
           disabled={selectMutation.isPending}
           onSelect={(did) => selectMutation.mutate(did)}
+          setStartOperation={setStartOperation}
         />
       )}
 
       {showForm && (
-        <>
-          <JoinForm
-            orgDid={status?.raw?.org_data?.did}
-            submitting={joinMutation.isPending}
-            onSubmit={(data) => joinMutation.mutate(data)}
-            knownOrgs={knownOrgs}
-            qc={qc}
-          />
-        </>
+        <JoinForm
+          setStartOperation={setStartOperation}
+          orgDid={status?.raw?.org_data?.did}
+          submitting={joinMutation.isPending}
+          onSubmit={(data) => joinMutation.mutate(data)}
+          knownOrgs={knownOrgs}
+          qc={qc}
+        />
       )}
 
       {!showSelect && !showForm && !showComplete && !isRejected && (
@@ -158,17 +291,11 @@ export function OnboardingFlow({
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Onboarding is complete.
-            <Button
-              className="w-full bg-white text-black border border-gray-300 hover:bg-gray-50 mt-3"
-              onClick={() => {
-                restartDms().then(() => {
-                  toast.success("DMS is restarting");
-                  qc.invalidateQueries({ queryKey: ["org-status"] });
-                });
-              }}
-            >
-              Restart DMS
-            </Button>
+            <RestartDmsButton
+              finalizeKey={finalizeKey}
+              setStartOperation={setStartOperation}
+              qc={qc}
+            />
           </CardContent>
         </Card>
       )}
@@ -177,12 +304,14 @@ export function OnboardingFlow({
         <Card className="border-red-300">
           <CardHeader>
             <div className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-              <CardTitle>Request Rejected</CardTitle>
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+              <CardTitle className="text-base md:text-lg">
+                Request Rejected
+              </CardTitle>
             </div>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <div className="text-red-600">
+            <div className="text-red-600 break-words break-all whitespace-pre-wrap">
               {status?.rejection_reason || "The request was rejected."}
             </div>
           </CardContent>
@@ -190,11 +319,16 @@ export function OnboardingFlow({
             <Button
               className="w-full"
               onClick={() => {
+                // also clear finalize guard on reset
+                if (typeof window !== "undefined")
+                  localStorage.removeItem(finalizeKey);
+                finalizeLockRef.current = false;
                 api
                   .reset()
                   .then(() =>
                     qc.invalidateQueries({ queryKey: ["org-status"] })
                   );
+                setStartOperation(false);
               }}
             >
               <RefreshCw className="w-4 h-4 mr-2" />

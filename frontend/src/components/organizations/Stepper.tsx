@@ -6,7 +6,7 @@ import type { StepState } from "../../components/organizations/OnboardFlow";
 export function Stepper({
   steps,
   currentIndex,
-  currentStep,
+  currentStep = "init",
 }: {
   steps: StepState[];
   currentIndex: number;

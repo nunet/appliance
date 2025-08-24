@@ -14,6 +14,7 @@ import {
   Repeat2Icon,
   XCircleIcon,
   Download,
+  Loader2,
 } from "lucide-react";
 import {
   Card,
@@ -29,14 +30,18 @@ import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { ManifestPanel } from "../components/deployments/ManifestPanel";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
+  const [isShuttingDown, setIsShuttingDown] = useState(false); // ⬅️ new state
+
   const handleShutdown = async (deploymentId: string) => {
     try {
+      setIsShuttingDown(true);
       const res = await shutdownDeployment(deploymentId);
       toast.success(res.status, { description: res.message });
     } catch (error: any) {
@@ -44,6 +49,8 @@ export default function DeploymentDetailsPage() {
         description:
           error?.response?.data?.message || "An unexpected error occurred",
       });
+    } finally {
+      setIsShuttingDown(false);
     }
   };
 
@@ -57,8 +64,8 @@ export default function DeploymentDetailsPage() {
     refetchOnMount: "always",
     refetchInterval: 5000,
     refetchOnWindowFocus: true,
-    cacheTime: 0, // don’t keep cache after the query is unused
-    staleTime: 0, // data is always considered stale → always refetch
+    cacheTime: 0,
+    staleTime: 0,
   });
 
   const deployment = deploymentsData?.deployments?.find((d) => d.id === id);
@@ -69,6 +76,8 @@ export default function DeploymentDetailsPage() {
     enabled: !!deployment,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
+    refetchInterval: 5000,
+    staleTime: 0,
   });
 
   useEffect(() => {
@@ -106,6 +115,26 @@ export default function DeploymentDetailsPage() {
 
   const lines = details.logs?.message?.split("\n") || [];
   const manifest = details?.manifest || null;
+
+  function parseLogs(logMessage: string) {
+    if (!logMessage) return { stdout: "", stderr: "", dms: "" };
+
+    const stdout =
+      logMessage
+        .split("=== STDERR ===")[0]
+        ?.split("=== STDOUT ===")[1]
+        ?.trim() || "";
+    const stderr =
+      logMessage
+        .split("=== DMS LOG ENTRIES ===")[0]
+        ?.split("=== STDERR ===")[1]
+        ?.trim() || "";
+    const dms = logMessage.split("=== DMS LOG ENTRIES ===")[1]?.trim() || "";
+
+    return { stdout, stderr, dms };
+  }
+
+  const { stdout, stderr, dms } = parseLogs(details.logs?.message || "");
 
   return (
     <>
@@ -145,9 +174,17 @@ export default function DeploymentDetailsPage() {
             {details.status.deployment_status === "running" && (
               <Button
                 onClick={() => handleShutdown(deployment.id)}
-                className="w-full lg:w-4/5 mx-auto block bg-red-500 hover:bg-red-600 text-white mt-3"
+                className="block bg-red-500 hover:bg-red-600 text-white mt-3 text-right flex flex-row gap-2"
+                disabled={isShuttingDown}
               >
-                Shut Down Deployment
+                {isShuttingDown ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Shutting down...
+                  </>
+                ) : (
+                  "Shut Down Deployment"
+                )}
               </Button>
             )}
           </CardFooter>
@@ -214,206 +251,11 @@ export default function DeploymentDetailsPage() {
       </div>
 
       {/* Manifest */}
-      <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] break-words w-full">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardDescription>Deployment Manifest</CardDescription>
-            </div>
-            <Separator className="my-2" />
-
-            {isLoadingDeployments ? (
-              <p className="text-center py-10">Loading Manifest...</p>
-            ) : manifest && Object.keys(manifest).length > 0 ? (
-              <div className="flex flex-col gap-4 w-full">
-                {/* Deployment Info */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
-                  <CardTitle className="text-sm font-semibold">
-                    Deployment Info
-                  </CardTitle>
-                  <CardContent className="font-mono text-xs space-y-2 overflow-x-auto">
-                    <div className="flex items-center gap-2">
-                      <b>ID:</b>
-                      <span
-                        className="truncate max-w-[200px] sm:max-w-full"
-                        title={manifest.manifest.id || "N/A"}
-                      >
-                        {manifest.manifest.id || "N/A"}
-                      </span>
-                      <CopyButton text={manifest.manifest.id || ""} />
-                    </div>
-                    <div>
-                      <b>Subnet:</b>
-                      <pre className="whitespace-pre-wrap break-all">
-                        {JSON.stringify(manifest.manifest.subnet, null, 2)}
-                      </pre>
-                    </div>
-                    {manifest.manifest.contracts && (
-                      <div>
-                        <b>Contracts:</b>
-                        <pre className="whitespace-pre-wrap break-all">
-                          {JSON.stringify(manifest.manifest.contracts, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Orchestrator */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
-                  <CardTitle className="text-sm font-semibold">
-                    Orchestrator
-                  </CardTitle>
-                  <CardContent className="font-mono text-xs space-y-2 overflow-x-auto">
-                    {["pub", "did?.uri", "addr?.host", "addr?.inbox"].map(
-                      (field, i) => {
-                        const label = ["Pub", "DID", "Host", "Inbox"][i];
-                        const value =
-                          field === "pub"
-                            ? manifest.manifest.orchestrator?.id?.pub
-                            : field === "did?.uri"
-                            ? manifest.manifest.orchestrator?.did?.uri
-                            : field === "addr?.host"
-                            ? manifest.manifest.orchestrator?.addr?.host
-                            : manifest.manifest.orchestrator?.addr?.inbox;
-
-                        return (
-                          <div
-                            key={label}
-                            className="flex items-center gap-2 my-2"
-                          >
-                            <b>{label}:</b>
-                            <span
-                              className="truncate max-w-[200px] sm:max-w-full"
-                              title={value || "N/A"}
-                            >
-                              {value || "N/A"}
-                            </span>
-                            <CopyButton text={value || ""} />
-                          </div>
-                        );
-                      }
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Allocations */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
-                  <CardTitle className="text-sm font-semibold">
-                    Allocations
-                  </CardTitle>
-                  <CardContent className="font-mono text-xs space-y-2 max-h-64 overflow-y-auto">
-                    {manifest.manifest.allocations ? (
-                      Object.entries(manifest.manifest.allocations).map(
-                        ([key, alloc]: any) => (
-                          <div
-                            key={key}
-                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-2"
-                          >
-                            <div className="flex items-center gap-2">
-                              <b>ID:</b>
-                              <span
-                                className="truncate max-w-[200px] sm:max-w-full"
-                                title={alloc.id}
-                              >
-                                {alloc.id}
-                              </span>
-                              <CopyButton text={alloc.id || ""} />
-                            </div>
-                            <div>
-                              <b>Type:</b> {alloc.type}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <b>DNS:</b>
-                              <span
-                                className="truncate max-w-[200px] sm:max-w-full"
-                                title={alloc.dns_name}
-                              >
-                                {alloc.dns_name}
-                              </span>
-                              <CopyButton text={alloc.dns_name || ""} />
-                            </div>
-                            <div>
-                              <b>Status:</b> {alloc.status}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <b>Node ID:</b>
-                              <span
-                                className="truncate max-w-[200px] sm:max-w-full"
-                                title={alloc.node_id || "N/A"}
-                              >
-                                {alloc.node_id || "N/A"}
-                              </span>
-                              <CopyButton text={alloc.node_id || ""} />
-                            </div>
-                          </div>
-                        )
-                      )
-                    ) : (
-                      <p className="text-muted-foreground text-center">
-                        No Allocations
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Nodes */}
-                <Card className="bg-gray-50 dark:bg-gray-800 p-3 rounded-md shadow-inner w-full">
-                  <CardTitle className="text-sm font-semibold">Nodes</CardTitle>
-                  <CardContent className="font-mono text-xs space-y-2 max-h-64 overflow-y-auto">
-                    {manifest.manifest.nodes ? (
-                      Object.entries(manifest.manifest.nodes).map(
-                        ([key, node]: any) => (
-                          <div
-                            key={key}
-                            className="mb-2 border-b border-gray-200 dark:border-gray-700 pb-2"
-                          >
-                            <div className="flex items-center gap-2">
-                              <b>ID:</b>
-                              <span
-                                className="truncate max-w-[200px] sm:max-w-full"
-                                title={node.id}
-                              >
-                                {node.id}
-                              </span>
-                              <CopyButton text={node.id || ""} />
-                            </div>
-                            <div>
-                              <b>Peer:</b> {node.peer}
-                            </div>
-                            <div>
-                              <b>Allocations:</b>{" "}
-                              {node.allocations?.join(", ") || "N/A"}
-                            </div>
-                            <div>
-                              <b>Location:</b>
-                              <pre className="whitespace-pre-wrap break-all">
-                                {JSON.stringify(node.location, null, 2)}
-                              </pre>
-                            </div>
-                          </div>
-                        )
-                      )
-                    ) : (
-                      <p className="text-muted-foreground text-center">
-                        No Nodes
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-center py-10">
-                No manifest available
-              </p>
-            )}
-          </CardHeader>
-        </Card>
-      </div>
+      <ManifestPanel manifest={manifest} isLoading={isLoadingDeployments} />
 
       {/* Logs */}
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardDescription>Deployment Logs</CardDescription>
@@ -427,9 +269,15 @@ export default function DeploymentDetailsPage() {
               </Button>
             </div>
             <Separator className="my-2" />
-            {lines.length > 0 ? (
-              <div className="bg-black text-green-400 font-mono text-sm rounded-md p-3 h-64 overflow-y-auto shadow-inner">
-                {lines.map((line, idx) => (
+
+            {/* STDOUT */}
+            <div className="flex items-center justify-between mt-2">
+              <p className="font-semibold">STDOUT</p>
+              {stdout && <CopyButton text={stdout} className="text-xs" />}
+            </div>
+            {stdout ? (
+              <div className="bg-black text-green-400 font-mono text-sm rounded-md p-3 h-40 overflow-y-auto shadow-inner">
+                {stdout.split("\n").map((line, idx) => (
                   <div key={idx} className="whitespace-pre-wrap">
                     {line}
                   </div>
@@ -437,7 +285,45 @@ export default function DeploymentDetailsPage() {
               </div>
             ) : (
               <p className="text-muted-foreground text-center">
-                No logs found.
+                No stdout logs found.
+              </p>
+            )}
+
+            {/* STDERR */}
+            <div className="flex items-center justify-between mt-4">
+              <p className="font-semibold">STDERR</p>
+              {stderr && <CopyButton text={stderr} className="text-xs" />}
+            </div>
+            {stderr ? (
+              <div className="bg-black text-red-400 font-mono text-sm rounded-md p-3 h-40 overflow-y-auto shadow-inner">
+                {stderr.split("\n").map((line, idx) => (
+                  <div key={idx} className="whitespace-pre-wrap">
+                    {line}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-center">
+                No stderr logs found.
+              </p>
+            )}
+
+            {/* DMS */}
+            <div className="flex items-center justify-between mt-4">
+              <p className="font-semibold">DMS Logs</p>
+              {dms && <CopyButton text={dms} className="text-xs" />}
+            </div>
+            {dms ? (
+              <div className="bg-black text-blue-400 font-mono text-sm rounded-md p-3 h-40 overflow-y-auto shadow-inner">
+                {dms.split("\n").map((line, idx) => (
+                  <div key={idx} className="whitespace-pre-wrap">
+                    {line}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-center">
+                No DMS logs found.
               </p>
             )}
           </CardHeader>

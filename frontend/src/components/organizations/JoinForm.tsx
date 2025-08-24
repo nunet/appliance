@@ -19,11 +19,14 @@ export function JoinForm({
   onSubmit,
   knownOrgs,
   qc,
+  setStartOperation,
 }: {
   orgDid?: string;
   knownOrgs?: Record<string, any>;
   submitting?: boolean;
   onSubmit: (data: Record<string, string>) => void;
+  setStartOperation: (val: boolean) => void;
+  qc: any;
 }) {
   const [formData, setFormData] = useState<Record<string, string>>({
     name: "",
@@ -67,6 +70,7 @@ export function JoinForm({
           {fields.map((field: any) => (
             <Input
               key={field.name}
+              autoComplete="on"
               type={field.type}
               required={field.required}
               value={formData[field.name] ?? ""}
@@ -127,9 +131,10 @@ export function JoinForm({
           variant={"outline"}
           disabled={submitting}
           onClick={() => {
-            api
-              .reset()
-              .then(() => qc.invalidateQueries({ queryKey: ["org-status"] }));
+            api.reset().then(() => {
+              setStartOperation(false);
+              qc.invalidateQueries({ queryKey: ["org-status"] });
+            });
           }}
         >
           Cancel

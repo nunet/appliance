@@ -4,8 +4,11 @@ import {
   type StatusResponse,
   OnboardingFlow,
 } from "../components/organizations/OnboardFlow";
+import React from "react";
 
 export default function OrganizationOnboardingPage() {
+  const [startOperation, setStartOperation] = React.useState(false);
+
   const qc = useQueryClient();
 
   const knownQuery = useQuery({
@@ -16,10 +19,17 @@ export default function OrganizationOnboardingPage() {
   const statusQuery = useQuery<StatusResponse>({
     queryKey: ["org-status"],
     queryFn: api.getStatus,
-    refetchInterval: 3000,
+    // 🔁 Keep polling every 3s until we reach "complete", then stop.
+    refetchInterval: (last) =>
+      last?.current_step === "complete" ? false : 4000,
+    refetchIntervalInBackground: true, // keep polling even if tab is hidden
+    refetchOnWindowFocus: false, // don't wake polling on focus (we already poll)
+    // Optional: only start polling after known orgs load
+    // enabled: knownQuery.isSuccess,
+    // enabled: startOperation,
   });
 
-  const status = statusQuery.data;
+  const status = statusQuery.data || { current_step: "init", current_index: 0 };
   //const isOnboarded = status?.current_step === "complete";
 
   return (
@@ -33,6 +43,7 @@ export default function OrganizationOnboardingPage() {
           status={status}
           knownOrgs={knownQuery.data ?? {}}
           qc={qc}
+          setStartOperation={setStartOperation}
         />
       </div>
     </div>

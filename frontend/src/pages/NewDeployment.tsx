@@ -16,7 +16,8 @@ import DeploymentStepFour from "../components/deployments/DeploymentStep4";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { deployFromTemplate } from "../api/deployments";
-import { useQueryClient } from "@tanstack/react-query"; // ⬅️ import this
+import { useQueryClient } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react"; // ⬅️ loader icon
 
 const steps = [
   { id: 1, title: "Select Ensemble" },
@@ -27,7 +28,7 @@ const steps = [
 
 export default function NewDeployment() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient(); // ⬅️ get client
+  const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(1);
 
   const [templatePath, setTemplatePath] = useState("");
@@ -39,6 +40,8 @@ export default function NewDeployment() {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [formValid, setFormValid] = useState(false);
 
+  const [isSubmitting, setIsSubmitting] = useState(false); // ⬅️ new state
+
   const nextStep = () => {
     if (currentStep < steps.length) setCurrentStep(currentStep + 1);
   };
@@ -49,6 +52,7 @@ export default function NewDeployment() {
 
   const handleSubmit = async () => {
     try {
+      setIsSubmitting(true); // start loader
       const payload = {
         template_path: yamlPath,
         deployment_type: deploymentType,
@@ -62,16 +66,16 @@ export default function NewDeployment() {
 
       const res = await deployFromTemplate(payload);
 
-      // ✅ Invalidate deployments list after success
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
 
       console.log("Deployment response:", res);
-      // navigate("/deploy/" + res.deployment_id);
       navigate("/deploy");
       toast.success("Deployment started successfully!");
     } catch (err) {
       console.error("Deployment failed:", err);
       toast.error("Deployment failed. Check console for details.");
+    } finally {
+      setIsSubmitting(false); // stop loader
     }
   };
 
@@ -100,7 +104,6 @@ export default function NewDeployment() {
               >
                 {step.id}
               </div>
-              {/* ⬇️ hide text on small screens */}
               <span className="hidden md:inline">{step.title}</span>
             </div>
           );
@@ -174,8 +177,18 @@ export default function NewDeployment() {
               Next
             </Button>
           ) : (
-            <Button onClick={handleSubmit} disabled={!formValid}>
-              Deploy
+            <Button
+              onClick={handleSubmit}
+              disabled={!formValid || isSubmitting}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deploying...
+                </>
+              ) : (
+                "Deploy"
+              )}
             </Button>
           )}
         </CardFooter>

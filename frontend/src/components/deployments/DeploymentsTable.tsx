@@ -41,16 +41,27 @@ export default function DeploymentsCards() {
 
   // Apply search + filter
   const filteredData = useMemo(() => {
-    return deployments.filter((d: any) => {
-      const matchesSearch =
-        d.id.toLowerCase().includes(search.toLowerCase()) ||
-        d.ensemble_file.toLowerCase().includes(search.toLowerCase());
+    return deployments
+      .filter((d: any) => {
+        const matchesSearch =
+          d.id.toLowerCase().includes(search.toLowerCase()) ||
+          d.ensemble_file.toLowerCase().includes(search.toLowerCase());
 
-      const matchesStatus =
-        statusFilter === "all" ? true : d.status === statusFilter;
+        const matchesStatus =
+          statusFilter === "all" ? true : d.status === statusFilter;
 
-      return matchesSearch && matchesStatus;
-    });
+        return matchesSearch && matchesStatus;
+      })
+      .sort((a: any, b: any) => {
+        // 1️⃣ Running always comes first
+        if (a.status === "running" && b.status !== "running") return -1;
+        if (b.status === "running" && a.status !== "running") return 1;
+
+        // 2️⃣ Then sort by timestamp (descending)
+        return (
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+      });
   }, [deployments, search, statusFilter]);
 
   // Pagination
