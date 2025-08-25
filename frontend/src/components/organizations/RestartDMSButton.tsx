@@ -7,11 +7,9 @@ import { api } from "../../api/organizations";
 
 function RestartDmsButton({
   qc,
-  finalizeKey,
   setStartOperation,
 }: {
   qc: any;
-  finalizeKey: string;
   setStartOperation: (val: boolean) => void;
 }) {
   const [isConfirming, setIsConfirming] = useState(false);
@@ -19,9 +17,6 @@ function RestartDmsButton({
 
   const handleRestart = async () => {
     setIsLoading(true);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(finalizeKey);
-    }
     try {
       await restartDms();
       setStartOperation(false);

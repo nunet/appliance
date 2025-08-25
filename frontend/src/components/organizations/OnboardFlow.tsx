@@ -115,16 +115,6 @@ export function OnboardingFlow({
   const isRejected = currentStep === "rejected";
   const isComplete = currentStep === "complete";
 
-  // ---- guard key (unique per org; include user id if you have it)
-  const finalizeKey = useMemo(() => {
-    const did = status?.raw?.org_data?.did ?? "global";
-    return `onboarding:finalize:${did}`;
-  }, [status?.raw?.org_data?.did]);
-
-  // ---- in-memory lock (per component instance)
-  const finalizeLockRef = useRef(false);
-
-  // --- poll every 3s only if we're in join_data_sent step ---
   const shouldPoll =
     currentStep === "join_data_sent" ||
     currentStep === "pending_authorization" ||
@@ -157,67 +147,12 @@ export function OnboardingFlow({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
 
-  // ✅ Make finalize mutation explicit and non-retrying
-  const finalizeMutation = useMutation({
-    // If your API can accept an idempotency key, pass finalizeKey below
-    // mutationFn: () => api.postProcess({ idempotencyKey: finalizeKey }),
-    mutationFn: () => api.postProcess(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
-    retry: 0, // do not auto-retry mutations
-  });
-
-  /**
-   * SINGLE-SHOT FINALIZE
-   * - runs once when `isApproved` first becomes true
-   * - guarded by ref + localStorage to survive Strict Mode remounts/refresh
-   */
-  useEffect(() => {
-    if (!isApproved) return;
-
-    const stored =
-      typeof window !== "undefined" ? localStorage.getItem(finalizeKey) : null;
-
-    // do nothing if we are already inflight or done (this tab or another)
-    if (
-      finalizeLockRef.current ||
-      stored === "inflight" ||
-      stored === "success"
-    )
-      return;
-
-    finalizeLockRef.current = true;
-    if (typeof window !== "undefined")
-      localStorage.setItem(finalizeKey, "inflight");
-
-    finalizeMutation.mutate(undefined, {
-      onSuccess: () => {
-        if (typeof window !== "undefined")
-          localStorage.setItem(finalizeKey, "success");
-      },
-      onError: () => {
-        // allow a future retry (manual or automatic) if it truly failed
-        finalizeLockRef.current = false;
-        if (typeof window !== "undefined") localStorage.removeItem(finalizeKey);
-      },
-    });
-  }, [isApproved, finalizeKey, finalizeMutation.mutate]);
-
-  // Clear the guard if the flow is rejected/reset so user can try again
-  useEffect(() => {
-    if (!isRejected) return;
-    finalizeLockRef.current = false;
-    if (typeof window !== "undefined") {
-      localStorage.removeItem(finalizeKey);
-      setStartOperation(false);
-    }
-  }, [isRejected, finalizeKey]);
 
   // --- UI flags ---
   const showSelect = currentStep === "init" || currentStep === "select_org";
   const showForm =
     currentStep === "collect_join_data" || currentStep === "submit_data";
 
-  // Consider "success" from storage so a refresh still shows the final card
   const showComplete = isComplete;
 
   return (
@@ -272,9 +207,7 @@ export function OnboardingFlow({
           </CardContent>
           <CardFooter>
             <Button className="flex-1 cursor-not-allowed" disabled>
-              {finalizeMutation.isPending && (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              )}
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               Waiting for approval...
             </Button>
           </CardFooter>
@@ -291,11 +224,7 @@ export function OnboardingFlow({
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Onboarding is complete.
-            <RestartDmsButton
-              finalizeKey={finalizeKey}
-              setStartOperation={setStartOperation}
-              qc={qc}
-            />
+            <RestartDmsButton setStartOperation={setStartOperation} qc={qc} />
           </CardContent>
         </Card>
       )}
@@ -319,10 +248,6 @@ export function OnboardingFlow({
             <Button
               className="w-full"
               onClick={() => {
-                // also clear finalize guard on reset
-                if (typeof window !== "undefined")
-                  localStorage.removeItem(finalizeKey);
-                finalizeLockRef.current = false;
                 api
                   .reset()
                   .then(() =>

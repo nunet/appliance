@@ -110,7 +110,7 @@ export function SectionCards() {
             </CardHeader>
             <CardFooter className="flex-col items-start gap-1.5 text-sm">
               <div className="text-muted-foreground w-full">
-                <p className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
                   <b>DID Key:</b>
                   <code
                     className="text-sm truncate max-w-[250px] md:max-w-none"
@@ -146,7 +146,7 @@ export function SectionCards() {
                       )}
                     </Button>
                   </div>
-                </p>
+                </div>
                 <p>
                   <b>Version:</b> <code>{info.dms_version}</code>
                 </p>
