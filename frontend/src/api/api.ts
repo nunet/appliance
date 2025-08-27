@@ -146,13 +146,11 @@ export const allSysInfo = () => {
     getPublicIp(),
     getApplianceVersion(),
     getSshStatus(),
-    getDockerContainer(),
-  ]).then(([localIp, publicIp, applianceVersion, sshStatus, docker]) => ({
+  ]).then(([localIp, publicIp, applianceVersion, sshStatus]) => ({
     localIp,
     publicIp,
     applianceVersion,
     sshStatus,
-    docker,
   }));
 };
 

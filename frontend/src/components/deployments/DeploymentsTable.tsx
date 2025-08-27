@@ -25,11 +25,17 @@ import { CopyButton } from "../ui/CopyButton";
 export default function DeploymentsCards() {
   const navigate = useNavigate();
 
-  const { data, isLoading } = useQuery({
+  const {
+    data,
+    isLoading,
+    refetch, // 👈 grab refetch function
+  } = useQuery({
     queryKey: ["deployments"],
     queryFn: getDeployments,
-    refetchInterval: 10000,
-    staleTime: Infinity,
+    staleTime: Infinity, // cache forever
+    gcTime: Infinity, // never garbage collect
+    refetchInterval: 0, // no auto refetch
+    refetchOnWindowFocus: false, // no refresh when tab focuses
   });
 
   const [search, setSearch] = useState("");

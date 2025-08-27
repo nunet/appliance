@@ -1,42 +1,59 @@
-import { useState } from "react";
+import { RefreshCw } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { fetchTemplates, type Template } from "../../api/deployments";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
   CardContent,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { fetchTemplates, type Template } from "../../api/deployments";
+} from "../ui/card";
+import { Badge } from "../ui/badge";
+import { RefreshButton } from "../ui/RefreshButton";
 
-export default function DeploymentStepOne({
-  path,
-  setter,
-  category,
-  setCategory,
-  set_yaml_path,
-}) {
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, status } =
-    useInfiniteQuery({
-      queryKey: ["templates"],
-      queryFn: ({ pageParam = 1 }) => fetchTemplates(pageParam),
-      getNextPageParam: (lastPage) => {
-        const maxPages = Math.ceil(lastPage.total / lastPage.page_size);
-        return lastPage.page < maxPages ? lastPage.page + 1 : undefined;
-      },
-      initialPageParam: 1,
-    });
+export default function DeploymentStepOne({ ...props }) {
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    status,
+    refetch,
+    isRefetching,
+  } = useInfiniteQuery({
+    queryKey: ["templates"],
+    queryFn: ({ pageParam = 1 }) => fetchTemplates(pageParam),
+    getNextPageParam: (lastPage) => {
+      const maxPages = Math.ceil(lastPage.total / lastPage.page_size);
+      return lastPage.page < maxPages ? lastPage.page + 1 : undefined;
+    },
+    initialPageParam: 1,
+  });
 
   const templates: Template[] = data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <div className="flex flex-col w-full h-full overflow-x-hidden">
-      <h2 className="text-2xl font-semibold mb-6">Select an Ensemble</h2>
+      {/* Header row with title + refresh */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-semibold">Select an Ensemble</h2>
 
-      {status === "loading" && <p>Loading...</p>}
+        <RefreshButton
+          onClick={() => refetch()}
+          isLoading={isRefetching}
+          tooltip="Refresh Templates"
+        />
+      </div>
+
+      {status === "pending" && <p>Loading...</p>}
       {status === "error" && <p>Error fetching templates.</p>}
 
       <div className="w-full max-w-6xl mx-auto">
@@ -46,13 +63,13 @@ export default function DeploymentStepOne({
             <Card
               key={`${tpl.category}-${tpl.path}`}
               onClick={() => {
-                setter(tpl.path);
-                setCategory(tpl.category);
-                set_yaml_path(tpl.yaml_path || tpl.path);
+                props.setter(tpl.path);
+                props.setCategory(tpl.category);
+                props.set_yaml_path(tpl.yaml_path || tpl.path);
               }}
               className={cn(
                 "cursor-pointer transition-all duration-500 border-2 rounded-2xl h-full",
-                path === tpl.path
+                props.path === tpl.path
                   ? "bg-gradient-to-br from-blue-500/40 to-transparent border-blue-500 shadow-md"
                   : "hover:border-blue-400"
               )}
@@ -70,7 +87,7 @@ export default function DeploymentStepOne({
           ))}
         </div>
 
-        {/* Load more button below the grid */}
+        {/* Load more button */}
         {hasNextPage && (
           <div className="flex justify-center mt-6">
             <Button

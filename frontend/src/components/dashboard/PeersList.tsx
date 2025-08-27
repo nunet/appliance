@@ -1,11 +1,11 @@
-// components/peers-list.tsx
 import { useState, useMemo } from "react";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "../ui/CopyButton";
+import { RefreshButton } from "../ui/RefreshButton";
+import { useQueryClient, useIsFetching } from "@tanstack/react-query";
 
 type PeersListProps = {
   peers: string[];
@@ -16,20 +16,23 @@ export function PeersList({ peers }: PeersListProps) {
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  // filter peers
+  const queryClient = useQueryClient();
+
   const filteredPeers = useMemo(() => {
     return peers.filter((p) => p.toLowerCase().includes(search.toLowerCase()));
   }, [peers, search]);
 
-  // paginate peers
   const totalPages = Math.ceil(filteredPeers.length / pageSize);
   const paginatedPeers = filteredPeers.slice(
     (page - 1) * pageSize,
     page * pageSize
   );
 
-  const handleCopy = (id: string) => {
-    navigator.clipboard.writeText(id);
+  // Check if the "connected-peers-main" query is currently fetching
+  const isFetching = useIsFetching({ queryKey: ["connected-peers-main"] }) > 0;
+
+  const handleRefresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["connected-peers-main"] });
   };
 
   return (
@@ -48,17 +51,27 @@ export function PeersList({ peers }: PeersListProps) {
                 {filteredPeers.length}
               </Badge>
             </div>
-            <Input
-              placeholder="Search peers..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setPage(1);
-              }}
-              className="max-w-xs flex-1"
-            />
+
+            {/* Search + Refresh */}
+            <div className="flex items-center gap-2 flex-1 justify-end">
+              <Input
+                placeholder="Search peers..."
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                className="max-w-xs flex-1"
+              />
+              <RefreshButton
+                onClick={handleRefresh}
+                isLoading={isFetching}
+                tooltip="Refresh Peers List"
+              />
+            </div>
           </div>
         </CardHeader>
+
         <CardContent>
           <ul className="divide-y divide-gray-600">
             {paginatedPeers.map((peer) => (
@@ -67,12 +80,12 @@ export function PeersList({ peers }: PeersListProps) {
                 className="flex items-center justify-between py-2 px-1"
               >
                 <span className="truncate text-sm font-mono">{peer}</span>
-                <CopyButton text={peer} className={""} />
+                <CopyButton text={peer} className="" />
               </li>
             ))}
           </ul>
 
-          {/* pagination controls */}
+          {/* Pagination controls */}
           <div className="flex justify-between items-center mt-4">
             <Button
               variant="outline"

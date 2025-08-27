@@ -1,7 +1,13 @@
 import * as React from "react";
-import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "./ui/sidebar";
+import {
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  useSidebar,
+} from "./ui/sidebar";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
+import { useIsMobile } from "../hooks/use-mobile";
 
 export function NavMain({
   items,
@@ -22,6 +28,8 @@ export function NavMain({
     );
   };
 
+  const { setOpenMobile } = useSidebar();
+
   return (
     <SidebarMenu>
       {items.map((item) => {
@@ -33,9 +41,14 @@ export function NavMain({
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
-                onClick={() =>
-                  item.items ? toggleMenu(item.title) : navigate(item.url)
-                }
+                onClick={() => {
+                  if (!item.items) {
+                    navigate(item.url);
+                    setOpenMobile(false);
+                  } else {
+                    toggleMenu(item.title);
+                  }
+                }}
                 className="flex justify-between items-center"
               >
                 <a>

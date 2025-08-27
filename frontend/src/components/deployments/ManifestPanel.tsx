@@ -12,15 +12,17 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { RefreshButton } from "@/components/ui/RefreshButton"; // 👈 import your reusable refresh
 import { Server, Network, Container, Globe, Box, ListTree } from "lucide-react";
 
-/**
- * Props
- */
 type ManifestPanelProps = {
-  manifest: any | null | undefined; // the same object you already have in `details?.manifest`
+  manifest: any | null | undefined;
   isLoading?: boolean;
+  onRefresh?: () => void; // 👈 add a callback for refreshing
+  isRefreshing?: boolean; // 👈 track if refreshing
 };
+
+// ...utils (toStr, short, K, V, KV, Pill) remain unchanged...
 
 /**
  * Small utilities
@@ -98,12 +100,12 @@ const Pill = ({
   );
 };
 
-/**
- * The Panel
- */
-function ManifestPanelImpl({ manifest, isLoading }: ManifestPanelProps) {
-  // `m` holds the inner object where all the fields live in your current API
-  // `m` holds the inner object where all the fields live in your current API
+function ManifestPanelImpl({
+  manifest,
+  isLoading,
+  onRefresh,
+  isRefreshing,
+}: ManifestPanelProps) {
   const m = manifest?.manifest ?? {};
   const hasValidId =
     m?.id !== undefined && m?.id !== null && String(m?.id).trim() !== "";
@@ -113,6 +115,15 @@ function ManifestPanelImpl({ manifest, isLoading }: ManifestPanelProps) {
       <div className="px-4 my-4 w-full">
         <Card className="flex items-center justify-center min-h-[200px] text-muted-foreground text-sm">
           No manifest available
+          {onRefresh && (
+            <div className="mt-4">
+              <RefreshButton
+                onClick={onRefresh}
+                isLoading={isRefreshing}
+                tooltip="Refresh manifest"
+              />
+            </div>
+          )}
         </Card>
       </div>
     );
@@ -130,16 +141,25 @@ function ManifestPanelImpl({ manifest, isLoading }: ManifestPanelProps) {
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
-      <Card className="bg-gradient-to-b from-primary/5 to-card dark:from-primary/10 shadow-sm border rounded-xl overflow-hidden">
-        <CardHeader className="space-y-1">
-          <CardDescription className="flex items-center gap-2 text-sm">
-            <ListTree className="h-4 w-4" />
-            Manifest
-          </CardDescription>
-          <CardTitle className="text-2xl md:text-3xl font-semibold tracking-tight">
-            Manifest for Deployment&nbsp;
-            <span className="text-primary">{short(m?.id)}</span>
-          </CardTitle>
+      <Card className="relative bg-gradient-to-b from-primary/5 to-card dark:from-primary/10 shadow-sm border rounded-xl overflow-hidden">
+        <CardHeader className="space-y-1 flex flex-row items-center justify-between">
+          <div>
+            <CardDescription className="flex items-center gap-2 text-sm">
+              <ListTree className="h-4 w-4" />
+              Manifest
+            </CardDescription>
+            <CardTitle className="text-2xl md:text-3xl font-semibold tracking-tight">
+              Manifest for Deployment&nbsp;
+              <span className="text-primary">{short(m?.id)}</span>
+            </CardTitle>
+          </div>
+          {onRefresh && (
+            <RefreshButton
+              onClick={onRefresh}
+              isLoading={isRefreshing}
+              tooltip="Refresh manifest"
+            />
+          )}
         </CardHeader>
 
         <CardContent className="space-y-8">
@@ -432,7 +452,6 @@ function ManifestPanelImpl({ manifest, isLoading }: ManifestPanelProps) {
           ) : null}
         </CardContent>
 
-        {/* Footer actions — optional raw JSON download */}
         <CardFooter className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
           <div className="text-xs text-muted-foreground">
             Tip: values are truncated on small screens—hover or tap to see full
@@ -457,13 +476,13 @@ function ManifestPanelImpl({ manifest, isLoading }: ManifestPanelProps) {
           </Button>
         </CardFooter>
 
-        {isLoading ? (
+        {isLoading && (
           <div className="absolute inset-0 bg-background/70 backdrop-blur-[2px] flex items-center justify-center">
             <span className="animate-pulse text-sm text-muted-foreground">
               Loading manifest…
             </span>
           </div>
-        ) : null}
+        )}
       </Card>
     </div>
   );

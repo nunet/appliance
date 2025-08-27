@@ -122,16 +122,21 @@ export function OnboardingFlow({
     apiStatus === "email_verified" ||
     apiStatus === "pending" ||
     apiStatus === "processing" ||
-    apiStatus === null ||
+    // apiStatus === null ||
     apiStatus === "";
 
   useQuery({
     queryKey: ["email-poll", currentStep, apiStatus],
     queryFn: () => api.poll(),
-    refetchInterval: 3000,
+    refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 0,
-    enabled: shouldPoll,
+    enabled:
+      shouldPoll &&
+      currentStep !== "complete" &&
+      currentStep !== "rejected" &&
+      currentStep !== "init" &&
+      currentStep !== "select_org",
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["org-status"] });
     },
@@ -146,7 +151,6 @@ export function OnboardingFlow({
     mutationFn: (data: any) => api.postJoinSubmit(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
-
 
   // --- UI flags ---
   const showSelect = currentStep === "init" || currentStep === "select_org";

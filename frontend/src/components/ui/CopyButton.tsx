@@ -8,7 +8,7 @@ export const CopyButton = ({ text, className }) => {
   const handleRegularCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setSmallCopy(true);
-    setTimeout(() => setSmallCopy(false), 1500); // reset after 1.5s
+    setTimeout(() => setSmallCopy(false), 4000);
   };
 
   return (

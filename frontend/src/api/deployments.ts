@@ -67,13 +67,12 @@ export async function downloadExamples(payload) {
 
 // 🔹 Fetch everything in parallel
 export async function getDeploymentDetails(id: string) {
-  const [status, manifest, logs, allocations] = await Promise.all([
+  const [status, manifest, allocations] = await Promise.all([
     getDeploymentStatus(id),
     getDeploymentManifest(id),
-    getDeploymentLogs(id),
     getDeploymentAllocations(id),
   ]);
-  return { status, manifest, logs, allocations };
+  return { status, manifest, allocations };
 }
 
 export interface TemplatesResponse {

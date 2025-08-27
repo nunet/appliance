@@ -19,9 +19,8 @@ export default function OrganizationOnboardingPage() {
   const statusQuery = useQuery<StatusResponse>({
     queryKey: ["org-status"],
     queryFn: api.getStatus,
-    // 🔁 Keep polling every 3s until we reach "complete", then stop.
     refetchInterval: (last) =>
-      last?.current_step === "complete" ? false : 4000,
+      last?.current_step === "complete" ? false : 5000,
     refetchIntervalInBackground: true, // keep polling even if tab is hidden
     refetchOnWindowFocus: false, // don't wake polling on focus (we already poll)
     // Optional: only start polling after known orgs load

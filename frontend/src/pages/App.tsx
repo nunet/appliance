@@ -14,16 +14,9 @@ export default function Page() {
   } = useQuery({
     queryKey: ["connected-peers-main"],
     queryFn: getConnectedPeers,
-    refetchInterval: 10_000,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    staleTime: 0,
-    retry: 1,
+    staleTime: Infinity, // ✅ data stays "fresh" for 30s
+    gcTime: Infinity, // ♾️ never garbage collect
   });
-
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
 
   return (
     <div className="flex flex-1 flex-col">
