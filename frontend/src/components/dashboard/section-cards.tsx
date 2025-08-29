@@ -18,11 +18,12 @@ import {
   XIcon,
 } from "lucide-react";
 import { Separator } from "../ui/separator";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SectionCardsSkeleton } from "./DashboardSkeleton";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
+import { useEffect } from "react";
 
 export function SectionCards() {
   const {
@@ -53,6 +54,19 @@ export function SectionCards() {
     refetchOnWindowFocus: false,
   });
 
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      queryClient.prefetchQuery({
+        queryKey: ["docker_containers"],
+        queryFn: getDockerContainer,
+      });
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [queryClient]);
+
   const {
     data: docker,
     isLoading: loadDocker,
@@ -61,13 +75,14 @@ export function SectionCards() {
   } = useQuery({
     queryKey: ["docker_containers"],
     queryFn: getDockerContainer,
+    enabled: false, // disabled by default, will run when prefetch/ refetch is called
     refetchOnMount: true,
     staleTime: Infinity,
     gcTime: Infinity,
     refetchOnWindowFocus: false,
   });
 
-  if (load1 || loadSys || loadDocker) return <SectionCardsSkeleton />;
+  if (load1 || loadSys) return <SectionCardsSkeleton />;
 
   return (
     <>
@@ -329,7 +344,7 @@ export function SectionCards() {
 
           <CardContent className="mt-4">
             <div className="grid gap-3">
-              {docker?.containers.length === 0 && (
+              {(docker?.containers.length === 0 || loadDocker) && (
                 <div className="text-center text-muted-foreground">
                   No Docker containers found.
                 </div>

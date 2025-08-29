@@ -40,6 +40,8 @@ export default function DeploymentDetailsPage() {
   const navigate = useNavigate();
   const [isShuttingDown, setIsShuttingDown] = useState(false);
 
+  const [_alloc, _setAlloc] = useState<string | null>(null);
+
   // 🔻 Shutdown handler
   const handleShutdown = async (deploymentId: string) => {
     try {
@@ -66,6 +68,7 @@ export default function DeploymentDetailsPage() {
     gcTime: Infinity,
   });
   const deployment = deploymentsData?.deployments?.find((d) => d.id === id);
+
 
   if (!deployment && !isLoadingDeployments && id)
     return (
@@ -100,10 +103,10 @@ export default function DeploymentDetailsPage() {
       </div>
 
       {/* Manifest */}
-      <DeploymentManifestCard deploymentId={id!} />
+      <DeploymentManifestCard deploymentId={id!} _setAlloc={_setAlloc} />
 
       {/* Logs */}
-      <DeploymentLogsCard deploymentId={id!} />
+      <DeploymentLogsCard deploymentId={id!} alloc={_alloc} />
     </>
   );
 }
@@ -316,7 +319,7 @@ function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
 }
 
 // 🔹 Deployment Manifest
-function DeploymentManifestCard({ deploymentId }: { deploymentId: string }) {
+function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: string, _setAlloc: (alloc: string | null) => void }) {
   const {
     data: details,
     refetch,
@@ -337,19 +340,20 @@ function DeploymentManifestCard({ deploymentId }: { deploymentId: string }) {
       isLoading={isLoading}
       onRefresh={() => refetch()}
       isRefreshing={isFetching}
+      _setAlloc={_setAlloc}
     />
   );
 }
 
 // 🔹 Deployment Logs
-function DeploymentLogsCard({ deploymentId }: { deploymentId: string }) {
+function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
   const {
     data: logsData,
     refetch,
     isFetching,
   } = useQuery({
     queryKey: ["deployment-logs", deploymentId],
-    queryFn: () => getDeploymentLogs(deploymentId),
+    queryFn: () => getDeploymentLogs(deploymentId, alloc),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
@@ -390,7 +394,7 @@ function DeploymentLogsCard({ deploymentId }: { deploymentId: string }) {
       <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardDescription>Deployment Logs</CardDescription>
+            <CardDescription>Deployment Logs ({alloc})</CardDescription>
             <div className="flex gap-2">
               <RefreshButton
                 onClick={() => refetch()}

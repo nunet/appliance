@@ -1,5 +1,5 @@
-import { CardContent, CardTitle } from "../ui/card";
-import { differenceInDays, parseISO } from "date-fns";
+import { CardTitle } from "../ui/card";
+import { differenceInDays, parseISO, format } from "date-fns";
 
 type Org = {
   did: string;
@@ -27,7 +27,7 @@ export function ExpiryCard({ orgData, did }: { orgData: Org[]; did: string }) {
     label = "Expired";
   }
 
-  // set highlight color
+  // highlight color
   let colorClass = "font-light";
   if (daysLeft <= 3 && daysLeft >= 0) {
     colorClass = "bg-red-200 text-red-800 font-light";
@@ -35,9 +35,14 @@ export function ExpiryCard({ orgData, did }: { orgData: Org[]; did: string }) {
     colorClass = "bg-yellow-200 text-yellow-800 font-light";
   }
 
+  const formattedDate = format(expiryDate, "dd/MM/yy HH:mm");
+
   return (
     <CardTitle>
-      Expiry Date: <span className={`${colorClass}`}>{label}</span>
+      Expires on:{" "}
+      <span className={colorClass}>
+        {formattedDate} ({label})
+      </span>
     </CardTitle>
   );
 }

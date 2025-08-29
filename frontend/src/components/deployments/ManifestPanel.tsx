@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -14,12 +14,15 @@ import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { RefreshButton } from "@/components/ui/RefreshButton"; // 👈 import your reusable refresh
 import { Server, Network, Container, Globe, Box, ListTree } from "lucide-react";
+import { AllocationTabs } from "./AllocationsTab";
+import { useSelectedAllocation } from "./allocation.hook";
 
 type ManifestPanelProps = {
   manifest: any | null | undefined;
   isLoading?: boolean;
   onRefresh?: () => void; // 👈 add a callback for refreshing
   isRefreshing?: boolean; // 👈 track if refreshing
+  _setAlloc: (alloc: string | null) => void;
 };
 
 // ...utils (toStr, short, K, V, KV, Pill) remain unchanged...
@@ -105,11 +108,27 @@ function ManifestPanelImpl({
   isLoading,
   onRefresh,
   isRefreshing,
+  _setAlloc,
 }: ManifestPanelProps) {
   const m = manifest?.manifest ?? {};
   const hasValidId =
     m?.id !== undefined && m?.id !== null && String(m?.id).trim() !== "";
+  const orchestrator = m?.orchestrator ?? {};
+  const allocations: Record<string, any> = m?.allocations ?? {};
+  const nodes: Record<string, any> = m?.nodes ?? {};
 
+  const allocationEntries = useMemo(
+    () => Object.entries(allocations || {}),
+    [allocations]
+  );
+  const nodeEntries = useMemo(() => Object.entries(nodes || {}), [nodes]);
+  const [selected_allocation, set_selected_allocation] = useState<string>(
+    allocationEntries[0]?.[0] || "alloc1"
+  );
+
+  useEffect(() => {
+    _setAlloc(selected_allocation);
+  }, [selected_allocation, _setAlloc]);
   if (!hasValidId) {
     return (
       <div className="px-4 my-4 w-full">
@@ -128,16 +147,6 @@ function ManifestPanelImpl({
       </div>
     );
   }
-
-  const orchestrator = m?.orchestrator ?? {};
-  const allocations: Record<string, any> = m?.allocations ?? {};
-  const nodes: Record<string, any> = m?.nodes ?? {};
-
-  const allocationEntries = useMemo(
-    () => Object.entries(allocations || {}),
-    [allocations]
-  );
-  const nodeEntries = useMemo(() => Object.entries(nodes || {}), [nodes]);
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
@@ -230,160 +239,98 @@ function ManifestPanelImpl({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Allocations */}
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold">Allocations</h3>
-                  <Pill
-                    text={`${allocationEntries.length || 0} item${
-                      allocationEntries.length === 1 ? "" : "s"
-                    }`}
-                    tone={allocationEntries.length ? "info" : "default"}
-                  />
-                </div>
-                <Separator className="my-3" />
-                {allocationEntries.length ? (
-                  <ul className="space-y-3 max-h-[22rem] overflow-y-auto pr-1">
-                    {allocationEntries.map(([key, alloc]) => (
-                      <li
-                        key={key}
-                        className="rounded-md border bg-background p-3"
-                      >
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs uppercase text-muted-foreground">
-                            Allocation
-                          </span>
-                          <span className="text-sm font-semibold">{key}</span>
-                          <span className="ml-auto">
-                            <Pill
-                              text={alloc?.status ?? "unknown"}
-                              tone={
-                                alloc?.status === "running"
-                                  ? "ok"
-                                  : alloc?.status === "pending"
-                                  ? "warn"
-                                  : alloc?.status === "failed"
-                                  ? "err"
-                                  : "default"
-                              }
-                            />
-                          </span>
-                        </div>
-                        <div className="space-y-1.5">
-                          <KV label="ID" value={toStr(alloc?.id)} />
-                          <KV
-                            label="Type"
-                            value={toStr(alloc?.type)}
-                            canCopy={false}
-                          />
-                          <KV label="DNS" value={toStr(alloc?.dns_name)} />
-                          <KV label="Node ID" value={toStr(alloc?.node_id)} />
-                          {alloc?.private_address && (
-                            <KV
-                              label="Private IP"
-                              value={toStr(alloc?.private_address)}
-                            />
-                          )}
-                          {/* ports (if present) */}
-                          {alloc?.ports && (
-                            <div className="flex items-start gap-2">
-                              <K label="Ports" />
-                              <pre className="font-mono text-xs overflow-x-auto max-h-28 p-2 rounded bg-background/60 border w-full">
-                                {JSON.stringify(alloc.ports, null, 2)}
-                              </pre>
-                            </div>
-                          )}
-                          {/* ddns urls, if your API supplies them */}
-                          {alloc?.ddns_url && (
-                            <div className="flex items-center gap-2">
-                              <K label="DDNS URL" />
-                              <a
-                                className="truncate underline decoration-dotted hover:decoration-solid"
-                                href={alloc.ddns_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                title={alloc.ddns_url}
-                              >
-                                {alloc.ddns_url}
-                              </a>
-                              <CopyButton
-                                className="ml-auto"
-                                text={alloc.ddns_url}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-muted-foreground text-sm">
-                    No allocations.
-                  </p>
-                )}
-              </div>
+              <AllocationTabs
+                allocationEntries={allocationEntries}
+                selectedAlloc={selected_allocation}
+                setSelectedAlloc={set_selected_allocation}
+              />
 
               {/* Nodes */}
               <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold flex items-center gap-2">
                     <Box className="h-4 w-4" />
-                    Nodes
+                    Nodes ({selected_allocation})
                   </h3>
                   <Pill
-                    text={`${nodeEntries.length || 0} item${
-                      nodeEntries.length === 1 ? "" : "s"
+                    text={`${
+                      nodeEntries.filter(([_, node]) =>
+                        node.allocations.includes(selected_allocation)
+                      ).length || 0
+                    } item${
+                      nodeEntries.filter(([_, node]) =>
+                        node.allocations.includes(selected_allocation)
+                      ).length === 1
+                        ? ""
+                        : "s"
                     }`}
-                    tone={nodeEntries.length ? "info" : "default"}
+                    tone={
+                      nodeEntries.filter(([_, node]) =>
+                        node.allocations.includes(selected_allocation)
+                      ).length
+                        ? "info"
+                        : "default"
+                    }
                   />
                 </div>
+
                 <Separator className="my-3" />
-                {nodeEntries.length ? (
+
+                {nodeEntries.filter(([_, node]) =>
+                  node.allocations.includes(selected_allocation)
+                ).length ? (
                   <ul className="space-y-3 max-h-[22rem] overflow-y-auto pr-1">
-                    {nodeEntries.map(([key, node]) => (
-                      <li
-                        key={key}
-                        className="rounded-md border bg-background p-3"
-                      >
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xs uppercase text-muted-foreground">
-                            Node
-                          </span>
-                          <span className="text-sm font-semibold">{key}</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          <KV label="ID" value={toStr(node?.id)} />
-                          <KV label="Peer" value={toStr(node?.peer)} />
-                          <div className="flex items-start gap-2">
-                            <K label="Allocations" />
-                            <span className="font-mono text-xs">
-                              {Array.isArray(node?.allocations) &&
-                              node.allocations.length
-                                ? node.allocations.join(", ")
-                                : "N/A"}
+                    {nodeEntries
+                      .filter(([_, node]) =>
+                        node.allocations.includes(selected_allocation)
+                      )
+                      .map(([key, node]) => (
+                        <li
+                          key={key}
+                          className="rounded-md border bg-background p-3"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-xs uppercase text-muted-foreground">
+                              Node
                             </span>
+                            <span className="text-sm font-semibold">{key}</span>
                           </div>
-                          {node?.location && (
+                          <div className="space-y-1.5">
+                            <KV label="ID" value={toStr(node?.id)} />
+                            <KV label="Peer" value={toStr(node?.peer)} />
                             <div className="flex items-start gap-2">
-                              <K label="Location" />
-                              <pre className="font-mono text-xs overflow-x-auto max-h-28 p-2 rounded bg-background/60 border w-full">
-                                {JSON.stringify(node.location, null, 2)}
-                              </pre>
+                              <K label="Allocations" />
+                              <span className="font-mono text-xs">
+                                {Array.isArray(node?.allocations) &&
+                                node.allocations.length
+                                  ? node.allocations.join(", ")
+                                  : "N/A"}
+                              </span>
                             </div>
-                          )}
-                          {node?.port_mappings && (
-                            <div className="flex items-start gap-2">
-                              <K label="Port Mappings" />
-                              <pre className="font-mono text-xs overflow-x-auto max-h-28 p-2 rounded bg-background/60 border w-full">
-                                {JSON.stringify(node.port_mappings, null, 2)}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    ))}
+                            {node?.location && (
+                              <div className="flex items-start gap-2">
+                                <K label="Location" />
+                                <pre className="font-mono text-xs overflow-x-auto max-h-28 p-2 rounded bg-background/60 border w-full">
+                                  {JSON.stringify(node.location, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                            {node?.port_mappings && (
+                              <div className="flex items-start gap-2">
+                                <K label="Port Mappings" />
+                                <pre className="font-mono text-xs overflow-x-auto max-h-28 p-2 rounded bg-background/60 border w-full">
+                                  {JSON.stringify(node.port_mappings, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      ))}
                   </ul>
                 ) : (
-                  <p className="text-muted-foreground text-sm">No nodes.</p>
+                  <p className="text-muted-foreground text-sm">
+                    No nodes for this allocation.
+                  </p>
                 )}
               </div>
             </div>
