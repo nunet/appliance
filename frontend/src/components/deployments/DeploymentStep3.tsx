@@ -56,10 +56,9 @@ export default function DeploymentStepThree({
   }, [data, template]);
 
   const fields = (tpl?.schema?.fields ?? {}) as Record<string, FieldSpec>;
-
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  // Initialize formData with defaults
+  // Defaults
   useEffect(() => {
     if (!tpl) return;
     const next: Record<string, any> = {};
@@ -74,7 +73,7 @@ export default function DeploymentStepThree({
     }
   }, [tpl]);
 
-  // Dynamic validation
+  // Validation
   useEffect(() => {
     if (!tpl) return;
 
@@ -141,11 +140,15 @@ export default function DeploymentStepThree({
     const val = formData[key] ?? "";
     const error = fieldErrors[key];
 
-    // Custom select using Shadcn style
     if (spec.type === "select" && spec.options) {
       return (
         <div className="grid gap-1 my-2" key={key}>
-          <Label>{spec.label || key}</Label>
+          <Label>
+            {spec.label || key}{" "}
+            <span className="text-muted-foreground text-xs">
+              {spec.default !== undefined && `(default: ${spec.default})`}
+            </span>
+          </Label>
           <select
             className={`px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               error ? "border-red-500" : "border-gray-600"
@@ -164,10 +167,16 @@ export default function DeploymentStepThree({
       );
     }
 
-    // Text / Number field
     return (
       <div className="grid gap-1 my-2" key={key}>
-        <Label>{spec.label || key}</Label>
+        <Label>
+          {spec.label || key}{" "}
+          <span className="text-muted-foreground text-xs">
+            {spec.default !== undefined && `(default: ${spec.default})`}{" "}
+            {spec.min !== undefined && `(min: ${spec.min})`}{" "}
+            {spec.max !== undefined && `(max: ${spec.max})`}
+          </span>
+        </Label>
         <div className="flex items-center gap-2">
           <Input
             type={spec.type === "number" ? "number" : "text"}
@@ -198,33 +207,90 @@ export default function DeploymentStepThree({
   if (isError) return <p>Error loading templates</p>;
   if (!tpl) return <p>No template found for path: {template}</p>;
 
-  // Use category to filter resources
-  const resourceFields = Object.keys(fields).filter(
-    (k) => fields[k].category === "resources"
-  );
-  const otherFields = Object.keys(fields).filter(
-    (k) => fields[k].category !== "resources"
-  );
+  // Group allocations
+  const allocations: Record<string, string[]> = {};
+  const general: string[] = [];
+
+  Object.keys(fields).forEach((k) => {
+    if (k.startsWith("allocations_")) {
+      const match = k.match(/^allocations_(alloc\d+)_/);
+      if (match) {
+        const allocId = match[1];
+        allocations[allocId] = allocations[allocId] || [];
+        allocations[allocId].push(k);
+      }
+    } else {
+      if (k !== "peer_id") general.push(k);
+    }
+  });
+
+  const isMultiAlloc = Object.keys(allocations).length > 1;
 
   return (
     <div className="flex flex-col w-full max-w-3xl mx-auto">
       <h2 className="text-xl font-semibold mb-4">{tpl.schema.name}</h2>
       <Separator className="mb-4" />
 
-      {/* Resource fields */}
-      <Collapsible>
-        <CollapsibleTrigger className="flex justify-between bg-muted px-4 py-2 rounded-md cursor-pointer mb-4 w-full">
-          <span className="font-medium">Resources</span>
-          <ChevronDown className="w-4 h-4 transition-transform data-[state=open]:rotate-180" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="grid gap-2">
-          {resourceFields.map(renderField)}
-        </CollapsibleContent>
-      </Collapsible>
-      <Separator className="mb-4" />
+      {isMultiAlloc ? (
+        <>
+          {Object.entries(allocations).map(([allocId, keys]) => {
+            const resourceKeys = keys.filter(
+              (k) => fields[k].category === "resources"
+            );
 
-      {/* Other fields */}
-      {otherFields.map(renderField)}
+            return (
+              <div key={allocId} className="mb-6 border rounded-md">
+                <Collapsible>
+                  <CollapsibleTrigger className="flex justify-between bg-muted/40 px-4 py-2 rounded-t-md cursor-pointer w-full">
+                    <span className="font-medium">Resources ({allocId})</span>
+                    <ChevronDown className="w-4 h-4 transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="grid gap-2 bg-muted/20 p-3">
+                    {resourceKeys.map(renderField)}
+                  </CollapsibleContent>
+                </Collapsible>
+              </div>
+            );
+          })}
+
+          {/* General/settings flat */}
+          {general.length > 0 && (
+            <div className="grid gap-3">{general.map(renderField)}</div>
+          )}
+        </>
+      ) : (
+        <>
+          {/* Single alloc → collapsible only for resources */}
+          {Object.entries(allocations).map(([allocId, keys]) => {
+            const resourceKeys = keys.filter(
+              (k) => fields[k].category === "resources"
+            );
+            const settingsKeys = keys.filter(
+              (k) => fields[k].category !== "resources"
+            );
+
+            return (
+              <div key={allocId} className="mb-6">
+                <Collapsible defaultOpen>
+                  <CollapsibleTrigger className="flex justify-between bg-muted/40 px-4 py-2 rounded-t-md cursor-pointer w-full">
+                    <span className="font-medium">Resources</span>
+                    <ChevronDown className="w-4 h-4 transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="grid gap-2 bg-muted/20 p-3 border rounded-b-md">
+                    {resourceKeys.map(renderField)}
+                  </CollapsibleContent>
+                </Collapsible>
+
+                {/* Flat settings */}
+                <div className="grid gap-3 mt-4">
+                  {settingsKeys.map(renderField)}
+                  {general.map(renderField)}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 }

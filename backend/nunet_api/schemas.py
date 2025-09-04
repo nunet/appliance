@@ -1,8 +1,7 @@
 # nunet_api/app/schemas.py
 from dataclasses import Field
-from pydantic import BaseModel
-from pydantic import Field as PydField
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field as PydField
+from typing import Any, Dict, Literal, Optional, List
 
 __all__ = [
     "CommandResult",
@@ -26,11 +25,75 @@ __all__ = [
     "CopyResponse",
     "DownloadExamplesRequest",
     "SimpleStatusResponse",
+    "TokenConfig",
+    "PayableItem",
+    "PayablesResponse",
+    "PaymentReportIn",
+    "PaymentReportOut",
+    "DmsTransaction",
+    "DmsTransactionsList",
+
 ]
 
-class CommandResult(BaseModel):
+class TokenConfig(BaseModel):
+    chain_id: int
+    token_address: str
+    token_symbol: str = "NTX"
+    token_decimals: int = 6
+    explorer_base_url: Optional[str] = None
+    network_name: Optional[str] = None
+
+class PayableItem(BaseModel):
+    payment_id: str
+    toAddress: str
+    amount: str
     status: str
-    message: Optional[str] = None
+    payment_provider: Optional[str] = None
+
+class PayablesResponse(BaseModel):
+    items: List[PayableItem]
+    count: int
+
+class PaymentReportIn(BaseModel):
+    tx_hash: str
+    to_address: str
+    amount: str
+    payment_provider: str  # maps to DMS unique_id
+
+class PaymentReportOut(BaseModel):
+    tx_hash: str
+    to_address: str
+    amount: str
+    payment_provider: str
+
+class DmsTransaction(BaseModel):
+    unique_id: str
+    payment_validator_did: str
+    contract_did: str
+    to_address: str
+    amount: str
+    status: str
+    tx_hash: str
+
+class DmsTransactionsList(BaseModel):
+    transactions: List[DmsTransaction]
+    count: int
+
+
+
+class CommandResult(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    status: Literal["success", "error", "warning"]
+    message: str = ""
+
+    # let API callers see process output
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    returncode: Optional[int] = None
+
+    # optional scratch slot
+    raw: Optional[Dict[str, Any]] = None
 
 class InstallStatus(BaseModel):
     status: str
@@ -158,3 +221,32 @@ class FullStatusCombined(BaseModel):
     resources: ResourcesInfo
     dms: DmsStatus
     summary_text: str
+
+
+class FileLog(BaseModel):
+    path: str
+    exists: bool
+    readable: bool
+    size_bytes: Optional[int] = None
+    mtime_iso: Optional[str] = None  # ISO string
+    tail_lines: Optional[int] = None
+    content: Optional[str] = None
+    error: Optional[str] = None
+
+class DmsLogBundle(BaseModel):
+    source: Literal["journalctl", "file"] = "journalctl"
+    lines: Optional[int] = None
+    stdout: str = ""
+    stderr: str = ""
+    returncode: Optional[int] = None
+
+class AllocationLogs(BaseModel):
+    dir: Optional[str] = None
+    stdout: FileLog
+    stderr: FileLog
+
+class StructuredLogs(BaseModel):
+    status: Literal["success", "error", "warning"]
+    message: str
+    allocation: Optional[AllocationLogs] = None
+    dms_logs: Optional[DmsLogBundle] = None

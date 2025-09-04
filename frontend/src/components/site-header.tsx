@@ -2,6 +2,8 @@ import { Separator } from "../components/ui/separator";
 import { SidebarTrigger } from "../components/ui/sidebar";
 import { AdvancedModeToggle } from './global/ModeToggle';
 import { ModeToggle } from "./mode-toggle";
+import { PaymentsBadge } from "./payments/PaymentsBadge";
+import { ConnectWalletButton } from "./payments/ConnectWalletButton";
 
 export function SiteHeader() {
   return (
@@ -14,6 +16,8 @@ export function SiteHeader() {
         />
         <h1 className="text-base font-medium">🚀 Dashboard</h1>
         <div className="ml-auto flex items-center gap-2">
+          <ConnectWalletButton />
+          <PaymentsBadge />
           <AdvancedModeToggle />
           <ModeToggle />
         </div>

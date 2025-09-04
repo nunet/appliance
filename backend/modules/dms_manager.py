@@ -3,7 +3,7 @@ DMS (Device Management Service) management module
 """
 
 from __future__ import annotations
-
+import os
 import json
 import platform
 import re
@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List
-
+from datetime import datetime
 from .utils import Colors, format_status
 from .dms_utils import (
     run_dms_command_with_passphrase,
@@ -435,3 +435,230 @@ class DMSManager:
                 relay_status = "Using relay" if full_status["dms_is_relayed"] else "Direct connection"
                 relay_color = Colors.YELLOW if full_status["dms_is_relayed"] else Colors.GREEN
                 print(f"NuNet Network Connection Type: {relay_color}{relay_status}{Colors.NC}")
+
+    def confirm_transaction(self, unique_id: str, tx_hash: str) -> Dict[str, Any]:
+        """
+        Call DMS to confirm a transaction:
+        nunet actor cmd --context user /dms/tokenomics/contract/transactions/confirm
+          --unique-id <uniqueid> --tx-hash <txhash>
+        Uses keyring-backed passphrase via run_dms_command_with_passphrase.
+        """
+        try:
+            cp = run_dms_command_with_passphrase(
+                [
+                    "nunet", "actor", "cmd", "--context", "user",
+                    "/dms/tokenomics/contract/transactions/confirm",
+                    "--unique-id", unique_id,
+                    "--tx-hash", tx_hash,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return {"status": "success", "stdout": cp.stdout.strip(), "stderr": cp.stderr.strip()}
+        except subprocess.CalledProcessError as e:
+            return {"status": "error", "message": e.stderr or str(e)}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def list_transactions(self) -> Dict[str, Any]:
+        """
+        Call DMS to list transactions:
+        nunet actor cmd --context user /dms/tokenomics/contract/transactions/list
+        Expects JSON on stdout with shape: { "transactions": [ ... ] }
+        """
+        # for now we return mock data below
+        # --------------------------from here========================
+        return { 
+        "transactions": [
+            {
+            "UniqueID": "inv_001",
+            "PaymentValidatorDID": "did:nunet:validator:123456789abcdef",
+            "ContractDID": "did:nunet:contract:987654321abcdef",
+            "ToAddress": "0x1111111111111111111111111111111111111111",
+            "Amount": "25",
+            "Status": "paid",
+            "TxHash": ""
+            },
+            {
+            "UniqueID": "inv_002",
+            "PaymentValidatorDID": "did:nunet:validator:abcdef987654321",
+            "ContractDID": "did:nunet:contract:abcdef123456789",
+            "ToAddress": "0x2222222222222222222222222222222222222222",
+            "Amount": "0.5",
+            "Status": "unpaid",
+            "TxHash": ""
+            },
+            {
+            "UniqueID": "inv_003",
+            "PaymentValidatorDID": "did:nunet:validator:1122334455667788",
+            "ContractDID": "did:nunet:contract:8877665544332211",
+            "ToAddress": "0x3333333333333333333333333333333333333333",
+            "Amount": "100",
+            "Status": "paid",
+            "TxHash": ""
+            }
+        ]
+        }
+
+        # --------------------------from here========================
+
+        #TODO uncomment below when DMS we have the newst DMS on the appliance
+        # try:
+        #     cp = run_dms_command_with_passphrase(
+        #         [
+        #             "nunet", "actor", "cmd", "--context", "user",
+        #             "/dms/tokenomics/contract/transactions/list",
+        #         ],
+        #         capture_output=True,
+        #         text=True,
+        #         check=True,
+        #     )
+        #     out = cp.stdout.strip() or "{}"
+        #     data = json.loads(out)
+        #     txs = data.get("transactions", [])
+        #     return {"status": "success", "transactions": txs}
+        # except subprocess.CalledProcessError as e:
+        #     return {"status": "error", "message": e.stderr or str(e)}
+        # except json.JSONDecodeError:
+        #     return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
+        # except Exception as e:
+        #     return {"status": "error", "message": str(e)}
+    
+    def get_structured_logs(self, alloc_dir: Optional[Path] = None, *, lines: int = 200) -> Dict[str, Any]:
+        """
+        Return structured logs:
+          - allocation stdout/stderr (tail of files) if alloc_dir given
+          - DMS service logs from journalctl
+        Does not affect the menu; purely read-only helpers.
+        """
+        result: Dict[str, Any] = {
+            "status": "success",
+            "message": "Structured logs fetched",
+            "allocation": None,
+            "dms_logs": None,
+        }
+
+        # DMS service logs
+        result["dms_logs"] = _journalctl_dms(lines)
+
+        # Allocation logs (optional)
+        if alloc_dir:
+            base = Path("/home/nunet/nunet/deployments")
+            alloc_path = Path(alloc_dir)
+            if not _safe_under(base, alloc_path):
+                return {
+                    "status": "error",
+                    "message": f"alloc_dir must live under {base}",
+                    "dms_logs": result["dms_logs"],
+                    "allocation": None,
+                }
+
+            stdout_path = alloc_path / "stdout.logs"
+            stderr_path = alloc_path / "stderr.logs"
+            result["allocation"] = {
+                "dir": str(alloc_path),
+                "stdout": _make_filelog(stdout_path, lines),
+                "stderr": _make_filelog(stderr_path, lines),
+            }
+
+            # if both files missing, downgrade message
+            a = result["allocation"]
+            if not a["stdout"]["exists"] and not a["stderr"]["exists"]:
+                result["message"] = "Structured logs fetched (allocation files not found)"
+
+        return result
+
+
+def _to_iso(ts: float) -> str:
+    try:
+        return datetime.utcfromtimestamp(ts).isoformat() + "Z"
+    except Exception:
+        return None
+
+def _run_capture(argv: list[str], env: dict | None = None, cwd: str | None = None, timeout: int = 30):
+    return subprocess.run(
+        argv,
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=cwd,
+        timeout=timeout,
+        check=False,
+    )
+
+def _safe_under(base: Path, child: Path) -> bool:
+    try:
+        return str(child.resolve()).startswith(str(base.resolve()))
+    except Exception:
+        return False
+
+def _stat_file_with_sudo(path: Path) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    """
+    Return (size_bytes, mtime_iso, err). Uses sudo stat to tolerate perms.
+    """
+    cp = _run_capture(["sudo", "-n", "stat", "-c", "%s,%Y", str(path)])
+    if cp.returncode == 0:
+        try:
+            size_s, mtime_s = (cp.stdout.strip() or "").split(",", 1)
+            size = int(size_s)
+            mtime_iso = _to_iso(float(mtime_s))
+            return size, mtime_iso, None
+        except Exception as e:
+            return None, None, f"stat parse error: {e}"
+    else:
+        return None, None, (cp.stderr or cp.stdout or "").strip() or "stat failed"
+
+def _tail_file_with_sudo(path: Path, lines: int) -> tuple[str, bool, Optional[str]]:
+    """
+    Return (content, readable, err). Uses sudo tail -n <lines>.
+    """
+    cp = _run_capture(["sudo", "-n", "tail", "-n", str(lines), str(path)])
+    if cp.returncode == 0:
+        return cp.stdout, True, None
+    else:
+        err = (cp.stderr or cp.stdout or "").strip() or f"tail failed rc={cp.returncode}"
+        return "", False, err
+
+def _make_filelog(path: Path, lines: int) -> dict:
+    exists = path.exists()
+    size, mtime_iso, stat_err = (None, None, None)
+    content, readable, read_err = ("", False, None)
+
+    if exists:
+        size, mtime_iso, stat_err = _stat_file_with_sudo(path)
+        content, readable, read_err = _tail_file_with_sudo(path, lines)
+
+    error = None
+    if not exists:
+        error = "file not found"
+    elif not readable:
+        error = read_err or stat_err
+    elif stat_err:
+        # readable but stat had a warning
+        error = stat_err
+
+    return {
+        "path": str(path),
+        "exists": exists,
+        "readable": readable,
+        "size_bytes": size,
+        "mtime_iso": mtime_iso,
+        "tail_lines": lines,
+        "content": content if readable else None,
+        "error": error,
+    }
+
+def _journalctl_dms(lines: int) -> dict:
+    cp = _run_capture([
+        "sudo", "-n", "journalctl", "-u", "nunetdms",
+        "-n", str(lines), "--no-pager", "--output=short-iso"
+    ], timeout=60)
+    return {
+        "source": "journalctl",
+        "lines": lines,
+        "stdout": cp.stdout or "",
+        "stderr": cp.stderr or "",
+        "returncode": cp.returncode,
+    }
+

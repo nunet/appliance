@@ -1,8 +1,7 @@
 # nunet_api/app/main.py
 from fastapi import FastAPI
-from .routers import dms, sysinfo, ensemble, stream, proc, organizations
+from .routers import dms, sysinfo, ensemble, stream, proc, organizations, payments
 from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI(title="NuNet Local API", version="1.0.0")
 
 # CORS for Electron
@@ -21,6 +20,7 @@ app.include_router(ensemble.router, prefix="/ensemble", tags=["ensemble"])
 app.include_router(stream.router, tags=["stream"])
 app.include_router(proc.router, prefix="/proc", tags=["proc"])
 app.include_router(organizations.router, prefix="/organizations", tags=["organizations"])
+app.include_router(payments.router, prefix="/payments", tags=["payments"])
 @app.get("/health")
 def health():
     return {"ok": True}

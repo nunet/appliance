@@ -185,3 +185,53 @@ export async function getConnectedPeers(): Promise<string[]> {
     return [];
   }
 }
+// ==== PAYMENTS TYPES ====
+// Config for the token/network
+export interface TokenConfig {
+  chain_id: number;
+  token_address: string;
+  token_symbol: string;
+  token_decimals: number;
+  explorer_base_url?: string | null;
+  network_name?: string | null;
+}
+
+// Single transaction item from DMS
+export interface DmsPaymentItem {
+  unique_id: string;
+  payment_validator_did: string;
+  contract_did: string;
+  to_address: string;
+  amount: string;
+  status: "paid" | "unpaid";
+  tx_hash: string; // can be empty string when unpaid
+}
+
+// List response with counts and sorted items (paid first, then unpaid)
+export interface DmsPaymentsListResponse {
+  total_count: number;
+  paid_count: number;
+  unpaid_count: number;
+  items: DmsPaymentItem[];
+}
+
+// Report payload we POST to DMS via backend after MetaMask sends
+export interface PaymentReport {
+  tx_hash: string;
+  to_address: string;
+  amount: string;
+  payment_provider: string; // maps to unique_id
+}
+
+// ==== PAYMENTS ENDPOINTS ====
+// Config
+export const getPaymentsConfig = () =>
+  api.get<TokenConfig>("/payments/config").then((res) => res.data);
+
+// New list endpoint (replaces old /payments/pending)
+export const getPaymentsList = () =>
+  api.get<DmsPaymentsListResponse>("/payments/list_payments").then((res) => res.data);
+
+// Report endpoint (replaces old /payments/report)
+export const reportToDms = (payload: PaymentReport) =>
+  api.post<PaymentReport>("/payments/report_to_dms", payload).then((res) => res.data);

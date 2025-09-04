@@ -18,6 +18,7 @@ import Wizzard from "./pages/Wizzard";
 import { useAppMode } from "./hooks/useAppMode";
 import NotFound from "./pages/NotFound";
 import Organizations from "./pages/Organizations";
+import PaymentsPage from "@/components/payments/PaymentsPage";
 
 const queryClient = new QueryClient();
 
@@ -72,6 +73,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               <Route path="/organizations" element={<Organizations />} />
               <Route path="/ensembles" element={<Ensembles />} />
               <Route path="/appliance/dms" element={<DMS />} />
+              <Route path="/payments" element={<PaymentsPage />} />
             </Route>
           </Routes>
         </HashRouter>
