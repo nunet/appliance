@@ -12,13 +12,13 @@ from modules.dms_manager import DMSManager
 
 router = APIRouter()
 
-# --------- hard-coded token config (for now) ---------
-PAY_CHAIN_ID = 1
-PAY_TOKEN_ADDRESS = "0xNTXTokenAddress"  # TODO: replace with real NTX contract
-PAY_TOKEN_DECIMALS = 6
-PAY_TOKEN_SYMBOL = "NTX"
-PAY_EXPLORER_BASE = None
-PAY_NETWORK_NAME = None
+# --------- hard-coded token config (Just for testing for now) ---------
+PAY_CHAIN_ID = 11155111  # Sepolia chain ID
+PAY_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000"  
+PAY_TOKEN_DECIMALS = 18   # ETH uses 18 decimals
+PAY_TOKEN_SYMBOL = "ETH"  # Native Sepolia token
+PAY_EXPLORER_BASE = "https://sepolia.etherscan.io/"
+PAY_NETWORK_NAME = "Ethereum Sepolia"
 # --------------------------------------------------------------
 
 def get_mgr():
@@ -70,10 +70,10 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         "tx_hash": d.get("tx_hash") or d.get("TxHash") or "",
     }
 
-# status sort: "paid" first then "unpaid" (per your requirement)
+# status sort: "unpaid" first then "paid" (updated requirement)
 def _status_rank(status: str) -> int:
     s = (status or "").lower()
-    return 0 if s == "paid" else 1 if s == "unpaid" else 99
+    return 0 if s == "unpaid" else 1 if s == "paid" else 99
 
 # --- Routes ---
 
@@ -105,7 +105,7 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
                 pass
             normed.append(tx)
 
-    # sort: paid first, then unpaid
+    # sort: unpaid first, then paid
     normed.sort(key=lambda t: (_status_rank(t.get("status", "")), t.get("unique_id", "")))
 
     # counts
@@ -130,6 +130,7 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
 
     Returns the same 4 fields back.
     """
+    
     # normalize address form (allow bare 40-hex without 0x in dev data)
     addr = body.to_address.strip()
     if not addr.startswith("0x") and len(addr) == 40:
@@ -139,7 +140,7 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
     if body.tx_hash and not _txhash_re.match(body.tx_hash):
         # raise HTTPException(status_code=400, detail="Invalid tx_hash format")
         pass
-
+    print(body)
     # Call DMS confirm; payment_provider maps to unique_id
     dms_res = mgr.confirm_transaction(unique_id=body.payment_provider, tx_hash=body.tx_hash)
     if dms_res.get("status") != "success":

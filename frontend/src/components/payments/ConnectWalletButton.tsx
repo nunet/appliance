@@ -1,44 +1,36 @@
-import { useEffect, useState } from "react";
 import { Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../ui/button";
+import { useWallet } from "./useWallet";
 
 function shorten(addr: string) {
   return addr.slice(0, 6) + "…" + addr.slice(-4);
 }
 
 export function ConnectWalletButton() {
-  const [address, setAddress] = useState<string | null>(null);
+  const { address, isConnecting, connect } = useWallet();
 
-  useEffect(() => {
-    const eth = (window as any).ethereum;
-    if (!eth?.on) return;
-    const handleAccountsChanged = (accounts: string[]) =>
-      setAddress(accounts?.[0] ?? null);
-    eth.on("accountsChanged", handleAccountsChanged);
-    return () => {
-      eth.removeListener?.("accountsChanged", handleAccountsChanged);
-    };
-  }, []);
-
-  async function connect() {
-    const eth = (window as any).ethereum;
-    if (!eth) {
-      toast.error("MetaMask not found");
-      return;
-    }
+  async function onClick() {
     try {
-      const accounts = await eth.request({ method: "eth_requestAccounts" });
-      setAddress(accounts?.[0] ?? null);
+      await connect();
     } catch (e: any) {
-      toast.error("Connection rejected", { description: e?.message });
+      toast.error("MetaMask not found or rejected", {
+        description: e?.message,
+      });
     }
   }
 
   return (
-    <Button variant="ghost" size="sm" onClick={connect} className="font-mono">
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onClick}
+      className="font-mono"
+      disabled={isConnecting}
+      title={address ? "Connected" : "Connect wallet"}
+    >
       <Wallet className="h-4 w-4 mr-2" />
-      {address ? shorten(address) : "Connect"}
+      {address ? shorten(address) : isConnecting ? "Connecting…" : "Connect"}
     </Button>
   );
 }

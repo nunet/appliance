@@ -8,12 +8,7 @@ import {
   DmsPaymentItem,
   reportToDms,
 } from "@/api/api";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +20,8 @@ import { CheckCheckIcon, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { sendNTX } from "@/lib/sendNTX";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useWallet } from "./useWallet";
+
 
 function shorten(addr: string) {
   if (!addr) return "";
@@ -39,6 +36,8 @@ export default function PaymentsPage() {
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [sent, setSent] = useState<Record<string, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  const { address, connect, isConnected } = useWallet();
 
   const cfgQ = useQuery({
     queryKey: ["payments", "config"],
@@ -57,7 +56,6 @@ export default function PaymentsPage() {
 
   const config = cfgQ.data;
   const list = listQ.data;
-
   const items = list?.items ?? [];
 
   const filtered = useMemo(() => {
@@ -84,12 +82,24 @@ export default function PaymentsPage() {
       return;
     }
 
+    // Require wallet connection first
+    if (!isConnected) {
+      try {
+        await connect();
+      } catch (err: any) {
+        toast.error("Connect wallet to pay", {
+          description: err?.message,
+        });
+        return;
+      }
+    }
+
     try {
       setSending((s) => ({ ...s, [p.unique_id]: true }));
       const { token_address, token_decimals, chain_id, explorer_base_url } =
         config;
 
-      // Send ERC-20 transfer
+      // Send native or ERC-20 depending on token_address
       const { hash } = await sendNTX({
         tokenAddress: token_address,
         to: p.to_address,
@@ -100,19 +110,18 @@ export default function PaymentsPage() {
 
       setSent((s) => ({ ...s, [p.unique_id]: hash }));
 
-      // Report back to backend -> DMS
+      // Report to backend -> DMS
       await reportToDms({
         tx_hash: hash,
         to_address: p.to_address,
         amount: p.amount,
-        payment_provider: p.unique_id, // unique_id maps to DMS unique-id
+        payment_provider: p.unique_id,
       });
 
       toast.success("Transaction sent", {
         description: explorer_base_url ? `Tx: ${hash}` : undefined,
       });
 
-      // Refresh list to reflect new status ordering
       listQ.refetch();
     } catch (err: any) {
       console.error(err);
@@ -235,16 +244,11 @@ export default function PaymentsPage() {
               ))}
             </div>
           ) : filtered.length === 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Nothing to show</CardTitle>
-              </CardHeader>
-              <CardContent className="text-muted-foreground">
-                Try clearing the filter or search
-              </CardContent>
+            <Card className="p-4">
+              <div className="text-muted-foreground">Try clearing the filter or search</div>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 gap-3">
               {filtered.map((p) => {
                 const isSending = !!sending[p.unique_id];
                 const txHash = sent[p.unique_id];
@@ -255,58 +259,65 @@ export default function PaymentsPage() {
 
                 return (
                   <Card key={p.unique_id} className="hover:shadow-md transition">
-                    <CardHeader className="pb-2">
+                    <CardHeader className="py-3">
                       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-                        {/* Left: ID + details */}
+                        {/* Left: single wrapping line of details (+ optional last tx line) */}
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <CopyButton text={p.unique_id} className="mr-2" />
-                            <CardTitle
-                              className="truncate max-w-[260px] md:max-w-none font-mono text-base"
-                              title={p.unique_id}
-                            >
-                              {p.unique_id}
-                            </CardTitle>
-                          </div>
-                          <div className="mt-2 text-sm text-muted-foreground space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium text-foreground">To:</span>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <CopyButton text={p.unique_id} className="mr-1" />
+                              <span
+                                className="truncate max-w-[180px] md:max-w-[280px] font-mono text-sm"
+                                title={p.unique_id}
+                              >
+                                {p.unique_id}
+                              </span>
+                            </div>
+
+                            <Separator orientation="vertical" className="hidden md:inline-flex h-4" />
+
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs text-muted-foreground">To</span>
                               <code
-                                className="bg-muted px-2 py-1 rounded truncate max-w-[260px] md:max-w-none"
+                                className="bg-muted px-2 py-0.5 rounded truncate max-w-[200px] md:max-w-[320px]"
                                 title={p.to_address}
                               >
                                 {p.to_address}
                               </code>
                               <CopyButton text={p.to_address} />
                             </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium text-foreground">Amount:</span>
-                              <code className="bg-muted px-2 py-1 rounded text-green-500">
+
+                            <Separator orientation="vertical" className="hidden md:inline-flex h-4" />
+
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground">Amount</span>
+                              <code className="bg-muted px-2 py-0.5 rounded text-green-600">
                                 {config?.token_symbol ?? "NTX"} {p.amount}
                               </code>
                             </div>
-                            {(txHash || p.tx_hash) && (
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-medium text-foreground">Last TX:</span>
-                                <code className="bg-muted px-2 py-1 rounded">
-                                  {shorten(txHash || p.tx_hash)}
-                                </code>
-                                {explorer && (
-                                  <a
-                                    href={explorer}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-primary hover:underline"
-                                  >
-                                    View on explorer
-                                  </a>
-                                )}
-                              </div>
-                            )}
                           </div>
+
+                          {(txHash || p.tx_hash) && (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                              <span className="font-medium text-foreground">Last TX</span>
+                              <code className="bg-muted px-2 py-0.5 rounded">
+                                {shorten(txHash || p.tx_hash)}
+                              </code>
+                              {explorer && (
+                                <a
+                                  href={explorer}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-primary hover:underline"
+                                >
+                                  View on explorer
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </div>
 
-                        {/* Right: Status + Action (stacked) */}
+                        {/* Right: Status + Action stacked, compact */}
                         <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
                           <Badge
                             variant="outline"
@@ -322,9 +333,12 @@ export default function PaymentsPage() {
 
                           <Button
                             size="sm"
-                            className="w-full md:w-auto mt-10"
+                            className="w-full md:w-auto"
                             onClick={() => handlePay(p)}
-                            disabled={isSending || p.status === "paid" || !config}
+                            disabled={
+                              isSending || p.status === "paid" || !config || !isConnected
+                            }
+                            title={!isConnected ? "Connect wallet to pay" : undefined}
                           >
                             {isSending ? (
                               <>
@@ -343,6 +357,12 @@ export default function PaymentsPage() {
                               </>
                             )}
                           </Button>
+
+                          {!isConnected && (
+                            <span className="text-xs text-muted-foreground">
+                              Connect wallet to pay
+                            </span>
+                          )}
                         </div>
                       </div>
                     </CardHeader>
