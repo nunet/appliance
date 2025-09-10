@@ -6,7 +6,6 @@ import { api } from "../../api/organizations";
 import { Circle } from "lucide-react";
 import { ExpiryCard } from "./ExpiryDate";
 
-const API_BASE = "YOUR_API_BASE_HERE";
 
 /** Select organization */
 export function OrgSelect({

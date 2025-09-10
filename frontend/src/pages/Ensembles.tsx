@@ -8,8 +8,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { getTemplates } from "../api/deployments";
+import { Button } from "@/components/ui/button";
+import TemplateUploadDialog from "@/components/ensembles/TemplateUploadDialog";
 
 export default function HorizontalCarousel() {
+  const [uploadOpen, setUploadOpen] = React.useState(false);
+
   // Fetch templates using TanStack Query
   const { data, isLoading, isError } = useQuery({
     queryKey: ["templates-ensembles"],
@@ -21,11 +25,12 @@ export default function HorizontalCarousel() {
     return (
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
-            {/* <CardDescription>
-              Click on a template to view or deploy.
-            </CardDescription> */}
+          {/* ✅ Put the button in the header even during loading */}
+          <CardHeader className="flex items-center justify-between flex-row">
+            <div>
+              <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+            </div>
+            <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
           </CardHeader>
           <div className="w-full overflow-x-auto">
             <div className="flex gap-4 p-4">
@@ -42,6 +47,12 @@ export default function HorizontalCarousel() {
             </div>
           </div>
         </Card>
+
+        {/* ✅ Mount the dialog */}
+        <TemplateUploadDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+        />
       </div>
     );
   }
@@ -55,19 +66,41 @@ export default function HorizontalCarousel() {
 
   // If empty
   if (templates.length === 0) {
-    return <p className="text-muted-foreground">No templates found.</p>;
+    return (
+      <div className="grid grid-cols-1 gap-4 px-4 my-4">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
+          <CardHeader className="flex items-center justify-between flex-row">
+            <div>
+              <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+              <CardDescription>Upload a template to get started.</CardDescription>
+            </div>
+            <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
+          </CardHeader>
+        </Card>
+
+        <TemplateUploadDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+        />
+      </div>
+    );
   }
 
   // Normal render
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4">
       <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
-        <CardHeader>
-          <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
-          <CardDescription>
-            Click on a template to view or deploy.
-          </CardDescription>
+        {/* ✅ Button in the main header */}
+        <CardHeader className="flex items-center justify-between flex-row">
+          <div>
+            <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+            <CardDescription>
+              Click on a template to view or deploy.
+            </CardDescription>
+          </div>
+          <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
         </CardHeader>
+
         <div className="w-full overflow-x-auto">
           <div className="flex gap-4 snap-x snap-mandatory overflow-x-scroll scrollbar-hide p-4">
             {templates.map((template: any, idx: number) => (
@@ -87,6 +120,11 @@ export default function HorizontalCarousel() {
           </div>
         </div>
       </Card>
+
+      <TemplateUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+      />
     </div>
   );
 }

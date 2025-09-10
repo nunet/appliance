@@ -78,7 +78,7 @@ export default function Page() {
   const [wsRef, setWsRef] = useState<WebSocket | null>(null);
 
   useEffect(() => {
-    const ws = new WebSocket(`${import.meta.env.VITE_SOCKET_URL}/dms/ws/init`);
+    const ws = new WebSocket("ws://127.0.0.1:8082");
     setWsRef(ws);
 
     ws.onopen = () => console.log("✅ WebSocket connected");

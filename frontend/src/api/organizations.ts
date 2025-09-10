@@ -1,21 +1,20 @@
 import axios from "axios";
 import type { StatusResponse } from "../components/organizations/OnboardFlow";
 
-const API_BASE = import.meta.env.VITE_API_URL;
 
 export const api = {
   async getKnownOrgs(): Promise<Record<string, any>> {
-    const { data } = await axios.get(`${API_BASE}/organizations/known`);
+    const { data } = await axios.get(`/organizations/known`);
     return data;
   },
 
   async getJoinedOrgs(): Promise<Record<string, any>> {
-    const { data } = await axios.get(`${API_BASE}/organizations/joined`);
+    const { data } = await axios.get(`/organizations/joined`);
     return data;
   },
 
   async postSelectOrg(org_did: string) {
-    const { data } = await axios.post(`${API_BASE}/organizations/select`, {
+    const { data } = await axios.post(`/organizations/select`, {
       org_did,
     });
     return data;
@@ -29,33 +28,33 @@ export const api = {
     discord?: string;
   }) {
     const { data } = await axios.post(
-      `${API_BASE}/organizations/join/submit`,
+      `/organizations/join/submit`,
       payload
     );
     return data;
   },
 
   async getStatus(): Promise<StatusResponse> {
-    const { data } = await axios.get(`${API_BASE}/organizations/status`);
+    const { data } = await axios.get(`/organizations/status`);
     return data;
   },
 
   async postProcess() {
     const { data } = await axios.post(
-      `${API_BASE}/organizations/join/process`,
+      `/organizations/join/process`,
       true
     );
     return data;
   },
 
   async poll() {
-    const { data } = await axios.get(`${API_BASE}/organizations/join/poll`);
+    const { data } = await axios.get(`/organizations/join/poll`);
     return data;
   },
 
   async reset() {
     const { data } = await axios.post(
-      `${API_BASE}/organizations/onboarding/reset`
+      `/organizations/onboarding/reset`
     );
     return data;
   },

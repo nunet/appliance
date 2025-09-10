@@ -14,9 +14,9 @@ router = APIRouter()
 
 # --------- hard-coded token config (Just for testing for now) ---------
 PAY_CHAIN_ID = 11155111  # Sepolia chain ID
-PAY_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000"  
-PAY_TOKEN_DECIMALS = 18   # ETH uses 18 decimals
-PAY_TOKEN_SYMBOL = "ETH"  # Native Sepolia token
+PAY_TOKEN_ADDRESS = "0xB37216b70a745129966E553cF8Ee2C51e1cB359A"  
+PAY_TOKEN_DECIMALS = 6
+PAY_TOKEN_SYMBOL = "TSTNTX"
 PAY_EXPLORER_BASE = "https://sepolia.etherscan.io/"
 PAY_NETWORK_NAME = "Ethereum Sepolia"
 # --------------------------------------------------------------

@@ -1,7 +1,6 @@
 // src/api.ts
 import axios from "axios";
 
-const API_BASE = import.meta.env.VITE_API_URL;
 
 // ==== TYPES ====
 export interface CommandResult {
@@ -48,7 +47,7 @@ export interface SshStatus {
 
 // ==== AXIOS INSTANCE ====
 const api = axios.create({
-  baseURL: API_BASE,
+  baseURL: "",
   headers: {
     "Content-Type": "application/json",
   },

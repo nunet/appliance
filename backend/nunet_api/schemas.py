@@ -32,6 +32,10 @@ __all__ = [
     "PaymentReportOut",
     "DmsTransaction",
     "DmsTransactionsList",
+    "FormFieldOption", "FormField", "FormSchema",
+    "SchemaFieldOverride", "SchemaHints",
+    "UploadNeedsInputDetail", "UploadConfirmOverwriteDetail",
+    "UploadTemplateResponse",
 
 ]
 
@@ -250,3 +254,71 @@ class StructuredLogs(BaseModel):
     message: str
     allocation: Optional[AllocationLogs] = None
     dms_logs: Optional[DmsLogBundle] = None
+
+
+class FormFieldOption(BaseModel):
+    value: Any
+    label: str
+
+class FormField(BaseModel):
+    label: str
+    type: Literal["text", "number", "select", "boolean"] = "text"
+    options: Optional[List[FormFieldOption]] = None
+    default: Optional[Any] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    step: Optional[float] = None
+    required: Optional[bool] = True
+    placeholder: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    pattern: Optional[str] = None
+
+class FormSchema(BaseModel):
+    name: str
+    description: Optional[str] = None
+    fields: Dict[str, FormField] = PydField(default_factory=dict)
+
+class SchemaFieldOverride(BaseModel):
+    type: Optional[Literal["text", "number", "select", "boolean"]] = None
+    options: Optional[List[FormFieldOption]] = None
+    default: Optional[Any] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    step: Optional[float] = None
+    required: Optional[bool] = None
+    placeholder: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    pattern: Optional[str] = None
+
+class SchemaHints(BaseModel):
+    """
+    Optional hints to improve auto-generated schema.
+    - name/description shape the form meta
+    - field_overrides lets callers set types, ranges, select options, etc.
+    """
+    name: Optional[str] = None
+    description: Optional[str] = None
+    field_overrides: Dict[str, SchemaFieldOverride] = PydField(default_factory=dict)
+
+# --- Convenience error detail shapes (used in HTTPException.detail) ---
+
+class UploadNeedsInputDetail(BaseModel):
+    status: Literal["needs_input"] = "needs_input"
+    message: str
+    prompts: List[Dict[str, Any]]  # e.g., [{"field":"bird_color","required_keys":["options"],"reason":"select_missing_options","examples":[...]}]
+
+class UploadConfirmOverwriteDetail(BaseModel):
+    status: Literal["confirm_overwrite"] = "confirm_overwrite"
+    message: str
+    existing_paths: Dict[str, Optional[str]]  # {"yaml": "...", "json": "..."}
+
+class UploadTemplateResponse(BaseModel):
+    status: Literal["success", "error"]
+    yaml_path: Optional[str] = None
+    json_path: Optional[str] = None
+    name: Optional[str] = None
+    size: Optional[int] = None
+    modified_at: Optional[str] = None
+    message: Optional[str] = None
