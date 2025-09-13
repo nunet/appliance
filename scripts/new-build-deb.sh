@@ -88,6 +88,7 @@ Wants=network-online.target
 
 [Service]
 User=${SERVICE_USER}
+KeyringMode=shared
 WorkingDirectory=/usr/lib/nunet-appliance-web
 Environment=PORT=8080
 Environment=WORKERS=2
