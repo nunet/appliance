@@ -113,7 +113,7 @@ SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0027
 # Allow writes to specific directories
-ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache
+ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system
 
 [Install]
 WantedBy=multi-user.target
