@@ -75,11 +75,23 @@ cat > "$ROOT/home/nunet/scripts/load-nunet-user-keyring.sh" <<'EOF'
 #!/bin/bash
 set -e
 
+# Remove any existing key with the same description from the nunet user's keyring
+existing_key=$(keyctl search @u user dms_passphrase 2>/dev/null || true)
+if [ -n "$existing_key" ]; then
+    keyctl unlink "$existing_key" @u
+    echo "Removed existing DMS passphrase from keyring."
+fi
+
 # Load the DMS passphrase into the keyring
 if [ -f /home/nunet/.secrets/dms_passphrase ]; then
     echo "Loading DMS passphrase into keyring..."
-    keyctl add user dms_passphrase "$(cat /home/nunet/.secrets/dms_passphrase)" @u
+    keyctl padd user dms_passphrase @u < /home/nunet/.secrets/dms_passphrase
     echo "DMS passphrase loaded into keyring."
+    
+    # Delete the secret after we have loaded it into the keyring for security
+    # We can expect it to be replaced by the ubuntu user on reboot
+    rm /home/nunet/.secrets/dms_passphrase
+    echo "Passphrase file deleted for security."
 else
     echo "DMS passphrase file not found. Skipping keyring load."
 fi
@@ -90,11 +102,25 @@ cat > "$ROOT/home/ubuntu/scripts/load-ubuntu-user-keyring.sh" <<'EOF'
 #!/bin/bash
 set -e
 
+# Remove any existing key with the same description from the ubuntu user's keyring
+existing_key=$(keyctl search @u user dms_passphrase 2>/dev/null || true)
+if [ -n "$existing_key" ]; then
+    keyctl unlink "$existing_key" @u
+    echo "Removed existing DMS passphrase from keyring."
+fi
+
 # Load the DMS passphrase into the keyring
-if [ -f /home/nunet/.secrets/dms_passphrase ]; then
+if [ -f /home/ubuntu/.secrets/dms_passphrase ]; then
     echo "Loading DMS passphrase into keyring..."
-    keyctl add user dms_passphrase "$(cat /home/nunet/.secrets/dms_passphrase)" @u
+    keyctl padd user dms_passphrase @u < /home/ubuntu/.secrets/dms_passphrase
     echo "DMS passphrase loaded into keyring."
+    
+    # Once we have loaded the keyring, copy the secret to the nunet user's secret location
+    # Their keyring loader will pick it up then delete it for security, so we need to put it back again on reboot
+    sudo cp /home/ubuntu/.secrets/dms_passphrase /home/nunet/.secrets/
+    # Fix perms to allow the nunet user to read and delete the file
+    sudo chown nunet:nunet /home/nunet/.secrets/dms_passphrase
+    echo "Passphrase copied to nunet user location."
 else
     echo "DMS passphrase file not found. Skipping keyring load."
 fi
@@ -106,28 +132,74 @@ cat > "$ROOT/home/nunet/scripts/rundms.sh" <<'EOF'
 #!/bin/bash
 set -e
 
-# Get passphrase from keyring
-PASSPHRASE=$(keyctl print @u 2>/dev/null | grep dms_passphrase | cut -d: -f2 | tr -d ' ')
+# Retrieve the passphrase securely from the keyring
+export DMS_PASSPHRASE=$(keyctl pipe $(keyctl request user dms_passphrase) 2>/dev/null)
 
-if [ -z "$PASSPHRASE" ]; then
+if [ -z "$DMS_PASSPHRASE" ]; then
     echo "DMS passphrase not found in keyring. Please run load-nunet-user-keyring.sh first."
     exit 1
 fi
 
-# Run DMS with the passphrase
+# Execute the DMS command with proper config
 echo "Starting DMS..."
-export DMS_PASSPHRASE="$PASSPHRASE"
-exec /usr/local/bin/dms
+exec /usr/bin/nunet --config /home/nunet/config/dms_config.json run -c dms
 EOF
 chmod 0755 "$ROOT/home/nunet/scripts/rundms.sh"
 
 # DMS config
 cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
 {
-  "dms": {
-    "passphrase_file": "/home/nunet/.secrets/dms_passphrase",
-    "data_dir": "/home/nunet/nunet",
-    "log_level": "info"
+  "apm": {
+    "api_key": "",
+    "environment": "production",
+    "server_url": "http://apm.telemetry.nunet.io",
+    "service_name": "nunet-dms"
+  },
+  "general": {
+    "data_dir": "/home/nunet/nunet/data",
+    "debug": false,
+    "port_available_range_from": 1024,
+    "port_available_range_to": 32768,
+    "user_dir": "/home/nunet/.nunet",
+    "work_dir": "/home/nunet/nunet"
+  },
+  "job": {
+    "allow_privileged_docker": false
+  },
+  "observability": {
+    "elasticsearch_api_key": "",
+    "elasticsearch_enabled": false,
+    "elasticsearch_index": "nunet-dms",
+    "elasticsearch_url": "http://localhost:9200",
+    "flush_interval": 5,
+    "insecure_skip_verify": true,
+    "log_file": "/home/nunet/logs/nunet-dms.log",
+    "log_level": "DEBUG",
+    "max_age": 28,
+    "max_backups": 3,
+    "max_size": 100
+  },
+  "p2p": {
+    "bootstrap_peers": [
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/QmQ2irHa8aFTLRhkbkQCRrounE4MbttNp8ki7Nmys4F9NP",
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/Qmf16N2ecJVWufa29XKLNyiBxKWqVPNZXjbL3JisPcGqTw",
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/QmTkWP72uECwCsiiYDpCFeTrVeUM9huGTPsg3m6bHxYQFZ"
+    ],
+    "fd": 512,
+    "listen_address": [
+      "/ip4/0.0.0.0/tcp/9000",
+      "/ip4/0.0.0.0/udp/9000/quic-v1"
+    ],
+    "memory": 1024
+  },
+  "profiler": {
+    "addr": "127.0.0.1",
+    "enabled": true,
+    "port": 6060
+  },
+  "rest": {
+    "addr": "127.0.0.1",
+    "port": 9999
   }
 }
 EOF
@@ -135,8 +207,9 @@ EOF
 # Systemd services
 cat > "$ROOT/etc/systemd/system/loadubuntukeyring.service" <<'EOF'
 [Unit]
-Description=Load Ubuntu User Keyring
-After=multi-user.target
+Description=Load DMS Passphrase into Kernel Keyring for ubuntu
+After=network.target
+Before=loadnunetkeyring.service
 
 [Service]
 Type=oneshot
@@ -151,8 +224,9 @@ EOF
 
 cat > "$ROOT/etc/systemd/system/loadnunetkeyring.service" <<'EOF'
 [Unit]
-Description=Load NuNet User Keyring
-After=multi-user.target
+Description=Load DMS Passphrase into Kernel Keyring for nunet
+After=loadubuntukeyring.service
+Before=nunetdms.service
 
 [Service]
 Type=oneshot
@@ -168,23 +242,113 @@ EOF
 # DMS service
 cat > "$ROOT/etc/systemd/system/nunetdms.service" <<'EOF'
 [Unit]
-Description=NuNet DMS Service
-After=network.target loadnunetkeyring.service
-Wants=loadnunetkeyring.service
+Description=NuNet Device Management Service
+After=network.target docker.service loadnunetkeyring.service loadubuntukeyring.service
+Requires=docker.service loadnunetkeyring.service loadubuntukeyring.service
 
 [Service]
-Type=simple
 User=nunet
 Group=nunet
-WorkingDirectory=/home/nunet
+KeyringMode=shared
+Environment=GOLOG_LOG_LEVEL=debug
 ExecStart=/home/nunet/scripts/rundms.sh
 Restart=on-failure
-RestartSec=5
-Environment=DMS_PASSPHRASE_FILE=/home/nunet/.secrets/dms_passphrase
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# DMS configuration script
+cat > "$ROOT/home/ubuntu/scripts/configure-dms.sh" <<'EOF'
+#!/bin/bash
+
+if [ -d "/home/ubuntu/.nunet" ] && [ "$(ls -A /home/ubuntu/.nunet)" ]; then
+    echo "⚠️ WARNING: An existing NuNet DMS configuration was detected in ~/.nunet."
+    
+    # Ask user whether to overwrite or cancel
+    while true; do
+        read -p "Do you want to overwrite the existing configuration? (y/n): " choice
+        case "$choice" in
+            y|Y ) 
+                TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                BACKUP_DIR="/home/ubuntu/.nunet_backup_$TIMESTAMP"
+                
+                echo "📂 Moving existing configuration to $BACKUP_DIR..."
+                mv "/home/ubuntu/.nunet" "$BACKUP_DIR"
+                echo "✅ Backup complete. Proceeding with new configuration..."
+                break
+                ;;
+            n|N ) 
+                echo "❌ Installation canceled by user."
+                exit 1
+                ;;
+            * ) echo "Invalid input. Please enter y (yes) or n (no).";;
+        esac
+    done
+fi
+
+
+# Create A random passphrase for DMS context
+# Define the number of words in the passphrase
+NUM_WORDS=3
+SEPARATOR="-"
+
+# Check if the system has a dictionary file
+if [ ! -f "/usr/share/dict/words" ]; then
+    echo "❌ Dictionary file not found! Falling back to built-in words."
+    WORD_LIST=("apple" "banana" "cherry" "delta" "echo" "foxtrot" "gamma" "hotel" "india" "juliet" "kilo" "lima" "mango" "november" "oscar" "papa" "quebec" "romeo" "sierra" "tango" "uniform" "victor" "whiskey" "xray" "yankee" "zulu")
+else
+    # Use system word list
+    WORD_LIST=($(shuf -n 1000 /usr/share/dict/words | grep -E '^[a-zA-Z]{3,}$'))
+fi
+
+# Select random words
+PASS_PHRASE=""
+for i in $(seq 1 $NUM_WORDS); do
+    WORD=${WORD_LIST[$RANDOM % ${#WORD_LIST[@]}]}
+    # Capitalize the first letter
+    FORMATTED_WORD="$(tr '[:lower:]' '[:upper:]' <<< ${WORD:0:1})${WORD:1}"
+    if [ -z "$PASS_PHRASE" ]; then
+        PASS_PHRASE="$FORMATTED_WORD"
+    else
+        PASS_PHRASE="$PASS_PHRASE$SEPARATOR$FORMATTED_WORD"
+    fi
+done
+
+# Output the generated passphrase
+echo "🔐 Your DMS Passphrase is: $PASS_PHRASE"
+echo "Write this down and keep it somewhere safe better still use a password manager to store it"
+# Update Passphrase in keystore
+keyctl add user dms_passphrase "$PASS_PHRASE" @u
+# Keystore
+keyctl list @u
+# Make persistant on reboot
+echo "$PASS_PHRASE" > /home/ubuntu/.secrets/dms_passphrase
+# keyctl pipe $(keyctl request user dms_passphrase) > /home/ubuntu/.secrets/dms_passphrase
+chmod 600 /home/ubuntu/.secrets/dms_passphrase
+
+export DMS_PASSPHRASE=$PASS_PHRASE
+# Create new DMS context using the new random passphrase
+DMS_DID=$(nunet key new dms)
+nunet cap new dms
+echo "This is your DMS DID: $DMS_DID"
+export DMS_DID=$DMS_DID
+
+echo "DMS Configuration script has run if you see a DID above then it's golden"
+
+echo "Copy DMS Config to nunet home directory"
+rm /home/nunet/.nunet/key/dms.json
+rm /home/nunet/.nunet/cap/dms.cap
+cp /home/ubuntu/.nunet/key/dms.json /home/nunet/.nunet/key/
+cp /home/ubuntu/.nunet/cap/dms.cap /home/nunet/.nunet/cap/
+echo "Check permissions for nunet user"
+ls -al /home/nunet/.nunet/key/
+ls -al /home/nunet/.nunet/cap/
+echo "$PASS_PHRASE" > /home/nunet/.secrets/dms_passphrase
+echo "Done!"
+EOF
+chmod 0755 "$ROOT/home/ubuntu/scripts/configure-dms.sh"
 
 # Snap installation script
 cat > "$ROOT/usr/local/bin/install-snaps.sh" <<'EOF'
@@ -219,6 +383,7 @@ Description: NuNet Appliance Base System
  - User and directory setup
  - Keyring management
  - DMS service configuration
+ - DMS configuration script (configure-dms.sh)
  - Snap package installation
  - Systemd service configuration
 EOF
