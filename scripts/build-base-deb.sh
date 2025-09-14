@@ -280,8 +280,8 @@ EOF
 chmod 0755 "$ROOT/usr/local/bin/install-snaps.sh"
 
 # Copy splash screen files
-cp ../splash/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/splash/"
-cp ../splash/show_boot_splash.sh "$ROOT/home/ubuntu/nunet/appliance/splash/"
+cp splash/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/splash/"
+cp splash/show_boot_splash.sh "$ROOT/home/ubuntu/nunet/appliance/splash/"
 chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py"
 chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/show_boot_splash.sh"
 
