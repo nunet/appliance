@@ -18,6 +18,7 @@ mkdir -p "$ROOT/home/nunet/config"
 mkdir -p "$ROOT/home/ubuntu/scripts"
 mkdir -p "$ROOT/home/ubuntu/nunet/appliance/known_orgs"
 mkdir -p "$ROOT/home/ubuntu/nunet/appliance/deployments"
+mkdir -p "$ROOT/home/ubuntu/nunet/appliance/splash"
 mkdir -p "$ROOT/etc/systemd/system"
 mkdir -p "$ROOT/var/lib/nunet-appliance"
 
@@ -278,6 +279,22 @@ echo "Snap installation complete."
 EOF
 chmod 0755 "$ROOT/usr/local/bin/install-snaps.sh"
 
+# Copy splash screen files
+cp ../splash/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/splash/"
+cp ../splash/show_boot_splash.sh "$ROOT/home/ubuntu/nunet/appliance/splash/"
+chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py"
+chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/show_boot_splash.sh"
+
+# Append splash launcher to existing .bashrc
+cat >> "$ROOT/home/ubuntu/.bashrc" <<'EOF'
+
+# NuNet Appliance Boot Splash Screen
+# Show splash screen on login
+if [ -f /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh ]; then
+    /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh
+fi
+EOF
+
 # --- DEBIAN metadata ---
 cat > "$ROOT/DEBIAN/control" <<EOF
 Package: nunet-appliance-base
@@ -311,12 +328,20 @@ fi
 # Create appliance directory structure
 mkdir -p /home/ubuntu/nunet/appliance/known_orgs
 mkdir -p /home/ubuntu/nunet/appliance/deployments
+mkdir -p /home/ubuntu/nunet/appliance/splash
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/known_orgs
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/deployments
+chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash
 chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
+chmod 755 /home/ubuntu/nunet/appliance/splash
+
+# Set ownership for splash files and .bashrc
+chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py
+chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh
+chown ubuntu:ubuntu /home/ubuntu/.bashrc
 
 # Install snap packages
 if [ -f /usr/local/bin/install-snaps.sh ]; then
