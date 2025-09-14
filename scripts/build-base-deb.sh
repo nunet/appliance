@@ -285,15 +285,7 @@ cp splash/show_boot_splash.sh "$ROOT/home/ubuntu/nunet/appliance/splash/"
 chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py"
 chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/show_boot_splash.sh"
 
-# Append splash launcher to existing .bashrc
-cat >> "$ROOT/home/ubuntu/.bashrc" <<'EOF'
-
-# NuNet Appliance Boot Splash Screen
-# Show splash screen on login
-if [ -f /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh ]; then
-    /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh
-fi
-EOF
+# Note: .bashrc modification will be done in postinst to append to existing file
 
 # --- DEBIAN metadata ---
 cat > "$ROOT/DEBIAN/control" <<EOF
@@ -341,7 +333,17 @@ chmod 755 /home/ubuntu/nunet/appliance/splash
 # Set ownership for splash files and .bashrc
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh
-chown ubuntu:ubuntu /home/ubuntu/.bashrc
+
+# Append splash launcher to existing .bashrc (only if not already present)
+if [ -f /home/ubuntu/.bashrc ] && ! grep -q "NuNet Appliance Boot Splash Screen" /home/ubuntu/.bashrc; then
+    echo "" >> /home/ubuntu/.bashrc
+    echo "# NuNet Appliance Boot Splash Screen" >> /home/ubuntu/.bashrc
+    echo "# Show splash screen on login" >> /home/ubuntu/.bashrc
+    echo "if [ -f /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh ]; then" >> /home/ubuntu/.bashrc
+    echo "    /home/ubuntu/nunet/appliance/splash/show_boot_splash.sh" >> /home/ubuntu/.bashrc
+    echo "fi" >> /home/ubuntu/.bashrc
+    chown ubuntu:ubuntu /home/ubuntu/.bashrc
+fi
 
 # Install snap packages
 if [ -f /usr/local/bin/install-snaps.sh ]; then
