@@ -1,0 +1,34 @@
+version: "V1"
+
+allocations:
+    alloc1:
+        type: service
+        executor: docker
+        resources:
+            cpu:
+                cores: {{ allocations_alloc1_resources_cpu_cores }}
+            gpus: []
+            ram:
+                size: {{ allocations_alloc1_resources_ram_size }} # in GiB
+            disk:
+                size: {{ allocations_alloc1_resources_disk_size }} # in GiB
+        execution:
+            type: docker
+            image: aukilabs/hagall:stable
+            working_directory: /app
+            environment:
+              - DMS_REQUIRE_PROXY=true
+              - DMS_PROXY_URL={{ domain_name }}
+              - DMS_PROXY_PORT={{ proxy_port }}
+              - DYN_DNS_URL=true
+              - HAGALL_ADDR=:{{ proxy_port }}
+              - HAGALL_PUBLIC_ENDPOINT=https://{{ domain_name }}/hagall/
+              - HAGALL_PRIVATE_KEY={{ private_key }}
+              - HAGALL_LOG_LEVEL={{ log_level }}
+        dnsname: hagal-relay
+        failure_recovery: stay_down
+nodes:
+    node1:
+        allocations:
+            - alloc1
+        peer: {{ peer_id }}

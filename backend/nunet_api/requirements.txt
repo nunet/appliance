@@ -1,0 +1,28 @@
+# ---- Core API stack ----
+fastapi>=0.110,<0.115
+starlette>=0.37.2,<0.39.0
+uvicorn[standard]>=0.29,<0.32
+gunicorn>=21.2,<22.0
+
+# ---- Pydantic v2 (with email validation) ----
+pydantic[email]>=2.6,<3.0
+typing-extensions>=4.8
+
+# ---- Common helpers ----
+PyYAML>=6.0.1,<7.0
+python-multipart           # needed for Form/File uploads
+Jinja2>=3.1,<4.0          # templating used by your modules
+requests>=2.31,<3.0       # HTTP client
+qrcode[pil]>=8.0,<9.0     # QR generation (+ Pillow for PNGs)
+
+
+# pip install -r requirements.txt
+# uvicorn nunet_api.app.main:app --host 127.0.0.1 --port 8081 --reload
+
+
+# /etc/sudoers.d/nunet-api
+# ubuntu ALL=(root) NOPASSWD: /usr/bin/tail
+# ubuntu ALL=(ubuntu) NOPASSWD: /home/ubuntu/menu/scripts/configure-dms.sh
+# ubuntu ALL=(root) NOPASSWD: /home/ubuntu/menu/scripts/onboard-max.sh
+# Optional if you switch to journal:
+# ubuntu ALL=(root) NOPASSWD: /bin/journalctl

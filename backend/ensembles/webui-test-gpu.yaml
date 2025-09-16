@@ -1,0 +1,38 @@
+version: "V1"
+
+allocations:
+  alloc1:
+    executor: docker
+    type: service
+    resources:
+      cpu:
+        cores: 4
+      gpus:
+        - vendor: NVIDIA
+      ram:
+        size: 16
+      disk:
+        size: 20
+    execution:
+      type: docker
+      image: ghcr.io/open-webui/open-webui:ollama
+      volumes:
+        - source: ollama
+          target: /root/.ollama
+        - source: open-webui
+          target: /app/backend/data
+      environment:
+        - NVIDIA_VISIBLE_DEVICES=all
+        - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+        - OLLAMA_KEEP_ALIVE=-1
+
+
+nodes:
+  node1:
+    allocations:
+      - alloc1
+    ports:
+      - public: 8080
+        private: 8080
+        allocation: alloc1
+    peer: <peer id goes here>

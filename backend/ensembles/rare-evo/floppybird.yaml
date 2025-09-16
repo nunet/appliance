@@ -1,0 +1,36 @@
+version: "V1"
+
+allocations:
+    alloc1:
+        type: service
+        executor: docker
+        resources:
+            cpu:
+                cores: {{ allocations_alloc1_resources_cpu_cores }}
+            gpus: []
+            ram:
+                size: {{ allocations_alloc1_resources_ram_size }} # in GiB
+            disk:
+                size: {{ allocations_alloc1_resources_disk_size }} # in GiB
+        execution:
+            type: docker
+            image: registry.gitlab.com/nunet/solutions/crappybird:v0.5.4
+            working_directory: /app
+            environment:
+              - DMS_REQUIRE_PROXY=true
+              - DMS_PROXY_PORT={{ proxy_port }}
+              - DMS_DDNS_URL=true
+              - BIRD_COLOR={{ bird_color }}
+              - PYTHONUNBUFFERED=1        # required for real‑time log flush
+              - SCORES_API_URL=https://lambda.telemetry.nunet.io/scores
+        dnsname: {{ dns_name }}
+        failure_recovery: stay_down
+        # -------- new real‑time stdout forwarding --------
+        forwardStdout: true                 # (ExecutionRequest.ForwardStdout)
+        stdoutLabels: ["crappybird", "demo"]
+        stdoutPrefix: "[DMS] "              # only lines that start with this string
+nodes:
+    node1:
+        allocations:
+            - alloc1
+        peer: {{ peer_id }}
