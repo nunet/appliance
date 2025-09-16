@@ -1,5 +1,5 @@
 // src/api.ts
-import axios from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
 
 // ==== TYPES ====
@@ -46,12 +46,43 @@ export interface SshStatus {
 }
 
 // ==== AXIOS INSTANCE ====
-const api = axios.create({
+export const api = axios.create({
   baseURL: "",
   headers: {
     "Content-Type": "application/json",
   },
 });
+
+let authToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+const attachToken = (config: InternalAxiosRequestConfig) => {
+  if (authToken) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${authToken}`;
+  }
+  return config;
+};
+
+api.interceptors.request.use(attachToken);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      unauthorizedHandler?.();
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const setAuthToken = (token: string | null) => {
+  authToken = token;
+};
+
+export const setUnauthorizedHandler = (handler: (() => void) | null) => {
+  unauthorizedHandler = handler;
+};
 
 // ==== DMS ENDPOINTS ====
 export const getDmsVersion = () =>

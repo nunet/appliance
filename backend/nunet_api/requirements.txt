@@ -14,6 +14,8 @@ python-multipart           # needed for Form/File uploads
 Jinja2>=3.1,<4.0          # templating used by your modules
 requests>=2.31,<3.0       # HTTP client
 qrcode[pil]>=8.0,<9.0     # QR generation (+ Pillow for PNGs)
+bcrypt>=4.0,<5.0
+PyJWT>=2.8,<3.0
 
 
 # pip install -r requirements.txt

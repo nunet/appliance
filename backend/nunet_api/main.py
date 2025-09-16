@@ -1,5 +1,5 @@
 # backend/nunet_api/main.py
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -7,7 +7,9 @@ from starlette.middleware.gzip import GZipMiddleware
 from pathlib import Path
 import os
 
-from .routers import dms, sysinfo, ensemble, stream, proc, organizations, payments,ensemble_schema
+from .security import require_auth
+from .routers import auth, dms, sysinfo, ensemble, stream, proc, organizations, payments, ensemble_schema
+
 
 class SPAStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
@@ -17,6 +19,7 @@ class SPAStaticFiles(StaticFiles):
             if exc.status_code == 404 and path != "index.html":
                 return await super().get_response("index.html", scope)
             raise
+
 
 app = FastAPI(title="NuNet Local API", version="1.0.0")
 
@@ -30,19 +33,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- API routers ---
-app.include_router(dms.router, prefix="/dms", tags=["dms"])
-app.include_router(sysinfo.router, prefix="/sys", tags=["system"])
-app.include_router(ensemble.router, prefix="/ensemble", tags=["ensemble"])
-app.include_router(stream.router, tags=["stream"])
-app.include_router(proc.router, prefix="/proc", tags=["proc"])
-app.include_router(organizations.router, prefix="/organizations", tags=["organizations"])
-app.include_router(payments.router, prefix="/payments", tags=["payments"])
-app.include_router(ensemble_schema.router, prefix="/ensemble", tags=["ensemble"])
+protected = [Depends(require_auth)]
 
-@app.get("/health")
+# --- API routers ---
+app.include_router(auth.router)
+app.include_router(dms.router, prefix="/dms", tags=["dms"], dependencies=protected)
+app.include_router(sysinfo.router, prefix="/sys", tags=["system"], dependencies=protected)
+app.include_router(ensemble.router, prefix="/ensemble", tags=["ensemble"], dependencies=protected)
+app.include_router(stream.router, tags=["stream"], dependencies=protected)
+app.include_router(proc.router, prefix="/proc", tags=["proc"], dependencies=protected)
+app.include_router(organizations.router, prefix="/organizations", tags=["organizations"], dependencies=protected)
+app.include_router(payments.router, prefix="/payments", tags=["payments"], dependencies=protected)
+app.include_router(ensemble_schema.router, prefix="/ensemble", tags=["ensemble"], dependencies=protected)
+
+
+@app.get("/health", dependencies=[Depends(require_auth)])
 def health():
     return {"ok": True}
+
 
 # --- Static: frontend/dist ---
 # Priority 1 (production): use env var (e.g., /usr/share/nunet-dms/frontend/dist or /home/ubuntu/package/frontend/dist)
@@ -63,4 +71,5 @@ if not static_path.exists():
     )
 
 app.mount("/", SPAStaticFiles(directory=str(static_path), html=True), name="spa")
+
 

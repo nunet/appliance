@@ -13,12 +13,12 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ..security import is_password_set, validate_token
 from ..utils.pty_bridge import run_pty_ws
 
 router = APIRouter()
 
 HOME = Path.home()
-API_TOKEN = os.getenv("NUNET_API_TOKEN")
 
 # -------------------------
 # Auth helpers (same pattern as we used for stream.py)
@@ -33,21 +33,23 @@ def _extract_ws_token(ws: WebSocket) -> Optional[str]:
     return None
 
 async def _ws_auth_or_close(ws: WebSocket) -> bool:
-    if not API_TOKEN:
-        await ws.accept()
-        return True
+    if not is_password_set():
+        await ws.close(code=4401)
+        return False
     token = _extract_ws_token(ws)
-    if token == API_TOKEN:
+    if token and validate_token(token):
         await ws.accept()
         return True
     await ws.close(code=4401)
     return False
 
+
 def _check_http_token(token: Optional[str]) -> None:
-    if not API_TOKEN:
+    if token is None:
         return
-    if token != API_TOKEN:
-        raise PermissionError("Invalid token")
+    if validate_token(token):
+        return
+    raise PermissionError("Invalid token")
 
 # -------------------------
 # DMS passphrase helper
@@ -180,7 +182,6 @@ async def ws_exec(
     WebSocket interactive runner for whitelisted commands.
 
     Connect with query params:
-      token      : required if NUNET_API_TOKEN is set
       arg        : repeatable, e.g. ?arg=-n&arg=200&arg=/home/nunet/logs/nunet-dms.log
       cwd        : optional working directory (must be under $HOME by default)
       env        : optional JSON object, keys must be whitelisted per command

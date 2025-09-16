@@ -18,6 +18,7 @@ echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y \
     build-essential \
+    cargo \
     python3 \
     python3-pip \
     python3-venv \
@@ -40,7 +41,14 @@ chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/fro
 
 # Build frontend
 echo "Building frontend..."
-( cd "$ROOT/frontend" && npm install && npm run build )
+( cd "$ROOT/frontend" && \
+    npm install && \
+    npm audit fix && \
+    if npm ls @swc/core >/dev/null 2>&1; then \
+      echo "Rebuilding @swc/core from source for host CPU..." && \
+      npm rebuild @swc/core --build-from-source; \
+    fi && \
+    npm run build )
 
 # Build backend
 echo "Building backend for ${ARCH}..."
