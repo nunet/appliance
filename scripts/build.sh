@@ -69,7 +69,7 @@ echo "Building base package for ${ARCH}..."
 
 # Build web package
 echo "Building web package for ${ARCH}..."
-./new-build-deb.sh "${PKGVERSION}" "${ARCH}"
+./build-web-deb.sh "${PKGVERSION}" "${ARCH}"
 
 # Clean up
 deactivate
