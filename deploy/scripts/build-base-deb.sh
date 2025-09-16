@@ -5,7 +5,10 @@ PKGNAME="nunet-appliance-base"
 PKGVERSION="${1:-1.0.0}"
 ARCH="${2:-arm64}"
 
-cd "$(dirname "$0")/.."
+# Resolve repository root from deploy/scripts
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$ROOT_REPO"
 
 DEST="dist"
 ROOT="$DEST/${PKGNAME}_${PKGVERSION}_${ARCH}"
@@ -18,7 +21,7 @@ mkdir -p "$ROOT/home/nunet/config"
 mkdir -p "$ROOT/home/ubuntu/scripts"
 mkdir -p "$ROOT/home/ubuntu/nunet/appliance/known_orgs"
 mkdir -p "$ROOT/home/ubuntu/nunet/appliance/deployments"
-mkdir -p "$ROOT/home/ubuntu/nunet/appliance/splash"
+mkdir -p "$ROOT/home/ubuntu/nunet/appliance/backend/scripts"
 mkdir -p "$ROOT/etc/systemd/system"
 mkdir -p "$ROOT/var/lib/nunet-appliance"
 
@@ -280,8 +283,8 @@ EOF
 chmod 0755 "$ROOT/usr/local/bin/install-snaps.sh"
 
 # Copy splash screen files
-cp splash/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/splash/"
-chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py"
+cp backend/scripts/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/backend/scripts/"
+chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py"
 
 # Note: .bashrc modification will be done in postinst to append to existing file
 
@@ -318,26 +321,26 @@ fi
 # Create appliance directory structure
 mkdir -p /home/ubuntu/nunet/appliance/known_orgs
 mkdir -p /home/ubuntu/nunet/appliance/deployments
-mkdir -p /home/ubuntu/nunet/appliance/splash
+mkdir -p /home/ubuntu/nunet/appliance/backend/scripts
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/known_orgs
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/deployments
-chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash
+chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts
 chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
-chmod 755 /home/ubuntu/nunet/appliance/splash
+chmod 755 /home/ubuntu/nunet/appliance/backend/scripts
 
 # Set ownership for splash files
-chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py
+chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py
 
 # Append splash launcher to existing .bashrc (only if not already present)
 if [ -f /home/ubuntu/.bashrc ] && ! grep -q "NuNet Appliance Boot Splash Screen" /home/ubuntu/.bashrc; then
     echo "" >> /home/ubuntu/.bashrc
     echo "# NuNet Appliance Boot Splash Screen" >> /home/ubuntu/.bashrc
     echo "# Show splash screen on login" >> /home/ubuntu/.bashrc
-    echo "if [ -f /home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py ] && [ -t 1 ]; then" >> /home/ubuntu/.bashrc
-    echo "    python3 /home/ubuntu/nunet/appliance/splash/nunet_boot_splash.py 2>/dev/null || true" >> /home/ubuntu/.bashrc
+    echo "if [ -f /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py ] && [ -t 1 ]; then" >> /home/ubuntu/.bashrc
+    echo "    python3 /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py 2>/dev/null || true" >> /home/ubuntu/.bashrc
     echo "fi" >> /home/ubuntu/.bashrc
     chown ubuntu:ubuntu /home/ubuntu/.bashrc
 fi

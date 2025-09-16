@@ -7,6 +7,10 @@ set -euo pipefail
 PKGVERSION="${1:-1.0.0}"
 ARCH="$(dpkg --print-architecture)"
 
+# Resolve repository root from deploy/scripts
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 echo "Building NuNet Appliance packages v${PKGVERSION} for ${ARCH}"
 
 # Install system dependencies
@@ -30,51 +34,48 @@ sudo apt-get install -y \
     devscripts
 
 # Create build directories
-mkdir -p ../dist ../release/wheels ../release/frontend-dist
+mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 # Ensure proper permissions
-chmod 755 ../dist ../release ../release/wheels ../release/frontend-dist
+chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 
 # Build frontend
 echo "Building frontend..."
-cd ../frontend
-npm install
-npm run build
-cd ../scripts
+( cd "$ROOT/frontend" && npm install && npm run build )
 
 # Build backend
 echo "Building backend for ${ARCH}..."
-python3 -m venv .build-venv
-source .build-venv/bin/activate
+python3 -m venv "$SCRIPT_DIR/.build-venv"
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/.build-venv/bin/activate"
 pip install -U pip wheel pex
 
 # Build wheels for dependencies
-pip wheel -r ../backend/nunet_api/requirements.txt -w ../release/wheels
+pip wheel -r "$ROOT/backend/nunet_api/requirements.txt" -w "$ROOT/release/wheels"
 
 # Build PEX
-cd ../backend
-pex -f "../release/wheels" \
-    -r nunet_api/requirements.txt \
-    -D . \
-    -c gunicorn \
-    -o "../release/nunet-dms-${ARCH}.pex"
-cd ../scripts
+( cd "$ROOT/backend" && \
+  pex -f "$ROOT/release/wheels" \
+      -r nunet_api/requirements.txt \
+      -D . \
+      -c gunicorn \
+      -o "$ROOT/release/nunet-dms-${ARCH}.pex" )
 
 # Copy frontend assets
-cp -a ../frontend/dist/. ../release/frontend-dist/
-cp ../deploy/gunicorn_conf.py ../release/gunicorn_conf.py
+cp -a "$ROOT/frontend/dist/." "$ROOT/release/frontend-dist/"
+cp "$ROOT/deploy/gunicorn_conf.py" "$ROOT/release/gunicorn_conf.py"
 
 # Build base package
 echo "Building base package for ${ARCH}..."
-./build-base-deb.sh "${PKGVERSION}" "${ARCH}"
+"$SCRIPT_DIR/build-base-deb.sh" "${PKGVERSION}" "${ARCH}"
 
 # Build web package
 echo "Building web package for ${ARCH}..."
-./build-web-deb.sh "${PKGVERSION}" "${ARCH}"
+"$SCRIPT_DIR/build-web-deb.sh" "${PKGVERSION}" "${ARCH}"
 
 # Clean up
 deactivate
-rm -rf .build-venv
+rm -rf "$SCRIPT_DIR/.build-venv"
 
 echo "Build complete for ${ARCH}"
 echo "Packages available in:"
-ls -la ../dist/*.deb
+ls -la "$ROOT/dist"/*.deb

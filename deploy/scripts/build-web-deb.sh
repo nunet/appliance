@@ -6,8 +6,10 @@ VERSION="${1:-1.0.0}"                 # deb version; pass as 1st arg to override
 SERVICE_USER="${SERVICE_USER:-ubuntu}" # run the service as this user
 # ------------------------------------------
 
-cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
+# Resolve repository root from deploy/scripts
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$ROOT"
 ARCH="${2:-$(dpkg --print-architecture)}"
 
 echo "==> Building nunet-appliance-web ${VERSION} for ${ARCH} (user: ${SERVICE_USER})"
