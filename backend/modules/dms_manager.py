@@ -45,7 +45,20 @@ class DMSManager:
 
     def __init__(self, menu_dir: Optional[Path] = None, scripts_dir: Optional[Path] = None) -> None:
         self.menu_dir = menu_dir or DEFAULT_MENU_DIR
-        self.scripts_dir = scripts_dir or (self.menu_dir / "scripts")
+        candidate_scripts_dir = scripts_dir or (self.menu_dir / "scripts")
+
+        # Prefer provided or default scripts dir, but fall back to repo's backend/scripts in dev
+        onboard_script = candidate_scripts_dir / ONBOARD_SCRIPT_NAME
+        if not onboard_script.exists():
+            try:
+                repo_scripts = Path(__file__).resolve().parents[1] / "scripts"
+                repo_onboard = repo_scripts / ONBOARD_SCRIPT_NAME
+                if repo_onboard.exists():
+                    candidate_scripts_dir = repo_scripts
+            except Exception:
+                pass
+
+        self.scripts_dir = candidate_scripts_dir
 
     # -------------------------
     # Private helper functions
