@@ -50,10 +50,17 @@ export interface SshStatus {
 // In production, both frontend and backend serve from the same port
 const getBaseURL = () => {
   if (import.meta.env.DEV) {
-    // Development mode: backend runs on port 8080
-    return "http://192.168.88.133:8080";
+    // Allow override via env var in development
+    const envUrl = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
+    if (envUrl && envUrl.trim().length > 0) {
+      return envUrl;
+    }
+    // Default to the current host with backend dev port 8080
+    const protocol = window.location.protocol; // e.g., http:
+    const host = window.location.hostname;     // e.g., 192.168.88.149 or localhost
+    return `${protocol}//${host}:8080`;
   } else {
-    // Production mode: frontend and backend serve from same port
+    // Production mode: frontend and backend serve from same origin
     return "";
   }
 };
