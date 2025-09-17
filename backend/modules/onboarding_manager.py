@@ -516,6 +516,22 @@ WantedBy=multi-user.target
             self.update_state(error=f"Exception during capability token copy: {e}")
             return False
 
+        # 6. Onboard compute resources to finalize capability setup
+        try:
+            log_step("capabilities_onboarded", "Running onboard-max.sh to apply compute capabilities...")
+            result = self.dms_manager.onboard_compute()
+            if not result or result.get("status") != "success":
+                message = (result or {}).get("message") or "Unknown error"
+                log_step("capabilities_onboarded", f"Compute onboarding failed: {message}")
+                self.update_state(error=f"Compute onboarding failed: {message}")
+                return False
+            log_step("capabilities_onboarded", f"Compute onboarding completed: {result.get('message', 'success')}")
+            self.update_state(step="capabilities_onboarded", progress=83, last_step="capabilities_applied")
+        except Exception as e:
+            log_step("capabilities_onboarded", f"Exception during compute onboarding: {e}")
+            self.update_state(error=f"Exception during compute onboarding: {e}")
+            return False
+
         return True
 
     def copy_capability_tokens_to_dms_user(self):
@@ -847,16 +863,22 @@ WantedBy=multi-user.target
                 self.append_log("join_data_received", "Processing post-approval onboarding actions...", only_on_step_change=True)
                 success = self.process_post_approval_payload(api_payload)
                 if success:
-                    self.update_state(step="capabilities_applied", last_step="join_data_received")
+                    self.update_state(step="capabilities_onboarded", progress=83, last_step="join_data_received")
                 else:
                     # Error already logged and state updated in process_post_approval_payload
                     return
                 return
 
             if step == "capabilities_applied":
-                self.append_log("capabilities_applied", "Configuring telemetry...", only_on_step_change=True)
+                # Legacy behavior: immediately escalate to the new compute onboarding step.
+                self.append_log("capabilities_applied", "Advancing to capability onboarding...", only_on_step_change=True)
+                self.update_state(step="capabilities_onboarded", progress=83, last_step="capabilities_applied")
+                return
+
+            if step == "capabilities_onboarded":
+                self.append_log("capabilities_onboarded", "Configuring telemetry...", only_on_step_change=True)
                 # If telemetry config is part of the API payload, handle here. For now, just advance.
-                self.update_state(step="telemetry_configured", mtls_status="saved", last_step="capabilities_applied")
+                self.update_state(step="telemetry_configured", mtls_status="saved", last_step="capabilities_onboarded")
                 return
 
             if step == "telemetry_configured":

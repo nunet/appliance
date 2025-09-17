@@ -231,7 +231,7 @@ class NuNetBootSplash:
         # Generate QR code
         try:
             qr_matrix = self.generate_qr_code(url)
-            qr_lines = [''.join('##' if cell else '  ' for cell in row) for row in qr_matrix]
+            qr_lines = [''.join('██' if cell else '  ' for cell in row) for row in qr_matrix]
         except ImportError:
             qr_lines = [
                 "QR Code generation requires",
@@ -348,11 +348,33 @@ class NuNetBootSplash:
         """Reset web manager password"""
         print(f"\n{self.colors.YELLOW}Resetting Web Manager Password...{self.colors.NC}")
         try:
+            now = datetime.now().isoformat()
+            data = {
+                'username': 'admin',
+                'password_hash': '',
+                'created_at': now,
+                'updated_at': now,
+                'needs_reset': True,
+            }
             if self.credentials_file.exists():
-                self.credentials_file.unlink()
-                print(f"{self.colors.GREEN}Stored credentials removed{self.colors.NC}")
-            else:
-                print(f"{self.colors.BLUE}No stored credentials found{self.colors.NC}")
+                try:
+                    with open(self.credentials_file, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    if isinstance(existing, dict):
+                        data.update(existing)
+                except Exception:
+                    pass
+            data['password_hash'] = ''
+            data['needs_reset'] = True
+            data['updated_at'] = now
+            self.credentials_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.credentials_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            try:
+                self.credentials_file.chmod(0o600)
+            except Exception:
+                pass
+            print(f"{self.colors.GREEN}Credentials marked for reset{self.colors.NC}")
             print(f"{self.colors.CYAN}Next web login will prompt for a new admin password.{self.colors.NC}")
         except Exception as e:
             print(f"{self.colors.RED}Error resetting password: {e}{self.colors.NC}")
