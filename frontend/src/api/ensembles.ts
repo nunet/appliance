@@ -1,5 +1,5 @@
 // frontend/src/api/ensembles.ts
-import axios from "axios";
+import { api } from "./api";
 import {
   UploadTemplateResponse,
   FormSchema,
@@ -7,12 +7,10 @@ import {
   YamlTemplatesResponse,
 } from "@/types";
 
-const API_BASE = import.meta.env.VITE_API_URL;
-
 // ------- Lists --------
 export async function listFormTemplates(page = 1, pageSize = 10) {
-  const res = await axios.get<FormTemplatesResponse>(
-    `${API_BASE}/ensemble/templates/forms`,
+  const res = await api.get<FormTemplatesResponse>(
+    "/ensemble/templates/forms",
     {
       params: {
         page,
@@ -30,8 +28,8 @@ export async function listYamlTemplates(
   pageSize = 10,
   withContent = false
 ) {
-  const res = await axios.get<YamlTemplatesResponse>(
-    `${API_BASE}/ensemble/templates/yamls`,
+  const res = await api.get<YamlTemplatesResponse>(
+    "/ensemble/templates/yamls",
     {
       params: { page, page_size: pageSize, with_content: withContent },
     }
@@ -46,10 +44,10 @@ export async function uploadTemplate(form: FormData) {
   // - sidecar (json) [optional]
   // - category [optional]
   // - confirm_overwrite [optional: "true"/"false"]
-  // - generate_json [optional: "true"/"false"]  -- we’ll always send true
-  // - hints_json [optional]                     -- we’ll omit by default
-  const res = await axios.post<UploadTemplateResponse>(
-    `${API_BASE}/ensemble/templates/upload`,
+  // - generate_json [optional: "true"/"false"]  -- we'll always send true
+  // - hints_json [optional]                     -- we'll omit by default
+  const res = await api.post<UploadTemplateResponse>(
+    "/ensemble/templates/upload",
     form,
     { headers: { "Content-Type": "multipart/form-data" } }
   );
@@ -61,8 +59,8 @@ export async function getEffectiveSchema(
   source: "auto" | "sidecar" | "inferred" = "auto"
 ) {
   // Returns FormSchema directly
-  const res = await axios.get<FormSchema>(
-    `${API_BASE}/ensemble/templates/schema`,
+  const res = await api.get<FormSchema>(
+    "/ensemble/templates/schema",
     { params: { template_path: templatePath, source } }
   );
   return res.data;

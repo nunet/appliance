@@ -79,15 +79,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedExpiry = localStorage.getItem(EXPIRY_KEY);
+    console.log('🔍 Loading token from localStorage:', { storedToken: !!storedToken, storedExpiry });
     if (storedToken && storedExpiry) {
       const parsedExpiry = Number.parseInt(storedExpiry, 10);
       if (!Number.isNaN(parsedExpiry) && parsedExpiry > Date.now()) {
+        console.log('✅ Token loaded and valid, setting in axios');
         setToken(storedToken);
         setExpiresAt(parsedExpiry);
         setAuthToken(storedToken);
       } else {
+        console.log('❌ Token expired, logging out');
         logout();
       }
+    } else {
+      console.log('❌ No token found in localStorage');
     }
 
     let active = true;

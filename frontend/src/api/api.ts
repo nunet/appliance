@@ -72,6 +72,9 @@ const attachToken = (config: InternalAxiosRequestConfig) => {
   if (authToken) {
     config.headers = config.headers ?? {};
     config.headers.Authorization = `Bearer ${authToken}`;
+    console.log('🚀 Adding Authorization header to request:', config.url);
+  } else {
+    console.log('⚠️ No auth token available for request:', config.url);
   }
   return config;
 };
@@ -89,6 +92,7 @@ api.interceptors.response.use(
 );
 
 export const setAuthToken = (token: string | null) => {
+  console.log('🔑 Setting auth token in axios:', token ? 'Token present' : 'No token');
   authToken = token;
 };
 
