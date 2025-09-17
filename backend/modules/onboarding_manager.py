@@ -1091,9 +1091,9 @@ WantedBy=multi-user.target
             archive_name = f"onboarding_state_{safe_org_name}_{timestamp}.json"
             archive_path = self.STATE_PATH.parent / archive_name
             
-            # Copy the state file to archive and keep the original present
+            # Rename (move) the current state file so a fresh one will be created next run
             import shutil
-            shutil.copy2(self.STATE_PATH, archive_path)
+            shutil.move(self.STATE_PATH, archive_path)
             
             self.log(f"Onboarding state archived to: {archive_path}")
             
