@@ -5,17 +5,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Self-setup: Check if devctl alias exists, if not create it
+# Self-setup: Ensure devctl alias exists and points to absolute path
 setup_alias() {
-  local alias_line="alias devctl=\"$0\""
+  local alias_target="$ROOT/deploy/scripts/devctl.sh"
+  local alias_line="alias devctl=\"$alias_target\""
   local bashrc="$HOME/.bashrc"
   
-  # Check if alias already exists
-  if ! grep -q "alias devctl=" "$bashrc" 2>/dev/null; then
+  # If alias is missing, add it; if present but incorrect, replace it
+  if ! grep -q "^alias devctl=" "$bashrc" 2>/dev/null; then
     echo "🔧 Setting up devctl alias..."
     echo "$alias_line" >> "$bashrc"
     echo "✅ Alias added to ~/.bashrc"
     echo "💡 Run 'source ~/.bashrc' or start a new terminal to use 'devctl' from anywhere"
+  else
+    # Ensure it points to our absolute path
+    if ! grep -q "^$(printf %q "${alias_line}")$" "$bashrc" 2>/dev/null; then
+      # Replace existing devctl alias line with the correct absolute path
+      sed -i "s|^alias devctl=.*$|${alias_line}|" "$bashrc"
+      echo "🔄 Updated existing devctl alias to: $alias_target"
+    fi
   fi
 }
 
