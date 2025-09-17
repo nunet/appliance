@@ -22,7 +22,7 @@ router = APIRouter()
 HOME = Path.home()
 
 # -------------------------
-# Auth helpers (same pattern as we used for stream.py)
+# Auth helpers 
 # -------------------------
 def _extract_ws_token(ws: WebSocket) -> Optional[str]:
     token = ws.query_params.get("token")
@@ -101,6 +101,11 @@ echo "Cleaning up ..."
 rm -f dms-latest.deb || true
 echo "✅ Update complete."
 '''
+ 
+_dm = DMSManager()
+_scripts_dir = _dm.scripts_dir
+_onboard_script = str((_scripts_dir / ONBOARD_SCRIPT_NAME).resolve())
+_configure_script = str((_scripts_dir / "configure-dms.sh").resolve())
 
 _dm = DMSManager()
 _scripts_dir = _dm.scripts_dir
@@ -110,11 +115,19 @@ _configure_script = str((_scripts_dir / "configure-dms.sh").resolve())
 COMMAND_WHITELIST: Dict[str, CmdSpec] = {
     # mirror specific tasks (you also have dedicated routers; this is generic)
     "dms_init": CmdSpec(
+<<<<<<< HEAD
         argv=["sudo", "-u", "ubuntu", _configure_script],
         needs_passphrase=True,
     ),
     "dms_onboard": CmdSpec(
         argv=[_onboard_script],
+=======
+        argv=["sudo", "-u", "ubuntu", _configure_script], 
+        needs_passphrase=True,
+    ),
+    "dms_onboard": CmdSpec(
+        argv=[_onboard_script], 
+>>>>>>> 4b05390 (onboarding: fix completion message display by delaying state archiving)
         needs_passphrase=True,
     ),
     "dms_update": CmdSpec(
@@ -308,4 +321,4 @@ async def sse_exec(
     return StreamingResponse(
         _pty_to_sse(argv, env_full, cwd_s, auto_stdin=stdin),
         media_type="text/event-stream"
-    )
+    ) 

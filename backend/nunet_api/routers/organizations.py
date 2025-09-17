@@ -583,13 +583,8 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             if ok:
                 # Do NOT restart DMS automatically; FE has a button for that.
                 mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
-                # Archive the onboarding state since we're completing via API
-                try:
-                    org_data = mgr.state.get("org_data", {})
-                    org_name = org_data.get("name", "Unknown")
-                    mgr.mark_onboarding_complete(org_name)
-                except Exception as e:
-                    logger.error(f"Error marking onboarding complete: {e}")
+                # Note: Don't archive immediately - let frontend get final status first
+                # Archiving will happen when user clicks "Restart DMS" button
             else:
                 mgr.update_state(step="rejected", rejection_reason="post-approval processing failed")
         finally:
@@ -644,13 +639,8 @@ def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Bod
         mgr.restart_dms_service()
 
     mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
-    # Archive the onboarding state since we're completing via API
-    try:
-        org_data = mgr.state.get("org_data", {})
-        org_name = org_data.get("name", "Unknown")
-        mgr.mark_onboarding_complete(org_name)
-    except Exception as e:
-        logger.error(f"Error marking onboarding complete: {e}")
+    # Note: Don't archive immediately - let frontend get final status first
+    # Archiving will happen when user clicks "Restart DMS" button
     return ProcessResponse(status="success", step="complete", message="Onboarding complete.", state=mgr.get_onboarding_status())
 
 
