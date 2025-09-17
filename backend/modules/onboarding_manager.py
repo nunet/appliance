@@ -1091,9 +1091,9 @@ WantedBy=multi-user.target
             archive_name = f"onboarding_state_{safe_org_name}_{timestamp}.json"
             archive_path = self.STATE_PATH.parent / archive_name
             
-            # Move the state file to archive (not copy)
+            # Copy the state file to archive and keep the original present
             import shutil
-            shutil.move(self.STATE_PATH, archive_path)
+            shutil.copy2(self.STATE_PATH, archive_path)
             
             self.log(f"Onboarding state archived to: {archive_path}")
             
@@ -1243,8 +1243,13 @@ WantedBy=multi-user.target
         try:
             self.update_state(step="complete", progress=100, completed=True, status="complete")
             
-            if org_name:
-                self._archive_onboarding_state(org_name)
+            # Always archive; derive org name from state if not provided
+            if not org_name:
+                try:
+                    org_name = (self.state.get("org_data") or {}).get("name") or "Unknown"
+                except Exception:
+                    org_name = "Unknown"
+            self._archive_onboarding_state(org_name)
             
             # Disable and stop the onboarding service since it's no longer needed
             try:
