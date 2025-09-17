@@ -35,7 +35,7 @@ def _token_response(username: str) -> dict:
 
 
 @router.get("/status")
-def status() -> dict:
+def get_status() -> dict:
     creds = load_credentials()
     return {
         "password_set": is_password_set(),

@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Button } from "../ui/button";
 import { restartDms } from "../../api/api";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { api } from "../../api/organizations";
+import { organizationsApi } from "../../api/organizations";
 
 function RestartDmsButton({
   qc,
@@ -21,7 +21,7 @@ function RestartDmsButton({
       await restartDms();
       setStartOperation(false);
       toast.success("DMS is restarting");
-      api.reset().then(() => {
+      organizationsApi.reset().then(() => {
         qc.invalidateQueries({ queryKey: ["org-status"] });
       });
     } catch (err) {

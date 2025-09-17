@@ -46,8 +46,20 @@ export interface SshStatus {
 }
 
 // ==== AXIOS INSTANCE ====
+// In development, Vite runs on 5173 and backend on 8080
+// In production, both frontend and backend serve from the same port
+const getBaseURL = () => {
+  if (import.meta.env.DEV) {
+    // Development mode: backend runs on port 8080
+    return "http://192.168.88.133:8080";
+  } else {
+    // Production mode: frontend and backend serve from same port
+    return "";
+  }
+};
+
 export const api = axios.create({
-  baseURL: "",
+  baseURL: getBaseURL(),
   headers: {
     "Content-Type": "application/json",
   },

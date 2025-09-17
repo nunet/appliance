@@ -47,7 +47,7 @@ app.include_router(payments.router, prefix="/payments", tags=["payments"], depen
 app.include_router(ensemble_schema.router, prefix="/ensemble", tags=["ensemble"], dependencies=protected)
 
 
-@app.get("/health", dependencies=[Depends(require_auth)])
+@app.get("/health")
 def health():
     return {"ok": True}
 

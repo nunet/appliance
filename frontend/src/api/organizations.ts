@@ -1,20 +1,20 @@
-import axios from "axios";
+import { api } from "./api";
 import type { StatusResponse } from "../components/organizations/OnboardFlow";
 
 
-export const api = {
+export const organizationsApi = {
   async getKnownOrgs(): Promise<Record<string, any>> {
-    const { data } = await axios.get(`/organizations/known`);
+    const { data } = await api.get(`/organizations/known`);
     return data;
   },
 
   async getJoinedOrgs(): Promise<Record<string, any>> {
-    const { data } = await axios.get(`/organizations/joined`);
+    const { data } = await api.get(`/organizations/joined`);
     return data;
   },
 
   async postSelectOrg(org_did: string) {
-    const { data } = await axios.post(`/organizations/select`, {
+    const { data } = await api.post(`/organizations/select`, {
       org_did,
     });
     return data;
@@ -27,7 +27,7 @@ export const api = {
     location?: string;
     discord?: string;
   }) {
-    const { data } = await axios.post(
+    const { data } = await api.post(
       `/organizations/join/submit`,
       payload
     );
@@ -35,12 +35,12 @@ export const api = {
   },
 
   async getStatus(): Promise<StatusResponse> {
-    const { data } = await axios.get(`/organizations/status`);
+    const { data } = await api.get(`/organizations/status`);
     return data;
   },
 
   async postProcess() {
-    const { data } = await axios.post(
+    const { data } = await api.post(
       `/organizations/join/process`,
       true
     );
@@ -48,12 +48,12 @@ export const api = {
   },
 
   async poll() {
-    const { data } = await axios.get(`/organizations/join/poll`);
+    const { data } = await api.get(`/organizations/join/poll`);
     return data;
   },
 
   async reset() {
-    const { data } = await axios.post(
+    const { data } = await api.post(
       `/organizations/onboarding/reset`
     );
     return data;

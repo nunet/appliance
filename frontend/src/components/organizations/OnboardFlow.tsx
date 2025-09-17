@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
-import { api } from "../../api/organizations";
+import { organizationsApi } from "../../api/organizations";
 import { Button } from "../ui/button";
 import {
   Card,
@@ -127,7 +127,7 @@ export function OnboardingFlow({
 
   useQuery({
     queryKey: ["email-poll", currentStep, apiStatus],
-    queryFn: () => api.poll(),
+    queryFn: () => organizationsApi.poll(),
     refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 0,
@@ -143,12 +143,12 @@ export function OnboardingFlow({
   });
 
   const selectMutation = useMutation({
-    mutationFn: (org_did: string) => api.postSelectOrg(org_did),
+    mutationFn: (org_did: string) => organizationsApi.postSelectOrg(org_did),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
 
   const joinMutation = useMutation({
-    mutationFn: (data: any) => api.postJoinSubmit(data),
+    mutationFn: (data: any) => organizationsApi.postJoinSubmit(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
   });
 

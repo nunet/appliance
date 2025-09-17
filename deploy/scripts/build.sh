@@ -23,8 +23,6 @@ sudo apt-get install -y \
     python3-pip \
     python3-venv \
     python3-dev \
-    nodejs \
-    npm \
     wget \
     curl \
     gnupg \
@@ -33,6 +31,11 @@ sudo apt-get install -y \
     fakeroot \
     debhelper \
     devscripts
+
+# Install Node.js 20+ from NodeSource
+echo "Installing Node.js 20+ from NodeSource..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
 
 # Create build directories
 mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
