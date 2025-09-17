@@ -214,7 +214,28 @@ WantedBy=multi-user.target
         if self.use_mock_api:
             return self.mock_api_submit_join(data)
         
-        # Collect onboarded resource information before submitting
+        # Ensure compute is onboarded BEFORE submitting to the API so the payload
+        # reflects the current onboarded resources. If already onboarded, this is a no-op.
+        try:
+            from .dms_utils import get_dms_resource_info
+            resource_info_pre = get_dms_resource_info()
+            pre_status = resource_info_pre.get('onboarding_status', 'Unknown')
+            already_onboarded = isinstance(pre_status, str) and ('ONBOARDED' in pre_status)
+            if not already_onboarded:
+                self.append_log("submit_data", "Pre-onboarding compute resources with onboard-max.sh ...")
+                result = self.dms_manager.onboard_compute()
+                if not result or result.get("status") != "success":
+                    message = (result or {}).get("message") or "Unknown error"
+                    self.append_log("submit_data", f"Pre-onboarding failed: {message}")
+                    # Abort early so the API receives correct resource state only when successful
+                    raise Exception(f"Pre-onboarding failed: {message}")
+                self.append_log("submit_data", "Pre-onboarding completed successfully.")
+        except Exception as e:
+            logger.exception(f"Exception during pre-onboarding: {e}")
+            # Surface error and stop flow here; caller will set rejected state
+            raise
+
+        # Collect onboarded resource information before submitting (after pre-onboarding)
         logger.info("Collecting onboarded resource information...")
         self.append_log("submit_data", "Collecting onboarded resource information...")
         
