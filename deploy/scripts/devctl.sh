@@ -44,6 +44,38 @@ STATE_FILE="$STATE_DIR/web_install_state"
 PKG_NAME_WEBSVC="nunet-appliance-web"
 SYSTEMD_WEBSVC="nunet-appliance-web.service"
 
+show_help() {
+  cat <<EOF
+NuNet Appliance Dev Controller
+
+Usage:
+  $(basename "$0") dev up              Start dev mode (frontend HMR + backend reload)
+  $(basename "$0") dev down            Stop dev mode processes
+  $(basename "$0") prod up             Start packaged web service via systemd
+  $(basename "$0") prod down           Stop packaged web service
+  $(basename "$0") build [version]     Build packages (defaults to 1.0.0)
+  $(basename "$0") install             Install latest built web package from dist/
+  $(basename "$0") rollback            Revert to previous installed web package
+  $(basename "$0") status              Show services, dev processes, and ports
+  $(basename "$0") logs                Tail packaged service logs
+  $(basename "$0") ps                  Show listeners on dev ports
+  $(basename "$0") doctor              Check deps and port availability
+  $(basename "$0") -h|--help|help      Show this help
+
+Environment (overridable via .env.dev at repo root):
+  SERVICE_USER     Default ubuntu
+  BACKEND_PORT     Default 8080
+  FRONTEND_PORT    Default 5173
+  CORS_ORIGINS     Default http://localhost:5173
+  VENV_DIR         Default deploy/.dev-venv under repo
+
+Examples:
+  $(basename "$0") build 1.2.3
+  $(basename "$0") install && $(basename "$0") prod up
+  $(basename "$0") dev up   # then tmux attach -t nunet-dev
+EOF
+}
+
 load_env() {
   [ -f "$ROOT/.env.dev" ] && set -a && . "$ROOT/.env.dev" && set +a || true
 }
@@ -75,15 +107,45 @@ extract_version_from_deb() {
 }
 
 status() {
-  echo "Systemd services:"
-  systemctl is-active "$SYSTEMD_WEBSVC" || true
+  # Helper: who owns a port and is it likely DEV or PROD
+  port_info() {
+    local port="$1"
+    local line
+    line=$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p {print $0; exit}')
+    if [ -z "$line" ]; then
+      echo "port $port: (free)"
+      return 0
+    fi
+    # Extract process command
+    local proc
+    proc=$(echo "$line" | sed -n 's/.*users:(\(.*\)).*/\1/p')
+    # Tag as DEV or PROD based on command path hints
+    local tag=""
+    if echo "$proc" | grep -q "$ROOT/frontend"; then tag="[DEV:frontend]"; fi
+    if echo "$proc" | grep -q "$ROOT/backend"; then tag="[DEV:backend]"; fi
+    if echo "$proc" | grep -q "/usr/lib/nunet-appliance-web"; then tag="[PROD:web]"; fi
+    echo "port $port: $proc $tag"
+  }
+
+  local svc_state svc_pid tmux_state cur_ver
+  svc_state=$(systemctl is-active "$SYSTEMD_WEBSVC" || true)
+  svc_pid=$(systemctl show -p MainPID --value "$SYSTEMD_WEBSVC" 2>/dev/null || echo "0")
+  tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux_state="active" || tmux_state="inactive"
+  cur_ver=$(current_installed_version)
+
+  echo "=== PROD (systemd) ==="
+  echo "service: $SYSTEMD_WEBSVC -> $svc_state${svc_pid:+ (pid:$svc_pid)}"
+  echo "installed: ${cur_ver:-none}"
   echo
-  echo "Dev processes:"
-  pgrep -a node | grep "$ROOT/frontend" || true
-  pgrep -a python | grep "$ROOT/backend" || true
+  echo "=== DEV (tmux) ==="
+  echo "session: $TMUX_SESSION -> $tmux_state"
+  if [ "$tmux_state" = "active" ]; then
+    tmux list-windows -t "$TMUX_SESSION" 2>/dev/null | sed 's/^/  window: /'
+  fi
   echo
-  echo "Ports:"
-  ss -ltnp | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" || true
+  echo "=== Ports ==="
+  port_info "$BACKEND_PORT"
+  port_info "$FRONTEND_PORT"
 }
 
 prod_up() {
@@ -133,6 +195,11 @@ dev_down() {
   tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
   pkill -f "uvicorn .*--port $BACKEND_PORT" 2>/dev/null || true
   pkill -f "npm run dev" 2>/dev/null || true
+  pkill -f "vite" 2>/dev/null || true
+  # If anything still holds the frontend port, kill it
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${FRONTEND_PORT}/tcp" 2>/dev/null || true
+  fi
   echo "dev down: stopped dev processes"
 }
 
@@ -215,6 +282,8 @@ doctor() {
 }
 
 case "${1:-}" in
+  ""|-h|--help|help)
+    show_help ;;
   dev)
     load_env; case "${2:-}" in up) dev_up ;; down) dev_down ;; *) echo "Usage: $0 dev [up|down]"; exit 1 ;; esac ;;
   prod)
@@ -234,7 +303,7 @@ case "${1:-}" in
   doctor)
     doctor ;;
   *)
-    echo "Usage: $0 {dev up|dev down|prod up|prod down|build [ver]|install|rollback|status|logs|ps|doctor}" ; exit 1 ;;
+    show_help ; exit 1 ;;
 esac
 
 
