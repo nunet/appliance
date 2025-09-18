@@ -18,12 +18,11 @@ echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y \
     build-essential \
+    cargo \
     python3 \
     python3-pip \
     python3-venv \
     python3-dev \
-    nodejs \
-    npm \
     wget \
     curl \
     gnupg \
@@ -33,6 +32,11 @@ sudo apt-get install -y \
     debhelper \
     devscripts
 
+# Install Node.js 20+ from NodeSource
+echo "Installing Node.js 20+ from NodeSource..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
 # Create build directories
 mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 # Ensure proper permissions
@@ -40,7 +44,14 @@ chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/fro
 
 # Build frontend
 echo "Building frontend..."
-( cd "$ROOT/frontend" && npm install && npm run build )
+( cd "$ROOT/frontend" && \
+    npm install && \
+    npm audit fix && \
+    if npm ls @swc/core >/dev/null 2>&1; then \
+      echo "Rebuilding @swc/core from source for host CPU..." && \
+      npm rebuild @swc/core --build-from-source; \
+    fi && \
+    npm run build )
 
 # Build backend
 echo "Building backend for ${ARCH}..."

@@ -1,14 +1,169 @@
-# nunet_api/app/security.py
+import json
 import os
-from fastapi import Header, HTTPException
+import hashlib
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 
-API_TOKEN = os.getenv("NUNET_API_TOKEN")
+import bcrypt
+import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-def require_token(authorization: str = Header(None)):
-    if not API_TOKEN:
-        return
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
-    token = authorization.split(" ", 1)[1]
-    if token != API_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid token")
+ADMIN_USERNAME = "admin"
+CREDENTIALS_ENV_KEY = "e4c7f92a1d8b3f6e0a9d7c4b2f1e8a6c5d0f3b9a7c2d6e1f0a8c4d7b3e9f2a6d"
+JWT_SECRET_ENV_KEY = "f9a2c3e7d54b8a1f0c69f4e2d8b1a7c6e0d4f8b5c2a7e9f3b6d1c4e8f0a2b7d9"
+JWT_EXPIRE_MINUTES_ENV_KEY = "14"
+DEFAULT_EXPIRY_MINUTES = 30
+ALGORITHM = "HS256"
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _credentials_path() -> Path:
+    env_path = os.getenv(CREDENTIALS_ENV_KEY)
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return (_repo_root() / "deploy" / "admin_credentials.json").resolve()
+
+
+def load_credentials() -> Optional[Dict[str, Any]]:
+    path = _credentials_path()
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            data = json.load(fp)
+            if not isinstance(data, dict):
+                return None
+            return data
+    except Exception:
+        return None
+
+
+def is_password_set() -> bool:
+    creds = load_credentials()
+    if not creds:
+        return False
+    return bool(creds.get("password_hash")) and not creds.get("needs_reset", False)
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _hash_password(password: str) -> str:
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+    return hashed.decode("utf-8")
+
+
+def set_admin_password(password: str, username: str = ADMIN_USERNAME) -> Dict[str, Any]:
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+
+    path = _credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    now = _now_utc().isoformat()
+    payload = {
+        "username": username,
+        "password_hash": _hash_password(password),
+        "created_at": now,
+        "updated_at": now,
+        "needs_reset": False,
+    }
+
+    with path.open("w", encoding="utf-8") as fp:
+        json.dump(payload, fp, indent=2)
+    try:
+        os.chmod(path, 0o600)
+    except PermissionError:
+        pass
+    except NotImplementedError:
+        pass
+
+    return payload
+
+
+def clear_credentials() -> None:
+    path = _credentials_path()
+    if path.exists():
+        path.unlink()
+
+
+def verify_admin_password(password: str) -> bool:
+    creds = load_credentials()
+    if not creds or "password_hash" not in creds:
+        return False
+    stored_hash = creds["password_hash"].encode("utf-8")
+    return bcrypt.checkpw(password.encode("utf-8"), stored_hash)
+
+
+def _jwt_secret() -> str:
+    env_secret = os.getenv(JWT_SECRET_ENV_KEY)
+    if env_secret:
+        return env_secret
+    creds = load_credentials()
+    if not creds or "password_hash" not in creds:
+        return "nunet-appliance-default-secret"
+    digest = hashlib.sha256(creds["password_hash"].encode("utf-8")).hexdigest()
+    return digest
+
+
+def _token_expiry_minutes() -> int:
+    value = os.getenv(JWT_EXPIRE_MINUTES_ENV_KEY)
+    if value:
+        try:
+            minutes = int(value)
+            if minutes > 0:
+                return minutes
+        except ValueError:
+            pass
+    return DEFAULT_EXPIRY_MINUTES
+
+
+def create_access_token(subject: str = ADMIN_USERNAME, *, expires_minutes: Optional[int] = None) -> Tuple[str, datetime]:
+    expire_minutes = expires_minutes if expires_minutes and expires_minutes > 0 else _token_expiry_minutes()
+    now = _now_utc()
+    expire = now + timedelta(minutes=expire_minutes)
+    payload = {
+        "sub": subject,
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp()),
+    }
+    token = jwt.encode(payload, _jwt_secret(), algorithm=ALGORITHM)
+    return token, expire
+
+
+def validate_token(token: str) -> bool:
+    try:
+        jwt.decode(token, _jwt_secret(), algorithms=[ALGORITHM])
+        return True
+    except jwt.ExpiredSignatureError:
+        return False
+    except jwt.InvalidTokenError:
+        return False
+
+
+def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme)) -> str:
+    if not is_password_set():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin password not configured")
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired") from None
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from None
+    return payload.get("sub", ADMIN_USERNAME)
+
+
+def credentials_path() -> Path:
+    return _credentials_path()
+

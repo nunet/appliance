@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api/organizations";
+import { organizationsApi } from "../api/organizations";
 import {
   type StatusResponse,
   OnboardingFlow,
@@ -13,12 +13,12 @@ export default function OrganizationOnboardingPage() {
 
   const knownQuery = useQuery({
     queryKey: ["orgs-known"],
-    queryFn: api.getKnownOrgs,
+    queryFn: organizationsApi.getKnownOrgs,
   });
 
   const statusQuery = useQuery<StatusResponse>({
     queryKey: ["org-status"],
-    queryFn: api.getStatus,
+    queryFn: organizationsApi.getStatus,
     refetchInterval: (last) =>
       last?.current_step === "complete" ? false : 5000,
     refetchIntervalInBackground: true, // keep polling even if tab is hidden

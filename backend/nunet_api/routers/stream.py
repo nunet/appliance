@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, AsyncGenerator
@@ -9,9 +8,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import StreamingResponse
 
 from modules.ensemble_manager_v2 import EnsembleManagerV2
+from ..security import is_password_set, validate_token
 
-# If you have token security, we’ll reuse it for WS/SSE:
-API_TOKEN = os.getenv("NUNET_API_TOKEN")
+
 
 router = APIRouter()
 
@@ -30,25 +29,23 @@ def _extract_token_from_ws(ws: WebSocket) -> Optional[str]:
     return None
 
 async def _ws_auth_or_close(ws: WebSocket) -> bool:
-    # If no API_TOKEN configured, allow
-    if not API_TOKEN:
-        await ws.accept()
-        return True
+    if not is_password_set():
+        await ws.close(code=4401)
+        return False
     token = _extract_token_from_ws(ws)
-    if token == API_TOKEN:
+    if token and validate_token(token):
         await ws.accept()
         return True
-    # 4401 is a common custom code for unauthorized WS
     await ws.close(code=4401)
     return False
 
+
 def _check_http_token(token: Optional[str]) -> None:
-    # SSE/HTTP query-param token check
-    if not API_TOKEN:
+    if token is None:
         return
-    if token != API_TOKEN:
-        # Lazy raise within generator not convenient; handled at call sites
-        raise PermissionError("Invalid token")
+    if validate_token(token):
+        return
+    raise PermissionError("Invalid token")
 
 # ---------- line helpers ----------
 
@@ -121,7 +118,6 @@ async def ws_dms_logs(ws: WebSocket):
       n:      initial lines to include (default 200)
       grep:   optional substring filter
       json_mode: true => send JSON objects per line; false => plain text lines
-      token:  optional if NUNET_API_TOKEN is set
     """
     if not await _ws_auth_or_close(ws):
         return

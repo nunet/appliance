@@ -19,6 +19,7 @@ autoinstall:
       - htop
       - acl
       - lnav
+      - python3-qrcode
 
     users:
       - name: ubuntu

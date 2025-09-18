@@ -74,6 +74,7 @@ STEP_DEFS = [
     {"id": "pending_authorization", "label": "Pending Authorization"},
     {"id": "join_data_received", "label": "Join Data Received"},
     {"id": "capabilities_applied", "label": "Capabilities Applied"},
+    {"id": "capabilities_onboarded", "label": "Capabilities Onboarded"},
     {"id": "telemetry_configured", "label": "Telemetry Configured"},
     {"id": "mtls_certs_saved", "label": "mTLS Certs Saved"},
     {"id": "complete", "label": "Complete"},
@@ -90,6 +91,7 @@ PROGRESS_MAP = {
     "pending_authorization": 60,
     "join_data_received": 70,
     "capabilities_applied": 80,
+    "capabilities_onboarded": 83,
     "telemetry_configured": 85,
     "mtls_certs_saved": 90,
     "complete": 100,
@@ -276,6 +278,8 @@ def _get_onboarding_ui_state_and_message(onboarding_status: dict) -> tuple[str, 
         return ('waiting_approval', 'Your request is being reviewed by the organization. Please wait for approval...')
     if step == "capabilities_applied":
         return ("capabilities_applied", "Applying organization capabilities...")
+    if step == "capabilities_onboarded":
+        return ("capabilities_onboarded", "Onboarding compute resources with organization capabilities...")
     if step == "telemetry_configured":
         return ("telemetry_configured", "Configuring telemetry...")
     if step == "mtls_certs_saved":
@@ -579,6 +583,8 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             if ok:
                 # Do NOT restart DMS automatically; FE has a button for that.
                 mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+                # Note: Don't archive immediately - let frontend get final status first
+                # Archiving will happen when user clicks "Restart DMS" button
             else:
                 mgr.update_state(step="rejected", rejection_reason="post-approval processing failed")
         finally:
@@ -633,6 +639,8 @@ def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Bod
         mgr.restart_dms_service()
 
     mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+    # Note: Don't archive immediately - let frontend get final status first
+    # Archiving will happen when user clicks "Restart DMS" button
     return ProcessResponse(status="success", step="complete", message="Onboarding complete.", state=mgr.get_onboarding_status())
 
 

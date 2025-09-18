@@ -13,6 +13,7 @@ import { ChevronDown } from "lucide-react";
 import { Separator } from "../ui/separator";
 import { useQuery } from "@tanstack/react-query";
 import { fetchTemplates, type Template } from "../../api/deployments";
+import { useAuth } from "../../hooks/useAuth";
 
 interface Props {
   template: string;
@@ -45,9 +46,12 @@ export default function DeploymentStepThree({
   setFormValid,
   deployment_type,
 }: Props) {
+  const { token } = useAuth();
+  
   const { data, isLoading, isError } = useQuery({
     queryKey: ["templates-forms"],
     queryFn: () => fetchTemplates(1),
+    enabled: !!token, // Only run the query when we have a token
   });
 
   const tpl: Template | undefined = useMemo(() => {

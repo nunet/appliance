@@ -1,6 +1,13 @@
-import React from "react";
+﻿import React from "react";
 import ReactDOM from "react-dom/client";
-import { HashRouter, Routes, Route, Outlet, Navigate } from "react-router-dom";
+import {
+  HashRouter,
+  Routes,
+  Route,
+  Outlet,
+  Navigate,
+  useLocation,
+} from "react-router-dom";
 import App from "./pages/App";
 import DMS from "./pages/DMS";
 import DeploymentsHistory from "./pages/DeploymentsHistory";
@@ -19,6 +26,9 @@ import { useAppMode } from "./hooks/useAppMode";
 import NotFound from "./pages/NotFound";
 import Organizations from "./pages/Organizations";
 import PaymentsPage from "@/components/payments/PaymentsPage";
+import LoginPage from "./pages/Login";
+import SetupAdmin from "./pages/SetupAdmin";
+import { AuthProvider, useAuth } from "./hooks/useAuth";
 
 const queryClient = new QueryClient();
 
@@ -54,31 +64,97 @@ function ProtectedRoutes() {
   return <Layout />;
 }
 
+function LoadingScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+      Loading...
+    </div>
+  );
+}
+
+function RequireAuthWrapper() {
+  const { loading, passwordSet, token } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
+  if (!passwordSet) {
+    return <Navigate to="/setup" replace />;
+  }
+
+  if (!token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return <Outlet />;
+}
+
+function SetupRoute() {
+  const { loading, passwordSet } = useAuth();
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
+  if (passwordSet) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <SetupAdmin />;
+}
+
+function LoginRoute() {
+  const { loading, passwordSet, token } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <LoadingScreen />;
+  }
+
+  if (!passwordSet) {
+    return <Navigate to="/setup" replace />;
+  }
+
+  if (token) {
+    const redirectTo = (location.state as { from?: { pathname?: string } })?.from?.pathname ?? "/";
+    return <Navigate to={redirectTo} replace />;
+  }
+
+  return <LoginPage />;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-      <QueryClientProvider client={queryClient}>
-        <HashRouter>
-          <Routes>
-            {/* Wizard is accessible without mode */}
-            <Route path="/wizzard" element={<Wizzard />} />
+      <AuthProvider>
+        <QueryClientProvider client={queryClient}>
+          <HashRouter>
+            <Routes>
+              <Route path="/setup" element={<SetupRoute />} />
+              <Route path="/login" element={<LoginRoute />} />
 
-            {/* Everything else goes through ProtectedRoutes */}
-            <Route element={<ProtectedRoutes />}>
-              <Route path="*" element={<NotFound />} />
-              <Route path="/" element={<App />} />
-              <Route path="/deploy/" element={<DeploymentsHistory />} />
-              <Route path="/deploy/new" element={<NewDeployment />} />
-              <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
-              <Route path="/organizations" element={<Organizations />} />
-              <Route path="/ensembles" element={<Ensembles />} />
-              <Route path="/appliance/dms" element={<DMS />} />
-              <Route path="/payments" element={<PaymentsPage />} />
-            </Route>
-          </Routes>
-        </HashRouter>
-      </QueryClientProvider>
-      <Toaster />
+              <Route element={<RequireAuthWrapper />}>
+                <Route path="/wizzard" element={<Wizzard />} />
+
+                <Route element={<ProtectedRoutes />}>
+                  <Route path="*" element={<NotFound />} />
+                  <Route path="/" element={<App />} />
+                  <Route path="/deploy/" element={<DeploymentsHistory />} />
+                  <Route path="/deploy/new" element={<NewDeployment />} />
+                  <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
+                  <Route path="/organizations" element={<Organizations />} />
+                  <Route path="/ensembles" element={<Ensembles />} />
+                  <Route path="/appliance/dms" element={<DMS />} />
+                  <Route path="/payments" element={<PaymentsPage />} />
+                </Route>
+              </Route>
+            </Routes>
+          </HashRouter>
+        </QueryClientProvider>
+        <Toaster />
+      </AuthProvider>
     </ThemeProvider>
   </React.StrictMode>
 );

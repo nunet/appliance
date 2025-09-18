@@ -18,8 +18,11 @@ import {
 } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { RefreshButton } from "../ui/RefreshButton";
+import { useAuth } from "../../hooks/useAuth";
 
 export default function DeploymentStepOne({ ...props }) {
+  const { token } = useAuth();
+  
   const {
     data,
     fetchNextPage,
@@ -36,6 +39,7 @@ export default function DeploymentStepOne({ ...props }) {
       return lastPage.page < maxPages ? lastPage.page + 1 : undefined;
     },
     initialPageParam: 1,
+    enabled: !!token, // Only run the query when we have a token
   });
 
   const templates: Template[] = data?.pages.flatMap((p) => p.items) ?? [];
