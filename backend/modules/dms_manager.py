@@ -633,14 +633,48 @@ def _tail_file_with_sudo(path: Path, lines: int) -> tuple[str, bool, Optional[st
         err = (cp.stderr or cp.stdout or "").strip() or f"tail failed rc={cp.returncode}"
         return "", False, err
 
+def _resolve_log_path(path: Path) -> tuple[Path, bool]:
+    """Try common filename variants to find the real log file."""
+    candidates = [path]
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".logs":
+            candidates.append(path.with_suffix(".log"))
+        elif suffix == ".log":
+            candidates.append(path.with_suffix(".logs"))
+        else:
+            candidates.append(path.with_suffix(".logs"))
+            candidates.append(path.with_suffix(".log"))
+    except ValueError:
+        # Path without a stem or with an invalid suffix; ignore fallbacks
+        pass
+
+    seen: set[str] = set()
+    unique_candidates = []
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_candidates.append(candidate)
+
+    for candidate in unique_candidates:
+        try:
+            if candidate.exists():
+                return candidate, True
+        except Exception:
+            continue
+    return path, False
+
+
 def _make_filelog(path: Path, lines: int) -> dict:
-    exists = path.exists()
+    resolved_path, exists = _resolve_log_path(path)
     size, mtime_iso, stat_err = (None, None, None)
     content, readable, read_err = ("", False, None)
 
     if exists:
-        size, mtime_iso, stat_err = _stat_file_with_sudo(path)
-        content, readable, read_err = _tail_file_with_sudo(path, lines)
+        size, mtime_iso, stat_err = _stat_file_with_sudo(resolved_path)
+        content, readable, read_err = _tail_file_with_sudo(resolved_path, lines)
 
     error = None
     if not exists:
@@ -648,11 +682,10 @@ def _make_filelog(path: Path, lines: int) -> dict:
     elif not readable:
         error = read_err or stat_err
     elif stat_err:
-        # readable but stat had a warning
         error = stat_err
 
     return {
-        "path": str(path),
+        "path": str(resolved_path),
         "exists": exists,
         "readable": readable,
         "size_bytes": size,

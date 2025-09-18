@@ -11,22 +11,19 @@ import {
 import { Input } from "../ui/input";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Label } from "../ui/label";
-import { organizationsApi } from "../../api/organizations";
 
 export function JoinForm({
   orgDid,
   submitting,
   onSubmit,
   knownOrgs,
-  qc,
-  setStartOperation,
+  onCancel,
 }: {
   orgDid?: string;
   knownOrgs?: Record<string, any>;
   submitting?: boolean;
   onSubmit: (data: Record<string, string>) => void;
-  setStartOperation: (val: boolean) => void;
-  qc: any;
+  onCancel?: () => void;
 }) {
   const [formData, setFormData] = useState<Record<string, string>>({
     name: "",
@@ -130,12 +127,7 @@ export function JoinForm({
           className="w-full"
           variant={"outline"}
           disabled={submitting}
-          onClick={() => {
-            organizationsApi.reset().then(() => {
-              setStartOperation(false);
-              qc.invalidateQueries({ queryKey: ["org-status"] });
-            });
-          }}
+          onClick={() => onCancel?.()}
         >
           Cancel
         </Button>

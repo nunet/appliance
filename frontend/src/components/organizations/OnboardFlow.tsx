@@ -1,8 +1,16 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 import { organizationsApi } from "../../api/organizations";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
 import {
   Card,
   CardContent,
@@ -115,6 +123,29 @@ export function OnboardingFlow({
   const isRejected = currentStep === "rejected";
   const isComplete = currentStep === "complete";
 
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const resetOnboarding = async () => {
+    await organizationsApi.reset();
+    await qc.invalidateQueries({ queryKey: ["org-status"] });
+    setStartOperation(false);
+  };
+
+  const handleCancelConfirm = async () => {
+    setIsCancelling(true);
+    try {
+      await resetOnboarding();
+      toast.success("Join request cancelled.");
+      setIsCancelDialogOpen(false);
+    } catch (error) {
+      console.error("Failed to cancel organization onboarding", error);
+      toast.error("Failed to cancel the join request. Please try again.");
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const shouldPoll =
     currentStep === "join_data_sent" ||
     currentStep === "pending_authorization" ||
@@ -158,9 +189,62 @@ export function OnboardingFlow({
     currentStep === "collect_join_data" || currentStep === "submit_data";
 
   const showComplete = isComplete;
+  const canCancel = currentStep !== "init" && !isComplete;
 
   return (
     <div className="space-y-4">
+      {canCancel && (
+        <>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setIsCancelDialogOpen(true)}
+              disabled={isCancelling}
+            >
+              Cancel
+            </Button>
+          </div>
+          <Dialog
+            open={isCancelDialogOpen}
+            onOpenChange={(open) => {
+              if (isCancelling) {
+                return;
+              }
+              setIsCancelDialogOpen(open);
+            }}
+          >
+            <DialogContent showCloseButton={!isCancelling}>
+              <DialogHeader>
+                <DialogTitle>
+                  Cancel joining {status?.raw?.org_data?.name ?? "this organization"}?
+                </DialogTitle>
+                <DialogDescription>
+                  Cancelling will discard your current onboarding progress. You can start again at any time.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsCancelDialogOpen(false)}
+                  disabled={isCancelling}
+                >
+                  Keep Joining
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleCancelConfirm}
+                  disabled={isCancelling}
+                >
+                  {isCancelling && (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  )}
+                  Cancel Onboarding
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
       {currentStep !== "init" && currentStep !== "select_org" && (
         <>
           <div className="text-muted-foreground text-sm mb-2">
@@ -190,12 +274,11 @@ export function OnboardingFlow({
 
       {showForm && (
         <JoinForm
-          setStartOperation={setStartOperation}
           orgDid={status?.raw?.org_data?.did}
           submitting={joinMutation.isPending}
           onSubmit={(data) => joinMutation.mutate(data)}
           knownOrgs={knownOrgs}
-          qc={qc}
+          onCancel={() => setIsCancelDialogOpen(true)}
         />
       )}
 
@@ -248,16 +331,25 @@ export function OnboardingFlow({
               {status?.rejection_reason || "The request was rejected."}
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
-              className="w-full"
-              onClick={() => {
-                api
-                  .reset()
-                  .then(() =>
-                    qc.invalidateQueries({ queryKey: ["org-status"] })
-                  );
-                setStartOperation(false);
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setIsCancelDialogOpen(true)}
+              disabled={isCancelling}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={async () => {
+                try {
+                  await resetOnboarding();
+                  toast.success("Ready when you are. Start the join process again anytime.");
+                } catch (error) {
+                  console.error("Failed to reset onboarding after rejection", error);
+                  toast.error("Failed to reset the join flow. Please try again.");
+                }
               }}
             >
               <RefreshCw className="w-4 h-4 mr-2" />

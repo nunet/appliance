@@ -185,18 +185,62 @@ def allocations_for_deployment(deployment_id: str, mgr: EnsembleManagerV2 = Depe
     return mgr.get_deployment_allocations(deployment_id)
 
 
+def _format_log_section(label: str, entry: dict | None) -> str:
+    lines = [f"=== {label} ==="]
+    if not entry:
+        lines.append(f"No {label.lower()} logs available.")
+        return "\n".join(lines)
+    path_str = entry.get("path")
+    if path_str:
+        lines.append(f"Path: {path_str}")
+    content = entry.get("content")
+    error = entry.get("error")
+    exists = entry.get("exists")
+    if content:
+        lines.append(content.rstrip("\n"))
+    elif error:
+        lines.append(f"(error: {error})")
+    elif exists:
+        lines.append("(empty log file)")
+    else:
+        lines.append("No log file found.")
+    return "\n".join(lines)
+
+
+def _format_dms_section(bundle: dict | None) -> str:
+    lines = ["=== DMS LOG ENTRIES ==="]
+    if not bundle:
+        lines.append("No DMS log data available.")
+        return "\n".join(lines)
+    source = bundle.get("source")
+    if source:
+        lines.append(f"Source: {source}")
+    stdout = (bundle.get("stdout") or "").strip()
+    stderr = (bundle.get("stderr") or "").strip()
+    if stdout:
+        lines.append(stdout)
+    else:
+        lines.append("No entries found in DMS log.")
+    if stderr:
+        lines.append("")
+        lines.append("[stderr]")
+        lines.append(stderr)
+    returncode = bundle.get("returncode")
+    if returncode not in (0, None):
+        lines.append("")
+        lines.append(f"[returncode] {returncode}")
+    return "\n".join(lines)
+
 @router.get("/deployments/{deployment_id}/logs", response_model=LogsTextResponse)
 def deployment_logs_text(
     deployment_id: str,
     allocation: str | None = Query(default=None, description="Optional allocation name if multiple exist"),
     mgr: EnsembleManagerV2 = Depends(get_mgr)
-    
 ):
     """
     Non-interactive logs endpoint. If a deployment has multiple allocations and none is given,
     return 400 with available choices (so the API never blocks on input()).
     """
-    # Figure out allocations
     allocs = mgr.get_deployment_allocations(deployment_id)
 
     selected_alloc = None
@@ -216,43 +260,47 @@ def deployment_logs_text(
                 detail={"error": "multiple_allocations", "allocations": allocs},
             )
 
-    log_content = "\nLog Contents:\n"
-
-    # If we have an allocation, fetch stdout/stderr like the CLI version
+    alloc_dir = None
     if selected_alloc:
-        deployment_dir = Path(f"/home/nunet/nunet/deployments/{deployment_id}/{selected_alloc}")
-        stdout_path = deployment_dir / "stdout.logs"
-        stderr_path = deployment_dir / "stderr.logs"
+        alloc_dir = Path("/home/nunet/nunet/deployments") / deployment_id / selected_alloc
 
-        log_content += f"\nDeployment directory: {deployment_dir}\n"
-
-        log_content += "\n=== STDOUT ===\n"
-        log_content += f"Path: {stdout_path}\n"
-        try:
-            cp = subprocess.run(["sudo", "cat", str(stdout_path)], text=True, capture_output=True, check=True)
-            log_content += cp.stdout
-        except subprocess.CalledProcessError as e:
-            log_content += f"Error reading stdout: {e}\n"
-
-        log_content += "\n=== STDERR ===\n"
-        log_content += f"Path: {stderr_path}\n"
-        try:
-            cp = subprocess.run(["sudo", "cat", str(stderr_path)], text=True, capture_output=True, check=True)
-            log_content += cp.stdout
-        except subprocess.CalledProcessError as e:
-            log_content += f"Error reading stderr: {e}\n"
-
-    # Always include DMS log grep results (like the CLI)
-    dms_log_path = "/home/nunet/logs/nunet-dms.log"
-    log_content += f"\n=== DMS LOG ENTRIES ===\nSearching in: {dms_log_path}\n\n"
     try:
-        cp = subprocess.run(["sudo", "grep", "-A", "5", "-B", "5", deployment_id, dms_log_path], text=True, capture_output=True)
-        log_content += cp.stdout if cp.stdout else "No entries found in DMS log\n"
-    except subprocess.CalledProcessError as e:
-        log_content += f"Error searching DMS log: {e}\n"
+        dm = DMSManager()
+        structured = dm.get_structured_logs(alloc_dir, lines=400)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "log_fetch_failed", "message": str(exc)},
+        ) from exc
 
-    return LogsTextResponse(status="success", message=log_content)
+    status_text = structured.get("status") or "success"
+    header_msg = structured.get("message") or ""
 
+    lines_out = ["Log Contents:"]
+    header_line = f"[{status_text.upper()}]"
+    if header_msg:
+        header_line = f"{header_line} {header_msg}"
+    lines_out.append(header_line)
+
+    if selected_alloc and alloc_dir:
+        lines_out.append(f"Allocation: {selected_alloc}")
+        lines_out.append(f"Deployment directory: {alloc_dir}")
+    else:
+        lines_out.append("Allocation: N/A")
+
+    alloc_bundle = structured.get("allocation") or {}
+    stdout_section = alloc_bundle.get("stdout")
+    stderr_section = alloc_bundle.get("stderr")
+
+    lines_out.append("")
+    lines_out.append(_format_log_section("STDOUT", stdout_section))
+    lines_out.append("")
+    lines_out.append(_format_log_section("STDERR", stderr_section))
+    lines_out.append("")
+    lines_out.append(_format_dms_section(structured.get("dms_logs")))
+
+    log_message = "\n".join(lines_out).strip()
+    return LogsTextResponse(status=status_text, message=log_message)
 
 @router.post("/deployments", response_model=DeployResponse)
 def deploy_ensemble(payload: DeployRequest, mgr: EnsembleManagerV2 = Depends(get_mgr)):
