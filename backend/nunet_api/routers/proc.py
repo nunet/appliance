@@ -14,7 +14,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Qu
 from fastapi.responses import StreamingResponse
 
 from ..security import is_password_set, validate_token
-from ...modules.dms_manager import DMSManager, ONBOARD_SCRIPT_NAME
+from modules.dms_manager import DMSManager, ONBOARD_SCRIPT_NAME
 from ..utils.pty_bridge import run_pty_ws
 
 router = APIRouter()
