@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { Button } from "../ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
-import { api } from "../../api/organizations";
+import { organizationsApi } from "../../api/organizations";
 import { Circle } from "lucide-react";
 import { ExpiryCard } from "./ExpiryDate";
 
@@ -26,7 +26,7 @@ export function OrgSelect({
   useEffect(() => {
     const fetchJoined = async () => {
       try {
-        const data = await api.getJoinedOrgs();
+        const data = await organizationsApi.getJoinedOrgs();
         // Extract DIDs from response
         console.log("JOINED ORGS", data);
         setJoinedOrgs(data.map((org: any) => org.did));

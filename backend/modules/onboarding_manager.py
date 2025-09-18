@@ -214,7 +214,28 @@ WantedBy=multi-user.target
         if self.use_mock_api:
             return self.mock_api_submit_join(data)
         
-        # Collect onboarded resource information before submitting
+        # Ensure compute is onboarded BEFORE submitting to the API so the payload
+        # reflects the current onboarded resources. If already onboarded, this is a no-op.
+        try:
+            from .dms_utils import get_dms_resource_info
+            resource_info_pre = get_dms_resource_info()
+            pre_status = resource_info_pre.get('onboarding_status', 'Unknown')
+            already_onboarded = isinstance(pre_status, str) and ('ONBOARDED' in pre_status)
+            if not already_onboarded:
+                self.append_log("submit_data", "Pre-onboarding compute resources with onboard-max.sh ...")
+                result = self.dms_manager.onboard_compute()
+                if not result or result.get("status") != "success":
+                    message = (result or {}).get("message") or "Unknown error"
+                    self.append_log("submit_data", f"Pre-onboarding failed: {message}")
+                    # Abort early so the API receives correct resource state only when successful
+                    raise Exception(f"Pre-onboarding failed: {message}")
+                self.append_log("submit_data", "Pre-onboarding completed successfully.")
+        except Exception as e:
+            logger.exception(f"Exception during pre-onboarding: {e}")
+            # Surface error and stop flow here; caller will set rejected state
+            raise
+
+        # Collect onboarded resource information before submitting (after pre-onboarding)
         logger.info("Collecting onboarded resource information...")
         self.append_log("submit_data", "Collecting onboarded resource information...")
         
@@ -514,6 +535,22 @@ WantedBy=multi-user.target
         except Exception as e:
             log_step("capability_token_copy", f"Exception during capability token copy: {e}")
             self.update_state(error=f"Exception during capability token copy: {e}")
+            return False
+
+        # 6. Onboard compute resources to finalize capability setup
+        try:
+            log_step("capabilities_onboarded", "Running onboard-max.sh to apply compute capabilities...")
+            result = self.dms_manager.onboard_compute()
+            if not result or result.get("status") != "success":
+                message = (result or {}).get("message") or "Unknown error"
+                log_step("capabilities_onboarded", f"Compute onboarding failed: {message}")
+                self.update_state(error=f"Compute onboarding failed: {message}")
+                return False
+            log_step("capabilities_onboarded", f"Compute onboarding completed: {result.get('message', 'success')}")
+            self.update_state(step="capabilities_onboarded", progress=83, last_step="capabilities_applied")
+        except Exception as e:
+            log_step("capabilities_onboarded", f"Exception during compute onboarding: {e}")
+            self.update_state(error=f"Exception during compute onboarding: {e}")
             return False
 
         return True
@@ -847,16 +884,22 @@ WantedBy=multi-user.target
                 self.append_log("join_data_received", "Processing post-approval onboarding actions...", only_on_step_change=True)
                 success = self.process_post_approval_payload(api_payload)
                 if success:
-                    self.update_state(step="capabilities_applied", last_step="join_data_received")
+                    self.update_state(step="capabilities_onboarded", progress=83, last_step="join_data_received")
                 else:
                     # Error already logged and state updated in process_post_approval_payload
                     return
                 return
 
             if step == "capabilities_applied":
-                self.append_log("capabilities_applied", "Configuring telemetry...", only_on_step_change=True)
+                # Legacy behavior: immediately escalate to the new compute onboarding step.
+                self.append_log("capabilities_applied", "Advancing to capability onboarding...", only_on_step_change=True)
+                self.update_state(step="capabilities_onboarded", progress=83, last_step="capabilities_applied")
+                return
+
+            if step == "capabilities_onboarded":
+                self.append_log("capabilities_onboarded", "Configuring telemetry...", only_on_step_change=True)
                 # If telemetry config is part of the API payload, handle here. For now, just advance.
-                self.update_state(step="telemetry_configured", mtls_status="saved", last_step="capabilities_applied")
+                self.update_state(step="telemetry_configured", mtls_status="saved", last_step="capabilities_onboarded")
                 return
 
             if step == "telemetry_configured":
@@ -1048,7 +1091,7 @@ WantedBy=multi-user.target
             archive_name = f"onboarding_state_{safe_org_name}_{timestamp}.json"
             archive_path = self.STATE_PATH.parent / archive_name
             
-            # Move the state file to archive (not copy)
+            # Rename (move) the current state file so a fresh one will be created next run
             import shutil
             shutil.move(self.STATE_PATH, archive_path)
             
@@ -1200,8 +1243,13 @@ WantedBy=multi-user.target
         try:
             self.update_state(step="complete", progress=100, completed=True, status="complete")
             
-            if org_name:
-                self._archive_onboarding_state(org_name)
+            # Always archive; derive org name from state if not provided
+            if not org_name:
+                try:
+                    org_name = (self.state.get("org_data") or {}).get("name") or "Unknown"
+                except Exception:
+                    org_name = "Unknown"
+            self._archive_onboarding_state(org_name)
             
             # Disable and stop the onboarding service since it's no longer needed
             try:

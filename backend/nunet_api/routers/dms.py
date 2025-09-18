@@ -2,6 +2,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, WebSocket
 import os
+import logging
 from ..schemas import (
     InstallStatus, StructuredLogs, DmsStatus, CommandResult, PeerInfo, ResourcesInfo,ConnectedPeers, ConnectedPeer, FullStatusCombined
 )
@@ -132,7 +133,21 @@ def self_peer(mgr: DMSManager = Depends(get_mgr)):
 
 @router.post("/restart", response_model=CommandResult)
 def restart(mgr: DMSManager = Depends(get_mgr)):
-    return CommandResult(**mgr.restart_dms())
+    result = mgr.restart_dms()
+    
+    # Archive onboarding state if onboarding was completed
+    try:
+        from modules.onboarding_manager import OnboardingManager
+        onboarding_mgr = OnboardingManager()
+        state = onboarding_mgr.state
+        if state.get("step") == "complete" and state.get("completed"):
+            org_data = state.get("org_data", {})
+            org_name = org_data.get("name", "Unknown")
+            onboarding_mgr.mark_onboarding_complete(org_name)
+    except Exception as e:
+        logging.error(f"Error archiving onboarding state during DMS restart: {e}")
+    
+    return CommandResult(**result)
 
 @router.post("/stop", response_model=CommandResult)
 def stop():

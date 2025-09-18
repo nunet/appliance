@@ -11,7 +11,7 @@ import {
 import { Input } from "../ui/input";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { Label } from "../ui/label";
-import { api } from "../../api/organizations";
+import { organizationsApi } from "../../api/organizations";
 
 export function JoinForm({
   orgDid,
@@ -131,7 +131,7 @@ export function JoinForm({
           variant={"outline"}
           disabled={submitting}
           onClick={() => {
-            api.reset().then(() => {
+            organizationsApi.reset().then(() => {
               setStartOperation(false);
               qc.invalidateQueries({ queryKey: ["org-status"] });
             });

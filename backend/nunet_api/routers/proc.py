@@ -13,15 +13,16 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from ..security import is_password_set, validate_token
+from modules.dms_manager import DMSManager, ONBOARD_SCRIPT_NAME
 from ..utils.pty_bridge import run_pty_ws
 
 router = APIRouter()
 
 HOME = Path.home()
-API_TOKEN = os.getenv("NUNET_API_TOKEN")
 
 # -------------------------
-# Auth helpers (same pattern as we used for stream.py)
+# Auth helpers 
 # -------------------------
 def _extract_ws_token(ws: WebSocket) -> Optional[str]:
     token = ws.query_params.get("token")
@@ -33,21 +34,23 @@ def _extract_ws_token(ws: WebSocket) -> Optional[str]:
     return None
 
 async def _ws_auth_or_close(ws: WebSocket) -> bool:
-    if not API_TOKEN:
-        await ws.accept()
-        return True
+    if not is_password_set():
+        await ws.close(code=4401)
+        return False
     token = _extract_ws_token(ws)
-    if token == API_TOKEN:
+    if token and validate_token(token):
         await ws.accept()
         return True
     await ws.close(code=4401)
     return False
 
+
 def _check_http_token(token: Optional[str]) -> None:
-    if not API_TOKEN:
+    if token is None:
         return
-    if token != API_TOKEN:
-        raise PermissionError("Invalid token")
+    if validate_token(token):
+        return
+    raise PermissionError("Invalid token")
 
 # -------------------------
 # DMS passphrase helper
@@ -98,15 +101,20 @@ echo "Cleaning up ..."
 rm -f dms-latest.deb || true
 echo "✅ Update complete."
 '''
+ 
+_dm = DMSManager()
+_scripts_dir = _dm.scripts_dir
+_onboard_script = str((_scripts_dir / ONBOARD_SCRIPT_NAME).resolve())
+_configure_script = str((_scripts_dir / "configure-dms.sh").resolve())
 
 COMMAND_WHITELIST: Dict[str, CmdSpec] = {
     # mirror specific tasks (you also have dedicated routers; this is generic)
     "dms_init": CmdSpec(
-        argv=["sudo", "-u", "ubuntu", "/home/ubuntu/menu/scripts/configure-dms.sh"],
+        argv=["sudo", "-u", "ubuntu", _configure_script],
         needs_passphrase=True,
     ),
     "dms_onboard": CmdSpec(
-        argv=[str(HOME / "menu" / "scripts" / "onboard-max.sh")],
+        argv=[_onboard_script], 
         needs_passphrase=True,
     ),
     "dms_update": CmdSpec(
@@ -180,7 +188,6 @@ async def ws_exec(
     WebSocket interactive runner for whitelisted commands.
 
     Connect with query params:
-      token      : required if NUNET_API_TOKEN is set
       arg        : repeatable, e.g. ?arg=-n&arg=200&arg=/home/nunet/logs/nunet-dms.log
       cwd        : optional working directory (must be under $HOME by default)
       env        : optional JSON object, keys must be whitelisted per command
@@ -301,4 +308,4 @@ async def sse_exec(
     return StreamingResponse(
         _pty_to_sse(argv, env_full, cwd_s, auto_stdin=stdin),
         media_type="text/event-stream"
-    )
+    ) 

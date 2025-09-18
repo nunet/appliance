@@ -149,6 +149,37 @@ def _write_json(path: Path, data: Any) -> None:
     plain = _to_jsonable(data)
     path.write_text(json.dumps(plain, indent=2), encoding="utf-8")
 
+def _category_for(file_path: Path, root: Path) -> str:
+    """
+    Category = first directory under root; files directly under root -> 'root'
+    """
+    try:
+        rel = file_path.relative_to(root)
+    except Exception:
+        return "root"
+    parts = rel.parts
+    if len(parts) >= 2:
+        return parts[0]  # top-level folder under root
+    return "root"
+
+def _relpath(file_path: Path, root: Path) -> str:
+    try:
+        return str(file_path.relative_to(root))
+    except Exception:
+        return str(file_path)
+
+def _matching_yaml_for(json_path: Path) -> Path | None:
+    """
+    Find YAML with same stem in the same directory (stem.yaml or stem.yml).
+    """
+    cand1 = json_path.with_suffix(".yaml")
+    cand2 = json_path.with_suffix(".yml")
+    if cand1.exists():
+        return cand1
+    if cand2.exists():
+        return cand2
+    return None
+
 
 # ---------- Endpoints ----------
 
@@ -302,6 +333,84 @@ async def upload_template_simple(
         modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
         message="YAML saved and JSON schema generated."
     )
+
+@router.get("/templates/forms", response_model=dict)
+def list_form_templates(
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(10, ge=1, le=100, description="Items per page"),
+    include_schema: bool = Query(True, description="Include parsed JSON schema"),
+    require_yaml_match: bool = Query(True, description="Only include JSONs that have a matching YAML with same stem"),
+):
+    """
+    List JSON form templates under ~/ensembles, categorized by folder.
+    By default, only JSON files that *describe* a YAML (same stem) are returned.
+    """
+    base = _base_dir()
+    json_files = sorted(base.rglob("*.json"))
+
+    items = []
+    errors = []
+
+    for jf in json_files:
+        yaml_match = _matching_yaml_for(jf)
+        if require_yaml_match and yaml_match is None:
+            continue
+
+        schema = None
+        parse_error = None
+        if include_schema:
+            try:
+                with open(jf, "r", encoding="utf-8") as f:
+                    schema = json.load(f)
+            except Exception as e:
+                parse_error = str(e)
+
+        stat = jf.stat()
+        item = {
+            "category": _category_for(jf, base),
+            "name": jf.name,
+            "stem": jf.stem,
+            "path": _relpath(jf, base),
+            "yaml_path": _relpath(yaml_match, base) if yaml_match else None,
+            "title": (schema.get("name") if isinstance(schema, dict) else None) or jf.stem,
+            "description": (schema.get("description") if isinstance(schema, dict) else None),
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        }
+        if include_schema:
+            item["schema"] = schema if parse_error is None else None
+            if parse_error:
+                item["schema_error"] = parse_error
+
+        items.append(item)
+
+    # Sort by category then name for deterministic output
+    items.sort(key=lambda x: (x["category"].lower(), x["name"].lower()))
+
+    total = len(items)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_items = items[start:end]
+
+    # Build category groups for the *current page*
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for it in page_items:
+        groups.setdefault(it["category"], []).append(it)
+
+    # Also include category totals across *all* items
+    category_totals: Dict[str, int] = {}
+    for it in items:
+        category_totals[it["category"]] = category_totals.get(it["category"], 0) + 1
+
+    return {
+        "root": str(base),
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "category_totals": category_totals,
+        "groups": groups,      # categorized view for the current page
+        "items": page_items,   # flat view for the current page
+    }
 
 @router.get("/templates/schema", response_model=FormSchema)
 def get_effective_schema(

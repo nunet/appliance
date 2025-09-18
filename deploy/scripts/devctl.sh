@@ -5,6 +5,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Self-setup: Ensure devctl alias exists and points to absolute path
+setup_alias() {
+  local alias_target="$ROOT/deploy/scripts/devctl.sh"
+  local alias_line="alias devctl=\"$alias_target\""
+  local bashrc="$HOME/.bashrc"
+  
+  # If alias is missing, add it; if present but incorrect, replace it
+  if ! grep -q "^alias devctl=" "$bashrc" 2>/dev/null; then
+    echo "🔧 Setting up devctl alias..."
+    echo "$alias_line" >> "$bashrc"
+    echo "✅ Alias added to ~/.bashrc"
+    echo "💡 Run 'source ~/.bashrc' or start a new terminal to use 'devctl' from anywhere"
+  else
+    # Ensure it points to our absolute path
+    if ! grep -q "^$(printf %q "${alias_line}")$" "$bashrc" 2>/dev/null; then
+      # Replace existing devctl alias line with the correct absolute path
+      sed -i "s|^alias devctl=.*$|${alias_line}|" "$bashrc"
+      echo "🔄 Updated existing devctl alias to: $alias_target"
+    fi
+  fi
+}
+
+# Run alias setup on first use
+setup_alias
+
 # Defaults (overridable via .env.dev)
 SERVICE_USER="${SERVICE_USER:-ubuntu}"
 BACKEND_PORT="${BACKEND_PORT:-8080}"
@@ -136,7 +161,16 @@ prod_down() {
 }
 
 dev_setup() {
-  need python3; need npm; need tmux
+  need python3; need tmux
+  
+  # Check Node.js version and install if needed
+  if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(20|22)"; then
+    echo "Installing Node.js 20+ for frontend development..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+  fi
+  
+  need npm
   python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
   # shellcheck disable=SC1090
   . "$VENV_DIR/bin/activate"
@@ -148,11 +182,13 @@ dev_up() {
   prod_down || true
   dev_setup
   tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
-  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev"
+  # Use bash --norc to bypass .bashrc splash screen
+  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev'"
   tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
-    "export CORS_ORIGINS='$CORS_ORIGINS'; exec uvicorn nunet_api.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload"
+    "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec uvicorn nunet_api.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload\""
   echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
   echo "Attach with: tmux attach -t $TMUX_SESSION"
+  echo "Note: Using bash --norc to bypass splash screen in dev mode"
 }
 
 dev_down() {

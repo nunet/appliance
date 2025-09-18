@@ -1,5 +1,5 @@
 // src/api.ts
-import axios from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
 
 // ==== TYPES ====
@@ -46,12 +46,66 @@ export interface SshStatus {
 }
 
 // ==== AXIOS INSTANCE ====
-const api = axios.create({
-  baseURL: "",
+// In development, Vite runs on 5173 and backend on 8080
+// In production, both frontend and backend serve from the same port
+const getBaseURL = () => {
+  if (import.meta.env.DEV) {
+    // Allow override via env var in development
+    const envUrl = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
+    if (envUrl && envUrl.trim().length > 0) {
+      return envUrl;
+    }
+    // Default to the current host with backend dev port 8080
+    const protocol = window.location.protocol; // e.g., http:
+    const host = window.location.hostname;     // e.g., 192.168.88.149 or localhost
+    return `${protocol}//${host}:8080`;
+  } else {
+    // Production mode: frontend and backend serve from same origin
+    return "";
+  }
+};
+
+export const api = axios.create({
+  baseURL: getBaseURL(),
   headers: {
     "Content-Type": "application/json",
   },
 });
+
+let authToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+const attachToken = (config: InternalAxiosRequestConfig) => {
+  if (authToken) {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${authToken}`;
+    console.log('🚀 Adding Authorization header to request:', config.url);
+  } else {
+    console.log('⚠️ No auth token available for request:', config.url);
+  }
+  return config;
+};
+
+api.interceptors.request.use(attachToken);
+
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      unauthorizedHandler?.();
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const setAuthToken = (token: string | null) => {
+  console.log('🔑 Setting auth token in axios:', token ? 'Token present' : 'No token');
+  authToken = token;
+};
+
+export const setUnauthorizedHandler = (handler: (() => void) | null) => {
+  unauthorizedHandler = handler;
+};
 
 // ==== DMS ENDPOINTS ====
 export const getDmsVersion = () =>
