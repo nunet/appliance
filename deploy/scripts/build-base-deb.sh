@@ -43,7 +43,7 @@ else
 fi
 
 # Create required directories
-for dir in ".nunet/key" ".nunet/cap" "config" "logs" ".secrets" "scripts" "nunet"; do
+for dir in ".nunet/key" ".nunet/cap" "config" "logs" ".secrets" "scripts" "nunet" "nunet/jobs"; do
     mkdir -p /home/nunet/"$dir"
     echo "Created /home/nunet/$dir"
 done
@@ -65,7 +65,7 @@ chmod g+s /home/nunet/.nunet/key
 chmod g+s /home/nunet/.nunet/cap
 chmod g+s /home/nunet/.secrets
 chmod g+s /home/nunet/nunet
-
+chmod g+s /home/nunet/nunet/jobs
 # Create ubuntu scripts directory
 mkdir -p /home/ubuntu/scripts
 chown ubuntu:ubuntu /home/ubuntu/scripts
@@ -330,6 +330,7 @@ chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/nunet/appliance/backend/scripts
+
 
 # Set ownership for splash files
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py
