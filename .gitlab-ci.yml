@@ -1,0 +1,73 @@
+stages:
+  - build
+  - deploy
+
+default:
+  tags:
+    - dedicated
+    - docker
+
+build:deb:
+  stage: build
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update && apt-get install -y sudo
+    - rm **/package-lock.json
+  script:
+    - bash deploy/scripts/build.sh
+  artifacts:
+    untracked: false
+    when: on_success
+    access: all
+    expire_in: "30 days"
+    paths:
+      - dist/
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+
+
+update-permalinks:
+  stage: deploy
+  image: bash:alpine3.21
+  variables:
+    PERMALINK_DEPLOY_SERVER: d.nunet.io
+    PERMALINK_DEPLOY_USER: gitlab-runner
+    PERMALINK_DEPLOY_FOLDER: /opt/public
+  dependencies:
+    - build:deb
+  needs:
+    - build:deb
+  before_script:
+    - apk add rsync openssh
+  script:
+    - echo $PROD_SSH_KEY_B64 | base64 -d > prod_ssh_key && chmod 600 prod_ssh_key && ls -latrh prod_ssh_key
+    - |
+      shopt -s globstar nullglob
+      cd dist
+      mkdir -p deploy
+      for file in *.deb; do
+        echo $file
+        if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
+          type=${BASH_REMATCH[1]}
+          version=${BASH_REMATCH[2]}
+          arch=${BASH_REMATCH[3]}
+
+          new_name="nunet-appliance-$type-$version-$arch.deb"
+          new_versionless_name="nunet-appliance-$type-latest-$arch.deb"
+
+          cp $file deploy/$new_name
+          cp $file deploy/$new_versionless_name
+        else
+          echo "$file doesn't match regex capture, skipping..."
+        fi
+      done
+      cd $CI_PROJECT_DIR
+    - |
+      rsync -va \
+        --rsh "ssh -o StrictHostKeyChecking=no -i prod_ssh_key" \
+        $CI_PROJECT_DIR/dist/deploy/ \
+        $PERMALINK_DEPLOY_USER@$PERMALINK_DEPLOY_SERVER:$PERMALINK_DEPLOY_FOLDER
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+      when: on_success
+
