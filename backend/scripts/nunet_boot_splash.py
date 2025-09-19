@@ -16,6 +16,16 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple
 
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+try:
+    from backend.nunet_api.security import get_or_create_setup_token
+except Exception:
+    get_or_create_setup_token = None
+
 class Colors:
     """ANSI color codes for terminal output"""
     RED = '\033[91m'
@@ -34,8 +44,8 @@ class NuNetBootSplash:
     
     def __init__(self):
         self.colors = Colors()
-        repo_root = Path(__file__).resolve().parents[2]
-        self.credentials_file = repo_root / "deploy" / "admin_credentials.json"
+        self.repo_root = REPO_ROOT
+        self.credentials_file = self.repo_root / "deploy" / "admin_credentials.json"
         self.onboarding_state = Path.home() / "nunet" / "appliance" / "onboarding_state.json"
         
     def clear_screen(self):
@@ -87,6 +97,25 @@ class NuNetBootSplash:
             pass
         return "Unknown"
     
+    def get_setup_link(self, base_url: str) -> Tuple[str, Optional[str], Optional[str]]:
+        """Combine the base URL with a setup token when available."""
+        if get_or_create_setup_token is None:
+            return base_url, None, None
+        try:
+            token_value, expires_at = get_or_create_setup_token()
+        except Exception:
+            return base_url, None, None
+
+        setup_url = f"{base_url}/?setup_token={token_value}"
+        expires_display = None
+        if expires_at:
+            try:
+                expires_local = expires_at.astimezone()
+                expires_display = expires_local.strftime('%Y-%m-%d %H:%M %Z')
+            except Exception:
+                expires_display = expires_at.isoformat()
+        return setup_url, token_value, expires_display
+
     def get_admin_password_status(self) -> Tuple[str, str]:
         """Return admin password status text and color"""
         if not self.credentials_file.exists():
@@ -221,6 +250,7 @@ class NuNetBootSplash:
         public_ip = self.get_public_ip()
         password_status, password_color = self.get_admin_password_status()
         url = f"http://{local_ip}:8080"
+        setup_url, setup_token, setup_token_expiry = self.get_setup_link(url)
         
         # Check service status
         web_service_running = self.check_web_manager_service()
@@ -230,7 +260,7 @@ class NuNetBootSplash:
         
         # Generate QR code
         try:
-            qr_matrix = self.generate_qr_code(url)
+            qr_matrix = self.generate_qr_code(setup_url)
             qr_lines = [''.join('██' if cell else '  ' for cell in row) for row in qr_matrix]
         except ImportError:
             qr_lines = [
@@ -246,7 +276,14 @@ class NuNetBootSplash:
         text_lines = [
             f"{self.colors.GREEN}Scan QR Code{self.colors.NC}",
             "",
-            f"{self.colors.CYAN}URL: {url}{self.colors.NC}",
+            f"{self.colors.CYAN}URL: {setup_url}{self.colors.NC}",
+        ]
+        if setup_token:
+            text_lines.append(f"{self.colors.CYAN}Setup Token: {setup_token}{self.colors.NC}")
+        if setup_token_expiry:
+            text_lines.append(f"{self.colors.CYAN}Token expires: {setup_token_expiry}{self.colors.NC}")
+        text_lines.extend([
+            "",
             f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
             "",
             f"{self.colors.YELLOW}Host: {system_info.get('hostname', 'Unknown')} | {local_ip}{self.colors.NC}",
@@ -264,7 +301,7 @@ class NuNetBootSplash:
             "",
             f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
             f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"
-        ]
+        ])
         # Display side by side
         self.display_side_by_side(qr_lines, text_lines)
         

@@ -17,8 +17,8 @@ export const getAuthStatus = async () => {
   return res.data;
 };
 
-export const setupAdminPassword = async (password: string) => {
-  const res = await api.post<AuthResponse>("/auth/setup", { password });
+export const setupAdminPassword = async (password: string, token: string) => {
+  const res = await api.post<AuthResponse>("/auth/setup", { password, token });
   return res.data;
 };
 

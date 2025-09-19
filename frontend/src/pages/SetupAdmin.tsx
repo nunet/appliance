@@ -1,5 +1,5 @@
-﻿import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+﻿import { FormEvent, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -10,6 +10,25 @@ import { toast } from "sonner";
 export default function SetupAdmin() {
   const { setupPassword } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const setupToken = useMemo(() => {
+    const directParams = new URLSearchParams(window.location.search);
+    const directToken = directParams.get("setup_token");
+    if (directToken) {
+      return directToken;
+    }
+    const hash = window.location.hash;
+    const hashQueryIndex = hash.indexOf("?");
+    if (hashQueryIndex !== -1) {
+      const hashParams = new URLSearchParams(hash.substring(hashQueryIndex + 1));
+      const hashToken = hashParams.get("setup_token");
+      if (hashToken) {
+        return hashToken;
+      }
+    }
+    return "";
+  }, [location.hash, location.search]);
+  const hasToken = setupToken.length > 0;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -29,13 +48,19 @@ export default function SetupAdmin() {
       return;
     }
 
+    if (!hasToken) {
+      setError("Missing setup token. Use the QR code shown on the appliance terminal to access this page.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await setupPassword(password);
+      await setupPassword(password, setupToken);
       toast.success("Admin password set");
       navigate("/", { replace: true });
     } catch (err) {
       console.error("Failed to configure password", err);
+      setError("Could not save password. Verify the setup token and try again.");
       toast.error("Could not save password. Please try again.");
     } finally {
       setSubmitting(false);
@@ -75,10 +100,15 @@ export default function SetupAdmin() {
                 required
               />
             </div>
+            {!hasToken && (
+              <p className="text-sm text-destructive">
+                Missing setup token. Use the appliance terminal QR code to access this page.
+              </p>
+            )}
             {error && <p className="text-sm text-destructive">{error}</p>}
           </CardContent>
           <CardFooter>
-            <Button className="w-full" type="submit" disabled={submitting}>
+            <Button className="w-full" type="submit" disabled={submitting || !hasToken}>
               {submitting ? "Saving..." : "Set password"}
             </Button>
           </CardFooter>
