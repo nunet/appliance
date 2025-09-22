@@ -43,7 +43,7 @@ else
 fi
 
 # Create required directories
-for dir in ".nunet/key" ".nunet/cap" "config" "logs" ".secrets" "scripts" "nunet"; do
+for dir in ".nunet/key" ".nunet/cap" "config" "logs" ".secrets" "scripts" "nunet" "nunet/deployments"; do
     mkdir -p /home/nunet/"$dir"
     echo "Created /home/nunet/$dir"
 done
@@ -65,7 +65,7 @@ chmod g+s /home/nunet/.nunet/key
 chmod g+s /home/nunet/.nunet/cap
 chmod g+s /home/nunet/.secrets
 chmod g+s /home/nunet/nunet
-
+chmod g+s /home/nunet/nunet/deployments
 # Create ubuntu scripts directory
 mkdir -p /home/ubuntu/scripts
 chown ubuntu:ubuntu /home/ubuntu/scripts
@@ -185,9 +185,9 @@ cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
   },
   "p2p": {
     "bootstrap_peers": [
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/QmQ2irHa8aFTLRhkbkQCRrounE4MbttNp8ki7Nmys4F9NP",
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/Qmf16N2ecJVWufa29XKLNyiBxKWqVPNZXjbL3JisPcGqTw",
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/QmTkWP72uECwCsiiYDpCFeTrVeUM9huGTPsg3m6bHxYQFZ"
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWHzew9HTYzywFuvTHGK5Yzoz7qAhMfxagtCvhvjheoBQ3",
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWJMtMN1mTNRfgMqUygT7eSXamVzc9ihpSjeairm9PebmB",
+      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWKjSodxxi7UfRHzuk7eGgUF49MoPUCJvtva9K12TqDDsi"
     ],
     "fd": 512,
     "listen_address": [
@@ -330,6 +330,7 @@ chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/nunet/appliance/backend/scripts
+
 
 # Set ownership for splash files
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py

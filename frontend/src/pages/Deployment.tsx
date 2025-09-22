@@ -347,13 +347,14 @@ function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: str
 
 // 🔹 Deployment Logs
 function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
+  const allocKey = alloc ?? "__default__";
   const {
     data: logsData,
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["deployment-logs", deploymentId],
-    queryFn: () => getDeploymentLogs(deploymentId, alloc),
+    queryKey: ["deployment-logs", deploymentId, allocKey],
+    queryFn: () => getDeploymentLogs(deploymentId, alloc ?? undefined),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
@@ -394,7 +395,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
       <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardDescription>Deployment Logs ({alloc})</CardDescription>
+            <CardDescription>Deployment Logs ({alloc ?? "auto"})</CardDescription>
             <div className="flex gap-2">
               <RefreshButton
                 onClick={() => refetch()}
