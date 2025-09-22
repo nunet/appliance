@@ -31,190 +31,8 @@ class EnsembleManagerV2:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-    def _normalize_deployment_status_label(self, raw_status: Optional[str]) -> str:
-        """Map arbitrary status strings from DMS into UI-friendly buckets."""
-        if raw_status is None:
-            return "unknown"
-        text_value = str(raw_status).strip()
-        if not text_value:
-            return "unknown"
-        normalized = text_value.lower().replace('_', ' ')
-        if "not running" in normalized or any(token in normalized for token in ("stopped", "shutdown", "terminated", "complete", "completed", "finished", "done", "inactive", "teardown", "removed")):
-            return "completed"
-        if any(token in normalized for token in ("fail", "error", "cancel", "cancelled", "canceled", "abort", "aborted", "crash", "panic")):
-            return "failed"
-        if any(token in normalized for token in ("pending", "queue", "queued", "init", "starting", "initializing", "shutt", "wait", "boot")):
-            return "pending"
-        if "running" in normalized or "active" in normalized or "executing" in normalized or "deploying" in normalized:
-            return "running"
-        return "unknown"
-
-    def _parse_timestamp_value(self, value: Any) -> Optional[datetime]:
-        """Convert various timestamp representations into datetime objects."""
-        if isinstance(value, datetime):
-            return value
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            try:
-                return datetime.fromtimestamp(value)
-            except (OverflowError, ValueError):
-                return None
-        if isinstance(value, str):
-            candidate = value.strip()
-            if not candidate:
-                return None
-            if candidate.isdigit():
-                try:
-                    return datetime.fromtimestamp(int(candidate))
-                except (OverflowError, ValueError):
-                    pass
-            iso_candidate = candidate
-            if iso_candidate.endswith('Z'):
-                iso_candidate = iso_candidate[:-1] + '+00:00'
-            try:
-                return datetime.fromisoformat(iso_candidate)
-            except ValueError:
-                pass
-            for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f'):
-                try:
-                    return datetime.strptime(candidate, fmt)
-                except ValueError:
-                    continue
-        return None
-
-    def _normalize_deployment_entry(self, dep_id: str, meta: Any) -> Dict[str, Any]:
-        """Normalize deployment metadata returned by DMS."""
-        details = meta if isinstance(meta, dict) else {}
-        status_sources: List[Dict[str, Any]] = []
-        if isinstance(details, dict):
-            status_sources.append(details)
-            nested = details.get('Deployment') or details.get('deployment') or details.get('summary') or details.get('info')
-            if isinstance(nested, dict):
-                status_sources.append(nested)
-        status_raw = ''
-        for source in status_sources:
-            for key in ('Status', 'status', 'State', 'state', 'Phase', 'phase'):
-                val = source.get(key)
-                if val:
-                    status_raw = str(val)
-                    break
-            if status_raw:
-                break
-        if not status_raw and not isinstance(meta, dict):
-            status_raw = str(meta)
-        timestamp_val = None
-        for source in status_sources:
-            for key in ('SubmittedAt', 'submittedAt', 'SubmissionTime', 'submission_time', 'CreatedAt', 'createdAt', 'created_at', 'Timestamp', 'timestamp', 'UpdatedAt', 'updatedAt', 'updated_at'):
-                val = source.get(key)
-                if val:
-                    timestamp_val = val
-                    break
-            if timestamp_val:
-                break
-        ensemble_file = None
-        for source in status_sources:
-            for key in ('ManifestPath', 'manifest_path', 'ManifestFile', 'manifestFile', 'manifest_file', 'EnsembleFile', 'ensemble_file', 'File', 'file'):
-                val = source.get(key)
-                if val:
-                    ensemble_file = val
-                    break
-            if ensemble_file:
-                break
-        if ensemble_file is None and isinstance(details, dict):
-            manifest = details.get('Manifest') or details.get('manifest')
-            if isinstance(manifest, dict):
-                for key in ('path', 'file', 'source'):
-                    val = manifest.get(key)
-                    if val:
-                        ensemble_file = val
-                        break
-        deployment_type = None
-        for source in status_sources:
-            for key in ('Type', 'type', 'DeploymentType', 'deployment_type'):
-                val = source.get(key)
-                if val:
-                    deployment_type = val
-                    break
-            if deployment_type:
-                break
-        normalized_status = self._normalize_deployment_status_label(status_raw)
-        timestamp_dt = self._parse_timestamp_value(timestamp_val)
-        if isinstance(ensemble_file, Path):
-            ensemble_file = str(ensemble_file)
-        entry: Dict[str, Any] = {
-            'id': dep_id,
-            'status': normalized_status,
-            'status_raw': status_raw or None,
-            'timestamp': timestamp_dt,
-            'ensemble_file': ensemble_file,
-            'type': deployment_type,
-            'details': details if isinstance(meta, dict) else {'value': meta},
-        }
-        return entry
-
-    def _parse_deployment_list_json(self, payload: Any) -> Dict[str, Dict[str, Any]]:
-        """Parse deployment list JSON payloads from DMS."""
-        deployments: Dict[str, Dict[str, Any]] = {}
-        items: Any = None
-        if isinstance(payload, dict):
-            for key in ('Deployments', 'deployments', 'items', 'data', 'ActiveDeployments', 'activeDeployments'):
-                if key in payload:
-                    items = payload[key]
-                    break
-            if items is None and {'DeploymentID', 'Status'} <= set(payload.keys()):
-                items = [payload]
-        else:
-            items = payload
-        if isinstance(items, dict):
-            for dep_id, meta in items.items():
-                if dep_id:
-                    dep_key = str(dep_id)
-                    deployments[dep_key] = self._normalize_deployment_entry(dep_key, meta)
-        elif isinstance(items, list):
-            for meta in items:
-                dep_id = None
-                if isinstance(meta, dict):
-                    for key in ('id', 'ID', 'deployment_id', 'DeploymentID', 'EnsembleID'):
-                        if meta.get(key):
-                            dep_id = str(meta[key])
-                            break
-                elif isinstance(meta, str):
-                    dep_id = meta
-                if dep_id:
-                    deployments[dep_id] = self._normalize_deployment_entry(dep_id, meta)
-        return deployments
-
-    def _parse_deployment_list_text(self, stdout: str) -> Dict[str, Dict[str, Any]]:
-        """Best-effort parse for text formatted deployment lists."""
-        deployments: Dict[str, Dict[str, Any]] = {}
-        current_id: Optional[str] = None
-        current_data: Dict[str, Any] = {}
-        for raw_line in (stdout or '').splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            lowered = line.lower()
-            if lowered.startswith('deployment id') or lowered.startswith('deployment:') or lowered.startswith('ensemble id'):
-                if current_id:
-                    deployments[current_id] = self._normalize_deployment_entry(current_id, current_data)
-                current_data = {}
-                _, _, tail = line.partition(':')
-                current_id = tail.strip() or line.split()[-1]
-                continue
-            if ':' in line and current_id:
-                key, _, value = line.partition(':')
-                current_data[key.strip()] = value.strip()
-            elif current_id and line.startswith('/'):
-                current_data.setdefault('ManifestPath', line)
-            elif current_id and not current_data and line:
-                current_id = line
-        if current_id:
-            deployments[current_id] = self._normalize_deployment_entry(current_id, current_data)
-        return deployments
-
-    def get_active_deployments(self) -> Dict[str, Dict[str, Any]]:
-        """Get list of deployments known to DMS."""
+    def get_active_deployments(self) -> Dict[str, str]:
+        """Get list of active deployments from nunet command"""
         try:
             result = run_dms_command_with_passphrase(
                 ['nunet', '-c', 'dms', 'actor', 'cmd', '/dms/node/deployment/list'],
@@ -222,17 +40,7 @@ class EnsembleManagerV2:
                 text=True,
                 check=True
             )
-            stdout = (result.stdout or '').strip()
-            if not stdout:
-                return {}
-            try:
-                payload = json.loads(stdout)
-                deployments = self._parse_deployment_list_json(payload)
-                if deployments:
-                    return deployments
-            except json.JSONDecodeError:
-                pass
-            return self._parse_deployment_list_text(stdout)
+            return json.loads(result.stdout).get('Deployments', {})
         except Exception as e:
             print(f"Error getting active deployments: {e}")
             return {}
@@ -326,178 +134,152 @@ class EnsembleManagerV2:
 
     def format_deployment_table(self, items):
         """Format deployments as a table with colors"""
-        headers = ['No.', 'Deployment ID', 'Status', 'Type', 'Ensemble File', 'Date Started']
+        headers = ["No.", "Deployment ID", "Status", "Type", "Ensemble File", "Date Started"]
         num_cols = len(headers)
-
+        
+        # Get terminal width and subtract 20 to prevent wrapping
         total_width = self._get_terminal_width() - 20
 
+        # Fixed widths for known columns
         fixed_widths = {
-            'No.': 5,
-            'Deployment ID': 64,
-            'Status': 12,
-            'Type': 12,
-            'Date Started': 16,
+            "No.": 5,
+            "Deployment ID": 64,
+            "Status": 12,
+            "Type": 12,
+            "Date Started": 16
         }
-
+        
+        # Calculate remaining width for Ensemble File
         used_width = sum(fixed_widths.values())
         border_and_padding = num_cols + 1
         remaining_width = total_width - used_width - border_and_padding
         ensemble_file_width = max(10, remaining_width)
 
         widths = [
-            fixed_widths['No.'],
-            fixed_widths['Deployment ID'],
-            fixed_widths['Status'],
-            fixed_widths['Type'],
+            fixed_widths["No."],
+            fixed_widths["Deployment ID"],
+            fixed_widths["Status"],
+            fixed_widths["Type"],
             ensemble_file_width,
-            fixed_widths['Date Started'],
+            fixed_widths["Date Started"]
         ]
-
+        
         rows = []
         for idx, (item_id, info) in enumerate(items, 1):
-            raw_status = str(info.get('status', 'unknown'))
-            status_lower = raw_status.lower()
-            if status_lower == 'running':
+            # Format status with colors
+            status = info["status"]
+            if status.lower() == "running":
                 status = f"{Colors.GREEN}Running{Colors.NC}"
-            elif status_lower == 'completed':
+            elif status.lower() == "completed":
                 status = f"{Colors.BLUE}Completed{Colors.NC}"
-            elif status_lower == 'failed':
+            elif status.lower() == "failed":
                 status = f"{Colors.RED}Failed{Colors.NC}"
-            elif status_lower == 'pending':
-                status = f"{Colors.YELLOW}Pending{Colors.NC}"
-            elif status_lower == 'unknown':
-                status = f"{Colors.YELLOW}Unknown{Colors.NC}"
-            elif 'deployment log' in status_lower:
+            elif "deployment log" in status.lower():
                 continue
-            else:
-                status = raw_status.title()
-
-            item_type = 'Active' if info.get('active') else 'Historical'
-
-            ts_value = info.get('timestamp')
-            if isinstance(ts_value, datetime):
-                timestamp = ts_value.strftime('%Y-%m-%d %H:%M')
-            else:
-                timestamp = str(ts_value or '')
-
-            file_name = info.get('file_name', 'N/A')
-            if isinstance(file_name, Path):
-                file_name = file_name.name
-            elif isinstance(file_name, str):
-                file_name = os.path.basename(file_name) or file_name
-            else:
-                file_name = str(file_name)
-
-            if file_name.endswith('.yaml'):
-                file_name = file_name[:-5]
-            if len(file_name) > ensemble_file_width - 2:
-                file_name = file_name[:ensemble_file_width - 5] + '...'
-
+            
+            # Format type
+            item_type = "Active" if info.get("active") else "Historical"
+            
+            # Format timestamp
+            timestamp = info["timestamp"].strftime("%Y-%m-%d %H:%M")
+            
+            # Get just the filename, remove .yaml extension, and truncate if needed
+            file_name = Path(info.get("file_name", "N/A")).name
+            if file_name.endswith(".yaml"):
+                file_name = file_name[:-5]  # Remove .yaml
+            if len(file_name) > remaining_width - 2:  # -2 for padding
+                file_name = file_name[:remaining_width-5] + "..."
+            
+            # Create row
             row = [
                 str(idx),
                 item_id,
                 status,
                 item_type,
                 file_name,
-                timestamp,
+                timestamp
             ]
             rows.append(row)
-
+        
+        # Create the table string
         table = []
-        border = '+' + '+'.join('-' * (w + 2) for w in widths) + '+'
+        border = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
         table.append(border)
-
-        header_row = '| ' + ' | '.join(f"{Colors.CYAN}{h:<{w}}{Colors.NC}" for h, w in zip(headers, widths)) + ' |'
+        
+        header_row = "| " + " | ".join(f"{Colors.CYAN}{h:<{w}}{Colors.NC}" for h, w in zip(headers, widths)) + " |"
         table.append(header_row)
         table.append(border)
-
+        
         for row in rows:
-            data_row = '| '
+            data_row = "| "
             for i, (cell, width) in enumerate(zip(row, widths)):
                 if i > 0:
-                    data_row += ' | '
-                if i == 2 and any(color in cell for color in (Colors.GREEN, Colors.BLUE, Colors.RED, Colors.YELLOW)):
-                    clean_cell = cell
-                    for color in (Colors.GREEN, Colors.BLUE, Colors.RED, Colors.YELLOW, Colors.NC):
-                        clean_cell = clean_cell.replace(color, '')
+                    data_row += " | "
+                if i == 2 and (Colors.GREEN in cell or Colors.BLUE in cell or Colors.RED in cell):
+                    clean_cell = cell.replace(Colors.GREEN, "").replace(Colors.BLUE, "").replace(Colors.RED, "").replace(Colors.NC, "")
                     data_row += cell.ljust(width + len(cell) - len(clean_cell))
                 else:
                     data_row += cell.ljust(width)
-            data_row += ' |'
+            data_row += " |"
             table.append(data_row)
-
+        
         table.append(border)
         return "\n".join(table), len(rows)
 
     def view_running_ensembles(self) -> Dict[str, str]:
         """Enhanced view of currently running ensembles with historical data"""
+        # Get active deployments
         active = self.get_active_deployments()
+        
+        # Get deployment history from logs
         deployment_log = self.parse_deployment_log()
-
-        all_items: Dict[str, Dict[str, Any]] = {}
-        now = datetime.now()
-
-        for dep_id, meta in active.items():
-            status_norm = str(meta.get('status', 'unknown')).lower()
-            log_info = deployment_log.get(dep_id)
-            timestamp = meta.get('timestamp') or (log_info.get('timestamp') if log_info else None) or now
-            file_name = meta.get('ensemble_file') or (log_info.get('file_name') if log_info else None) or 'N/A'
-            if isinstance(file_name, Path):
-                file_name = file_name.name
-            elif isinstance(file_name, str):
-                file_name = os.path.basename(file_name) or file_name
-            else:
-                file_name = str(file_name)
-
+        
+        all_items = {}
+        
+        # Add active deployments
+        for dep_id, status in active.items():
+            # Get file name from log if available
+            file_name = "N/A"
+            if dep_id in deployment_log:
+                file_name = deployment_log[dep_id]['file_name']
+            
             all_items[dep_id] = {
-                'status': status_norm,
-                'active': status_norm in ('running', 'pending'),
-                'timestamp': timestamp,
-                'type': 'active_deployment' if status_norm in ('running', 'pending') else 'deployment_record',
-                'file_name': file_name,
+                "status": status,
+                "active": True,
+                "timestamp": deployment_log.get(dep_id, {}).get('timestamp', datetime.now()),
+                "type": "active_deployment",
+                "file_name": file_name
             }
-
-            if log_info:
-                log_ts = log_info.get('timestamp')
-                if isinstance(log_ts, datetime):
-                    all_items[dep_id]['timestamp'] = log_ts
-                log_name = log_info.get('file_name')
-                if log_name:
-                    all_items[dep_id]['file_name'] = os.path.basename(log_name)
-
+        
+        # Add failed/historical deployments (those in log but not active)
         for dep_id, info in deployment_log.items():
-            if dep_id in all_items:
-                continue
-            status_norm = 'completed' if info.get('status') == 'Submitted' else str(info.get('status', 'failed')).lower()
-            all_items[dep_id] = {
-                'status': status_norm,
-                'active': False,
-                'timestamp': info['timestamp'],
-                'type': 'historical_deployment',
-                'file_name': os.path.basename(info.get('file_name', 'N/A')),
-            }
-
-        if not all_items:
-            return {
-                'status': 'success',
-                'message': 'No deployments found.',
-                'items': [],
-                'count': 0,
-            }
-
+            if dep_id not in active:
+                all_items[dep_id] = {
+                    "status": "Failed",  # If it's in log but not active, mark as failed
+                    "active": False,
+                    "timestamp": info['timestamp'],
+                    "type": "historical_deployment",
+                    "file_name": info['file_name']
+                }
+        
+        # Sort all items by timestamp, newest first
         sorted_items = sorted(
             all_items.items(),
-            key=lambda item: item[1].get('timestamp') or datetime.min,
-            reverse=True,
-        )[:20]
-
+            key=lambda x: x[1]["timestamp"],
+            reverse=True
+        )
+        
+        # Limit to last 20 entries
+        sorted_items = sorted_items[:20]
+        
+        # Format as table
         table_str, num_items = self.format_deployment_table(sorted_items)
-
+        
         return {
-            'status': 'success',
-            'message': table_str,
-            'items': sorted_items,
-            'count': num_items,
+            "status": "success",
+            "message": table_str,
+            "items": sorted_items,
+            "count": num_items
         }
 
     def _get_node_ping(self, host: str) -> str:
@@ -1002,45 +784,41 @@ Nodes Detail:
     def get_deployment_status(self, deployment_id: str) -> Dict[str, str]:
         """Get the current status of a deployment"""
         try:
+            # Check active deployments first
             active_deployments = self.get_active_deployments()
-            deployment = active_deployments.get(deployment_id)
-            if deployment:
-                status_norm = str(deployment.get('status', 'unknown')).lower()
-                message_map = {
-                    'running': 'Deployment is currently running',
-                    'pending': 'Deployment is pending or shutting down',
-                    'completed': 'Deployment completed or was shut down',
-                    'failed': 'Deployment failed',
-                    'unknown': 'Deployment status is unknown',
+            if deployment_id in active_deployments:
+                return {
+                    "status": "success",
+                    "deployment_status": "running",
+                    "message": "Deployment is currently running"
                 }
-                response = {
-                    'status': 'success',
-                    'deployment_status': status_norm,
-                    'message': message_map.get(status_norm, message_map['unknown']),
-                }
-                status_detail = deployment.get('status_raw')
-                if status_detail:
-                    response['status_detail'] = status_detail
-                return response
-
+            
+            # Check historical deployments
             historical = self.parse_deployment_log()
             if deployment_id in historical:
                 deployment_info = historical[deployment_id]
-                status_norm = 'completed' if deployment_info.get('status') == 'Submitted' else 'failed'
-                return {
-                    'status': 'success',
-                    'deployment_status': status_norm,
-                    'message': 'Deployment completed successfully' if status_norm == 'completed' else 'Deployment failed',
-                }
-
+                if deployment_info['status'] == 'Submitted':
+                    return {
+                        "status": "success",
+                        "deployment_status": "completed",
+                        "message": "Deployment completed successfully"
+                    }
+                else:
+                    return {
+                        "status": "success",
+                        "deployment_status": "failed",
+                        "message": "Deployment failed"
+                    }
+            
             return {
-                'status': 'error',
-                'message': f'Deployment {deployment_id} not found',
+                "status": "error",
+                "message": f"Deployment {deployment_id} not found"
             }
+            
         except Exception as e:
             return {
-                'status': 'error',
-                'message': f'Error getting deployment status: {str(e)}',
+                "status": "error",
+                "message": f"Error getting deployment status: {str(e)}"
             }
 
     def get_deployment_manifest_text(self, deployment_id: str) -> Dict[str, str]:
@@ -1080,76 +858,47 @@ Nodes Detail:
     def get_deployments_for_web(self) -> Dict[str, Any]:
         """Get all deployments in a format suitable for web API consumption"""
         try:
+            # Get active deployments
             active_deployments = self.get_active_deployments()
+            
+            # Get historical deployments
             historical = self.parse_deployment_log()
-
-            deployments: List[Dict[str, Any]] = []
-            seen: set[str] = set()
-            now = datetime.now()
-
-            for deployment_id, meta in active_deployments.items():
-                seen.add(deployment_id)
-                status_norm = str(meta.get('status', 'unknown')).lower()
-                log_info = historical.get(deployment_id)
-                timestamp = meta.get('timestamp') or (log_info.get('timestamp') if log_info else None) or now
-                ensemble_file = meta.get('ensemble_file') or (log_info.get('file_name') if log_info else None) or 'Active deployment'
-                if isinstance(ensemble_file, Path):
-                    ensemble_file = str(ensemble_file)
-                if isinstance(ensemble_file, str):
-                    ensemble_label = os.path.basename(ensemble_file) or ensemble_file
-                else:
-                    ensemble_label = str(ensemble_file)
-
+            
+            # Combine and format for web
+            deployments = []
+            
+            # Add active deployments
+            for deployment_id, status in active_deployments.items():
                 deployments.append({
-                    'id': deployment_id,
-                    'status': status_norm,
-                    'type': 'active' if status_norm in ('running', 'pending') else 'historical',
-                    'timestamp': timestamp,
-                    'ensemble_file': ensemble_label,
+                    "id": deployment_id,
+                    "status": "running",
+                    "type": "active",
+                    "timestamp": datetime.now().isoformat(),
+                    "ensemble_file": "Active deployment"
                 })
-
+            
+            # Add historical deployments
             for deployment_id, info in historical.items():
-                if deployment_id in seen:
-                    continue
-                status_norm = 'completed' if info.get('status') == 'Submitted' else str(info.get('status', 'failed')).lower()
                 deployments.append({
-                    'id': deployment_id,
-                    'status': status_norm,
-                    'type': 'historical',
-                    'timestamp': info['timestamp'],
-                    'ensemble_file': os.path.basename(info.get('file_name', 'Unknown')),
+                    "id": deployment_id,
+                    "status": info['status'].lower(),
+                    "type": "historical",
+                    "timestamp": info['timestamp'].isoformat(),
+                    "ensemble_file": info.get('file_basename', 'Unknown')
                 })
-
-            deployments.sort(key=lambda item: item.get('timestamp') or datetime.min, reverse=True)
-
-            formatted: List[Dict[str, Any]] = []
-            for item in deployments:
-                ts = item.get('timestamp')
-                if isinstance(ts, datetime):
-                    ts_value = ts.isoformat()
-                elif ts:
-                    ts_value = str(ts)
-                else:
-                    ts_value = datetime.now().isoformat()
-                formatted.append({
-                    'id': item['id'],
-                    'status': item['status'],
-                    'type': item['type'],
-                    'timestamp': ts_value,
-                    'ensemble_file': item['ensemble_file'],
-                })
-
+            
             return {
-                'status': 'success',
-                'deployments': formatted,
-                'count': len(formatted),
+                "status": "success",
+                "deployments": deployments,
+                "count": len(deployments)
             }
+            
         except Exception as e:
             return {
-                'status': 'error',
-                'message': f"Error getting deployments: {str(e)}",
-                'deployments': [],
-                'count': 0,
+                "status": "error",
+                "message": f"Error getting deployments: {str(e)}",
+                "deployments": [],
+                "count": 0
             }
 
     def manage_deployment_actions(self, deployment_id: str, deployment_type: str):
