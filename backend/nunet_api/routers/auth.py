@@ -9,15 +9,13 @@ from ..security import (
     is_password_set,
     load_credentials,
     set_admin_password,
-    validate_setup_token,
     verify_admin_password,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-class SetupPayload(BaseModel):
-    token: str = Field(..., min_length=32, max_length=256)
+class PasswordPayload(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
 
 
@@ -46,11 +44,9 @@ def get_status() -> dict:
 
 
 @router.post("/setup")
-def setup(payload: SetupPayload) -> dict:
+def setup(payload: PasswordPayload) -> dict:
     if is_password_set():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password already configured")
-    if not validate_setup_token(payload.token):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid setup token")
 
     set_admin_password(payload.password)
     return _token_response(ADMIN_USERNAME)

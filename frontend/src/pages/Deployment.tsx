@@ -26,8 +26,6 @@ import {
 } from "../components/ui/card";
 import { Separator } from "../components/ui/separator";
 import { Button } from "../components/ui/button";
-
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
@@ -90,16 +88,6 @@ export default function DeploymentDetailsPage() {
 
   return (
     <>
-      <div className="px-4 lg:px-6 mt-4">
-        <Button
-          variant="ghost"
-          onClick={() => navigate("/deploy")}
-          className="flex items-center gap-2 px-0"
-        >
-          <ArrowLeft className="h-4 w-4" /> Back to Deployments
-        </Button>
-      </div>
-
       {/* Deployment Info Card */}
       {deployment && (
         <DeploymentInfoCard
@@ -124,10 +112,8 @@ export default function DeploymentDetailsPage() {
 }
 
 // 🔹 Deployment Info
-
 function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [isShutdownDialogOpen, setIsShutdownDialogOpen] = useState(false);
 
   const {
     data: details,
@@ -142,117 +128,68 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
     gcTime: Infinity,
   });
 
-  const handleConfirmShutdown = async () => {
-    setIsShuttingDown(true);
-    try {
-      await handleShutdown(deployment.id);
-      await refetch();
-      setIsShutdownDialogOpen(false);
-    } finally {
-      setIsShuttingDown(false);
-    }
-  };
-
   return (
-    <>
-      <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full">
-          <CardHeader className="w-full flex flex-col gap-2">
-            <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
-              <CardTitle className="font-semibold tabular-nums truncate max-w-[250px] sm:overflow-visible sm:whitespace-normal sm:max-w-full break-words min-w-0">
-                <span title={deployment.id}>{deployment.id}</span>
-              </CardTitle>
-              <CopyButton text={deployment.id} className={undefined} />
-            </div>
-          </CardHeader>
-          <CardFooter className="flex-col items-start gap-1.5 text-sm">
-            <div className="text-muted-foreground">
-              <p>
-                <b>Status:</b> <code>{deployment.status}</code>
-              </p>
-              <p>
-                <b>Type:</b> <code>{deployment.type}</code>
-              </p>
-              <p>
-                <b>Timestamp:</b> <code>{deployment.timestamp}</code>
-              </p>
-              <p>
-                <b>Ensemble File:</b> <code>{deployment.ensemble_file}</code>
-              </p>
-            </div>
+    <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
+      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full">
+        <CardHeader className="w-full flex flex-col gap-2">
+          <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
+            <CardTitle className="font-semibold tabular-nums truncate max-w-[250px] sm:overflow-visible sm:whitespace-normal sm:max-w-full break-words min-w-0">
+              <span title={deployment.id}>{deployment.id}</span>
+            </CardTitle>
+            <CopyButton text={deployment.id} className={undefined} />
+          </div>
+        </CardHeader>
+        <CardFooter className="flex-col items-start gap-1.5 text-sm">
+          <div className="text-muted-foreground">
+            <p>
+              <b>Status:</b> <code>{deployment.status}</code>
+            </p>
+            <p>
+              <b>Type:</b> <code>{deployment.type}</code>
+            </p>
+            <p>
+              <b>Timestamp:</b> <code>{deployment.timestamp}</code>
+            </p>
+            <p>
+              <b>Ensemble File:</b> <code>{deployment.ensemble_file}</code>
+            </p>
+          </div>
 
-            <div className="mt-3 flex flex-col sm:flex-row sm:gap-2">
-              <RefreshButton
-                onClick={() => refetch()}
-                isLoading={!!isFetching}
-                tooltip="Refresh Deployment Info"
-                children="Refresh Info..."
-              />
+          <div className="mt-3 flex flex-col sm:flex-row sm:gap-2">
+            <RefreshButton
+              onClick={() => refetch()}
+              isLoading={!!isFetching}
+              tooltip="Refresh Deployment Info"
+              children="Refresh Info..."
+            />
 
-              {details?.status?.deployment_status === "running" && (
-                <Button
-                  onClick={() => setIsShutdownDialogOpen(true)}
-                  className="block bg-red-500 hover:bg-red-600 text-white mt-3 sm:mt-0 flex flex-row gap-2"
-                  disabled={isShuttingDown}
-                >
-                  {isShuttingDown ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Shutting down...
-                    </>
-                  ) : (
-                    "Shut Down Deployment"
-                  )}
-                </Button>
-              )}
-            </div>
-          </CardFooter>
-        </Card>
-      </div>
-
-      <Dialog
-        open={isShutdownDialogOpen}
-        onOpenChange={(open) => {
-          if (!isShuttingDown) {
-            setIsShutdownDialogOpen(open);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Shut down deployment?</DialogTitle>
-            <DialogDescription>
-              Shutting down will stop this deployment immediately. Any in-progress work will be lost.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex flex-col sm:flex-row gap-2 sm:justify-end">
-            <Button
-              variant="outline"
-              onClick={() => setIsShutdownDialogOpen(false)}
-              disabled={isShuttingDown}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleConfirmShutdown}
-              disabled={isShuttingDown}
-            >
-              {isShuttingDown ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Shutting down...
-                </>
-              ) : (
-                "Yes, shut down"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+            {details?.status?.deployment_status === "running" && (
+              <Button
+                onClick={async () => {
+                  setIsShuttingDown(true);
+                  await handleShutdown(deployment.id);
+                  setIsShuttingDown(false);
+                }}
+                className="block bg-red-500 hover:bg-red-600 text-white mt-3 sm:mt-0 flex flex-row gap-2"
+                disabled={isShuttingDown}
+              >
+                {isShuttingDown ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Shutting down...
+                  </>
+                ) : (
+                  "Shut Down Deployment"
+                )}
+              </Button>
+            )}
+          </div>
+        </CardFooter>
+      </Card>
+    </div>
   );
 }
+
 // 🔹 Deployment Progress
 export function DeploymentProgressCard({
   deploymentId,

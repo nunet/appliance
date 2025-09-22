@@ -1,7 +1,6 @@
 import json
 import os
 import hashlib
-import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -17,10 +16,6 @@ JWT_SECRET_ENV_KEY = "f9a2c3e7d54b8a1f0c69f4e2d8b1a7c6e0d4f8b5c2a7e9f3b6d1c4e8f0
 JWT_EXPIRE_MINUTES_ENV_KEY = "14"
 DEFAULT_EXPIRY_MINUTES = 30
 ALGORITHM = "HS256"
-
-DEFAULT_SETUP_TOKEN_EXPIRY_MINUTES = 30
-SETUP_TOKEN_PATH_ENV_KEY = "NUNET_SETUP_TOKEN_PATH"
-SETUP_TOKEN_EXPIRY_MINUTES_ENV_KEY = "NUNET_SETUP_TOKEN_EXPIRY_MINUTES"
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -66,105 +61,6 @@ def _hash_password(password: str) -> str:
     return hashed.decode("utf-8")
 
 
-
-
-def _setup_token_path() -> Path:
-    env_path = os.getenv(SETUP_TOKEN_PATH_ENV_KEY)
-    if env_path:
-        return Path(env_path).expanduser().resolve()
-    return (Path.home() / "nunet" / "appliance" / "setup_token.json").resolve()
-
-
-def _setup_token_expiry_minutes() -> int:
-    value = os.getenv(SETUP_TOKEN_EXPIRY_MINUTES_ENV_KEY)
-    if value:
-        try:
-            minutes = int(value)
-            if minutes > 0:
-                return minutes
-        except ValueError:
-            pass
-    return DEFAULT_SETUP_TOKEN_EXPIRY_MINUTES
-
-
-def _load_setup_token() -> Optional[Dict[str, Any]]:
-    path = _setup_token_path()
-    if not path.exists():
-        return None
-    try:
-        with path.open("r", encoding="utf-8") as fp:
-            data = json.load(fp)
-            if isinstance(data, dict):
-                return data
-    except Exception:
-        return None
-    return None
-
-
-def _write_setup_token(token: str, expires_at: datetime, created_at: datetime) -> None:
-    payload = {
-        "token": token,
-        "created_at": created_at.isoformat(),
-        "expires_at": expires_at.isoformat(),
-    }
-    path = _setup_token_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, indent=2)
-    try:
-        os.chmod(path, 0o600)
-    except PermissionError:
-        pass
-    except NotImplementedError:
-        pass
-
-
-def clear_setup_token() -> None:
-    path = _setup_token_path()
-    if path.exists():
-        path.unlink()
-
-
-def get_or_create_setup_token() -> Tuple[str, datetime]:
-    now = _now_utc()
-    data = _load_setup_token()
-    if data and "token" in data and "expires_at" in data:
-        try:
-            expires_at = datetime.fromisoformat(data["expires_at"])
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-        except Exception:
-            expires_at = None
-        if expires_at and expires_at > now:
-            return data["token"], expires_at
-
-    token = secrets.token_urlsafe(32)
-    expires_at = now + timedelta(minutes=_setup_token_expiry_minutes())
-    _write_setup_token(token, expires_at, now)
-    return token, expires_at
-
-
-def validate_setup_token(token: str) -> bool:
-    if not token:
-        return False
-    data = _load_setup_token()
-    if not data:
-        return False
-    stored_token = data.get("token")
-    expires_at_raw = data.get("expires_at")
-    if not stored_token or not expires_at_raw:
-        return False
-    try:
-        expires_at = datetime.fromisoformat(expires_at_raw)
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-    except Exception:
-        return False
-    if expires_at <= _now_utc():
-        return False
-    return secrets.compare_digest(stored_token, token)
-
-
 def set_admin_password(password: str, username: str = ADMIN_USERNAME) -> Dict[str, Any]:
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters long")
@@ -190,8 +86,6 @@ def set_admin_password(password: str, username: str = ADMIN_USERNAME) -> Dict[st
     except NotImplementedError:
         pass
 
-    clear_setup_token()
-
     return payload
 
 
@@ -199,7 +93,6 @@ def clear_credentials() -> None:
     path = _credentials_path()
     if path.exists():
         path.unlink()
-    clear_setup_token()
 
 
 def verify_admin_password(password: str) -> bool:
