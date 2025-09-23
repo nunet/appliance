@@ -336,6 +336,7 @@ WantedBy=multi-user.target
             result = run_dms_command_with_passphrase([
                 "nunet", "cap", "grant", "--context", "dms",
                 "--cap", "/dms/deployment",
+                "--cap", "/dms/tokenomics/contract",
                 "--cap", "/broadcast", 
                 "--cap", "/public",
                 "--topic", "/nunet",
