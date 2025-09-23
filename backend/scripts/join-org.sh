@@ -142,7 +142,7 @@ fi
 
 echo "✅ Received Org DID"
 GRANT_EXPIRY_DATE=$(date -d '+30 days' --utc +%Y-%m-%dT%H:%M:%SZ)
-REQUIRE_TOKEN=$(nunet cap grant --context dms --cap /dms/deployment --cap /broadcast --cap /public --topic /nunet --expiry $GRANT_EXPIRY_DATE $ORG_DID)
+REQUIRE_TOKEN=$(nunet cap grant --context dms --cap /dms/deployment --cap /dms/tokenomics/contract --cap /broadcast --cap /public --topic /nunet --expiry $GRANT_EXPIRY_DATE $ORG_DID)
 echo "🔄 Applying require token..."
 nunet cap anchor -c dms --require "$REQUIRE_TOKEN"
 echo "✅ Require token applied successfully"
