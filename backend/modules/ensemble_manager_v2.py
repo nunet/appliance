@@ -1070,7 +1070,7 @@ Nodes Detail:
         except Exception as e:
             return {"status": "error", "message": f"Unexpected error shutting down deployment: {e}"}
 
-    def get_deployment_allocations(self, deployment_id: str) -> Dict[str, str]:
+    def get_deployment_allocations(self, deployment_id: str) -> List[str]:
         """Get allocations for a deployment from its manifest"""
         try:
             result = run_dms_command_with_passphrase(

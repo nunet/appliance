@@ -26,6 +26,13 @@ export async function getDeploymentLogs(id, allocation = null) {
   return res.data;
 }
 
+export async function requestDeploymentLogs(id, allocation = null) {
+  const res = await api.post(`/ensemble/deployments/${id}/logs/request`, null, {
+    params: allocation ? { allocation } : {},
+  });
+  return res.data;
+}
+
 export async function getDeploymentAllocations(id) {
   const res = await api.get(
     `/ensemble/deployments/${id}/allocations`

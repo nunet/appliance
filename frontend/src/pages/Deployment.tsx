@@ -6,6 +6,7 @@ import {
   getDeployments,
   getDeploymentDetails,
   getDeploymentLogs,
+  requestDeploymentLogs,
   shutdownDeployment,
 } from "@/api/deployments";
 import {
@@ -348,6 +349,7 @@ function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: str
 // 🔹 Deployment Logs
 function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
   const allocKey = alloc ?? "__default__";
+  const [isRequesting, setIsRequesting] = useState(false);
   const {
     data: logsData,
     refetch,
@@ -360,6 +362,18 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     staleTime: Infinity,
     gcTime: Infinity,
   });
+
+  const handleRefresh = async () => {
+    setIsRequesting(true);
+    try {
+      await requestDeploymentLogs(deploymentId, alloc ?? null);
+      await refetch({ throwOnError: true });
+    } catch (error) {
+      throw error;
+    } finally {
+      setIsRequesting(false);
+    }
+  };
 
   const handleDownload = () => {
     if (!logsData?.message) return;
@@ -398,8 +412,8 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
             <CardDescription>Deployment Logs ({alloc ?? "auto"})</CardDescription>
             <div className="flex gap-2">
               <RefreshButton
-                onClick={() => refetch()}
-                isLoading={!!isFetching}
+                onClick={handleRefresh}
+                isLoading={isFetching || isRequesting}
                 tooltip="Refresh Logs"
               />
               <Button

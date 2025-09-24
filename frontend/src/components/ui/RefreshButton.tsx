@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner";
 
 interface RefreshButtonProps {
-  onClick: () => void;
+  onClick: () => void | Promise<void>;
   isLoading: boolean;
   tooltip: string;
   children?: React.ReactNode;
