@@ -2,7 +2,7 @@ import json, subprocess, os
 from modules.dms_manager import DMSManager
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, WebSocket
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from ..utils.pty_bridge import run_pty_ws
 from modules.ensemble_manager_v2 import EnsembleManagerV2
@@ -111,6 +111,64 @@ def _resolve_path(mgr: EnsembleManagerV2, p: str) -> Path:
     """Resolve absolute vs relative (relative to ~/ensembles) without changing business logic."""
     path = Path(p).expanduser()
     return path if path.is_absolute() else (mgr.base_dir / path)
+
+
+
+def _resolve_allocation_choice(
+    mgr: EnsembleManagerV2,
+    deployment_id: str,
+    requested_alloc: str | None,
+) -> Tuple[Optional[str], List[str]]:
+    allocs = mgr.get_deployment_allocations(deployment_id) or []
+    if not allocs:
+        return None, allocs
+
+    if not requested_alloc:
+        if len(allocs) == 1:
+            return allocs[0], allocs
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "multiple_allocations", "allocations": allocs},
+        )
+
+    requested_clean = requested_alloc.strip()
+    if not requested_clean:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
+        )
+
+    requested_key = requested_clean.lower()
+    # Accept either the full allocation id or a unique suffix (e.g. "alloc1").
+    normalized = {alloc.lower(): alloc for alloc in allocs}
+
+    if requested_key in normalized:
+        return normalized[requested_key], allocs
+
+    suffix_map: Dict[str, List[str]] = {}
+    for alloc in allocs:
+        suffix = alloc.rsplit('.', 1)[-1].lower()
+        suffix_map.setdefault(suffix, []).append(alloc)
+
+    matches = suffix_map.get(requested_key, [])
+    if len(matches) == 1:
+        return matches[0], allocs
+
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "ambiguous_allocation",
+                "provided": requested_alloc,
+                "matching_allocations": matches,
+                "allocations": allocs,
+            },
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
+    )
 
 
 @router.get("/deployments", response_model=DeploymentsWebResponse)
@@ -231,6 +289,85 @@ def _format_dms_section(bundle: dict | None) -> str:
         lines.append(f"[returncode] {returncode}")
     return "\n".join(lines)
 
+@router.post("/deployments/{deployment_id}/logs/request", response_model=SimpleStatusResponse)
+def request_deployment_logs(
+    deployment_id: str,
+    allocation: str | None = Query(
+        default=None,
+        description="Optional allocation name if multiple exist",
+    ),
+    mgr: EnsembleManagerV2 = Depends(get_mgr),
+):
+    selected_alloc, allocs = _resolve_allocation_choice(mgr, deployment_id, allocation)
+    if not selected_alloc:
+        if allocs:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "allocation_required", "allocations": allocs},
+            )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "no_allocations",
+                "message": "Deployment has no allocations available.",
+            },
+        )
+
+    cmd = [
+        "nunet",
+        "-c",
+        "dms",
+        "actor",
+        "cmd",
+        "/dms/node/deployment/logs",
+        "--id",
+        deployment_id,
+        "--allocation",
+        selected_alloc,
+    ]
+
+    try:
+        result = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        message = (exc.stderr or exc.stdout or str(exc)).strip() or "Failed to request logs."
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "log_request_failed", "message": message},
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "nunet_not_found", "message": "nunet CLI not available"},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "log_request_error", "message": str(exc)},
+        ) from exc
+
+    message = f"Log request triggered for allocation {selected_alloc}."
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+
+    if stdout:
+        try:
+            payload = json.loads(stdout)
+            if isinstance(payload, dict):
+                message = payload.get("message") or payload.get("status") or json.dumps(payload)
+            else:
+                message = stdout
+        except json.JSONDecodeError:
+            message = stdout
+    elif stderr:
+        message = stderr
+
+    return SimpleStatusResponse(status="success", message=message)
+
 @router.get("/deployments/{deployment_id}/logs", response_model=LogsTextResponse)
 def deployment_logs_text(
     deployment_id: str,
@@ -241,24 +378,7 @@ def deployment_logs_text(
     Non-interactive logs endpoint. If a deployment has multiple allocations and none is given,
     return 400 with available choices (so the API never blocks on input()).
     """
-    allocs = mgr.get_deployment_allocations(deployment_id)
-
-    selected_alloc = None
-    if allocs:
-        if allocation:
-            if allocation not in allocs:
-                raise HTTPException(
-                    status_code=400,
-                    detail={"error": "invalid_allocation", "provided": allocation, "allocations": allocs},
-                )
-            selected_alloc = allocation
-        elif len(allocs) == 1:
-            selected_alloc = allocs[0]
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "multiple_allocations", "allocations": allocs},
-            )
+    selected_alloc, _ = _resolve_allocation_choice(mgr, deployment_id, allocation)
 
     alloc_dir = None
     if selected_alloc:
