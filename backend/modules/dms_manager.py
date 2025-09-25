@@ -452,14 +452,14 @@ class DMSManager:
     def confirm_transaction(self, unique_id: str, tx_hash: str) -> Dict[str, Any]:
         """
         Call DMS to confirm a transaction:
-        nunet actor cmd --context user /dms/tokenomics/contract/transactions/confirm
+        nunet actor cmd --context dms /dms/tokenomics/contract/transactions/confirm
           --unique-id <uniqueid> --tx-hash <txhash>
         Uses keyring-backed passphrase via run_dms_command_with_passphrase.
         """
         try:
             cp = run_dms_command_with_passphrase(
                 [
-                    "nunet", "actor", "cmd", "--context", "user",
+                    "nunet", "actor", "cmd", "--context", "dms",
                     "/dms/tokenomics/contract/transactions/confirm",
                     "--unique-id", unique_id,
                     "--tx-hash", tx_hash,
@@ -477,66 +477,29 @@ class DMSManager:
     def list_transactions(self) -> Dict[str, Any]:
         """
         Call DMS to list transactions:
-        nunet actor cmd --context user /dms/tokenomics/contract/transactions/list
+        nunet actor cmd --context dms /dms/tokenomics/contract/transactions/list
         Expects JSON on stdout with shape: { "transactions": [ ... ] }
         """
-        # for now we return mock data below
-        # --------------------------from here========================
-        return { 
-        "transactions": [
-            {
-            "UniqueID": "inv_001",
-            "PaymentValidatorDID": "did:nunet:validator:123456789abcdef",
-            "ContractDID": "did:nunet:contract:987654321abcdef",
-            "ToAddress": "0x1111111111111111111111111111111111111111",
-            "Amount": "25",
-            "Status": "paid",
-            "TxHash": ""
-            },
-            {
-            "UniqueID": "inv_002",
-            "PaymentValidatorDID": "did:nunet:validator:abcdef987654321",
-            "ContractDID": "did:nunet:contract:abcdef123456789",
-            "ToAddress": "0x2222222222222222222222222222222222222222",
-            "Amount": "0.5",
-            "Status": "unpaid",
-            "TxHash": ""
-            },
-            {
-            "UniqueID": "inv_003",
-            "PaymentValidatorDID": "did:nunet:validator:1122334455667788",
-            "ContractDID": "did:nunet:contract:8877665544332211",
-            "ToAddress": "0x3333333333333333333333333333333333333333",
-            "Amount": "100",
-            "Status": "paid",
-            "TxHash": ""
-            }
-        ]
-        }
-
-        # --------------------------from here========================
-
-        #TODO uncomment below when DMS we have the newst DMS on the appliance
-        # try:
-        #     cp = run_dms_command_with_passphrase(
-        #         [
-        #             "nunet", "actor", "cmd", "--context", "user",
-        #             "/dms/tokenomics/contract/transactions/list",
-        #         ],
-        #         capture_output=True,
-        #         text=True,
-        #         check=True,
-        #     )
-        #     out = cp.stdout.strip() or "{}"
-        #     data = json.loads(out)
-        #     txs = data.get("transactions", [])
-        #     return {"status": "success", "transactions": txs}
-        # except subprocess.CalledProcessError as e:
-        #     return {"status": "error", "message": e.stderr or str(e)}
-        # except json.JSONDecodeError:
-        #     return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
-        # except Exception as e:
-        #     return {"status": "error", "message": str(e)}
+        try:
+            cp = run_dms_command_with_passphrase(
+                [
+                    "nunet", "actor", "cmd", "--context", "dms",
+                    "/dms/tokenomics/contract/transactions/list",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            out = cp.stdout.strip() or "{}"
+            data = json.loads(out)
+            txs = data.get("transactions", [])
+            return {"status": "success", "transactions": txs}
+        except subprocess.CalledProcessError as e:
+            return {"status": "error", "message": e.stderr or str(e)}
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
     
     def get_structured_logs(self, alloc_dir: Optional[Path] = None, *, lines: int = 200) -> Dict[str, Any]:
         """
