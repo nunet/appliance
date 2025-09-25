@@ -26,9 +26,17 @@ import { sendNTX } from "@/lib/sendNTX";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
+function middleEllipsis(value: string, head = 6, tail = 4) {
+  if (!value) return "";
+  if (value.length <= head + tail + 3) {
+    return value;
+  }
+
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
 function shorten(addr: string) {
-  if (!addr) return "";
-  return addr.slice(0, 6) + "…" + addr.slice(-4);
+  return middleEllipsis(addr);
 }
 
 type StatusFilter = "all" | "paid" | "unpaid";
@@ -252,7 +260,7 @@ export default function PaymentsPage() {
                 return (
                   <Card key={p.unique_id} className="hover:shadow-md transition">
                     {/* Tighter padding for compact rows */}
-                    <CardHeader className="py-1.5 px-2">
+                    <CardHeader className="px-2 py-1.5 lg:px-1.5 lg:py-1">
                       {/* MOBILE/TABLET: original stacked layout */}
                       <div className="block lg:hidden">
                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -264,7 +272,7 @@ export default function PaymentsPage() {
                                 className="truncate max-w-[260px] md:max-w-none font-mono text-base"
                                 title={p.unique_id}
                               >
-                                {p.unique_id}
+                                {middleEllipsis(p.unique_id, 12, 6)}
                               </CardTitle>
                             </div>
                             <div className="mt-2 text-sm text-muted-foreground space-y-2">
@@ -274,7 +282,7 @@ export default function PaymentsPage() {
                                   className="bg-muted px-2 py-1 rounded truncate max-w-[260px] md:max-w-none"
                                   title={p.to_address}
                                 >
-                                  {p.to_address}
+                                  {middleEllipsis(p.to_address, 12, 6)}
                                 </code>
                                 <CopyButton text={p.to_address} />
                               </div>
@@ -305,20 +313,8 @@ export default function PaymentsPage() {
                             </div>
                           </div>
 
-                          {/* Right: Status + Action (badge only on mobile) */}
-                          <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "uppercase lg:hidden",
-                                p.status === "paid"
-                                  ? "bg-green-100 text-green-800 border-green-200"
-                                  : "bg-yellow-100 text-yellow-800 border-yellow-200"
-                              )}
-                            >
-                              {p.status.toUpperCase()}
-                            </Badge>
-
+                          {/* Right: Action */}
+                          <div className="flex flex-col items-start md:items-end shrink-0">
                             <Button
                               size="sm"
                               className="w-full md:w-auto h-8 px-2"
@@ -328,7 +324,7 @@ export default function PaymentsPage() {
                               {isSending ? (
                                 <>
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Sending…
+                                  Sending...
                                 </>
                               ) : p.status === "unpaid" ? (
                                 <>
@@ -346,55 +342,56 @@ export default function PaymentsPage() {
                         </div>
                       </div>
 
-                      {/* DESKTOP/LAPTOP (≥1024px): ultra-compact single-line row */}
-                      <div className="hidden lg:flex lg:items-center lg:gap-2 lg:w-full overflow-hidden">
+                      {/* DESKTOP/LAPTOP (>=1024px): ultra-compact single-line row */}
+                      <div className="hidden lg:flex lg:w-full lg:items-center lg:gap-1.5 overflow-hidden">
                         {/* ID */}
-                        <div className="flex items-center gap-1.5 basis-[180px] shrink-0">
+                        <div className="flex items-center gap-1.5 min-w-0 basis-[160px] shrink-0">
                           <CopyButton text={p.unique_id} className="shrink-0" />
                           <CardTitle
-                            className="truncate font-mono text-sm"
+                            className="font-mono text-xs"
                             title={p.unique_id}
                           >
-                            {p.unique_id}
+                            {middleEllipsis(p.unique_id, 10, 6)}
                           </CardTitle>
                         </div>
 
                         {/* To address (expands when space exists) */}
-                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <div className="flex items-center gap-1 min-w-0 flex-1">
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             To
                           </span>
                           <code
-                            className="bg-muted px-1 py-0.5 rounded truncate"
+                            className="bg-muted px-1 py-0.5 rounded text-xs font-mono"
                             title={p.to_address}
                           >
-                            {p.to_address}
+                            {middleEllipsis(p.to_address, 10, 6)}
                           </code>
                           <CopyButton text={p.to_address} className="shrink-0" />
                         </div>
 
                         {/* Amount */}
-                            <div
-                              className={cn(
-                                "flex items-center gap-1.5 basis-[180px] justify-end shrink-0",
-                                !(txHash || p.tx_hash) && "lg:mr-6"
-                              )}>
-                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        <div
+                          className={cn(
+                            "flex items-center gap-1.5 justify-end shrink-0 basis-[130px]",
+                            !(txHash || p.tx_hash) && "lg:mr-3"
+                          )}
+                        >
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             Amount
                           </span>
-                          <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-sm">
+                          <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
                             {config?.token_symbol ?? "NTX"} {p.amount}
                           </code>
                         </div>
 
-                        {/* Last TX — only render if present (no placeholder) */}
+                        {/* Last TX - only render if present (no placeholder) */}
                         {(txHash || p.tx_hash) && (
-                          <div className="flex items-center gap-1.5 basis-[180px] justify-end shrink-0">
-                            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          <div className="flex items-center gap-1.5 justify-end shrink-0 basis-[170px]">
+                            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               Last TX
                             </span>
                             <code
-                              className="bg-muted px-1 py-0.5 rounded text-xs"
+                              className="bg-muted px-1 py-0.5 rounded text-xs font-mono"
                               title={txHash || p.tx_hash}
                             >
                               {shorten(txHash || p.tx_hash)}
@@ -417,23 +414,23 @@ export default function PaymentsPage() {
                         <div className="flex items-center justify-end shrink-0">
                           <Button
                             size="sm"
-                            className="h-8 px-2"
+                            className="h-7 px-2 text-xs"
                             onClick={() => handlePay(p)}
                             disabled={isSending || p.status === "paid" || !config}
                           >
                             {isSending ? (
                               <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Sending…
+                                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                                Sending...
                               </>
                             ) : p.status === "unpaid" ? (
                               <>
-                                <Send className="mr-2 h-4 w-4" />
+                                <Send className="mr-1.5 h-4 w-4" />
                                 Pay Now
                               </>
                             ) : (
                               <>
-                                <CheckCheckIcon className="mr-2 h-4 w-4" />
+                                <CheckCheckIcon className="mr-1.5 h-4 w-4" />
                                 Paid
                               </>
                             )}
