@@ -156,7 +156,7 @@ cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
   "apm": {
     "api_key": "",
     "environment": "production",
-    "server_url": "http://apm.telemetry.nunet.io",
+    "server_url": "https://apm.telemetry.nunet.io",
     "service_name": "nunet-dms"
   },
   "general": {
