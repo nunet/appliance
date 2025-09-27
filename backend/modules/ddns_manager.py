@@ -35,17 +35,29 @@ class DDNSManager:
         self.verify_interval = 300  # 5 minutes default
         self.verify_timeout = 3600  # 1 hour default
         self.docker_manager = DockerManager()
-        # Read API server from config file
-        config_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "ddns-config.json"
-        if config_path.exists():
+        # Read config file (create with defaults if missing)
+        self._config_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "ddns-config.json"
+        self.default_domain = "ddns.nunet.network"
+        default_api_server = "https://api.nunet.network:8080"
+        config = {}
+        if self._config_path.exists():
             try:
-                with open(config_path) as f:
+                with open(self._config_path) as f:
                     config = json.load(f)
-                self.api_server = config.get("ddns_api_server", "https://api.parallelvector.com:8080")
             except Exception:
-                self.api_server = "https://api.parallelvector.com:8080"
+                config = {}
         else:
-            self.api_server = "https://api.parallelvector.com:8080"
+            try:
+                self._config_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self._config_path, "w") as f:
+                    json.dump({
+                        "ddns_api_server": default_api_server,
+                        "ddns_domain": self.default_domain
+                    }, f, indent=2)
+            except Exception:
+                pass
+        self.api_server = config.get("ddns_api_server", default_api_server)
+        self.default_domain = config.get("ddns_domain", self.default_domain)
 
     def _get_container_info(self, container_name: str) -> Optional[Dict]:
         """Get container information including environment variables"""
@@ -107,8 +119,8 @@ class DDNSManager:
         if env.get("DMS_DDNS_URL", "false").lower() != "true":
             return {"status": "skipped", "message": "DDNS not enabled for this container"}
 
-        # Get the domain from environment or use default
-        self.domain = env.get("DMS_DDNS_DOMAIN", "ddns.parallelvector.com")
+        # Get the domain from environment or use configured default
+        self.domain = env.get("DMS_DDNS_DOMAIN", self.default_domain)
         
         # Use container name as allocation id and get suffix (after last underscore or dash)
         allocation_id = container_name
@@ -228,7 +240,7 @@ class DDNSManager:
         for container in ddns_containers:
             env = container["env"]
             message += f"\nContainer: {container['name']}\n"
-            message += f"DDNS Domain: {env.get('DMS_DDNS_DOMAIN', 'nunet.io')}\n"
+            message += f"DDNS Domain: {env.get('DMS_DDNS_DOMAIN', self.default_domain)}\n"
             message += f"Proxy URL: {env.get('DMS_PROXY_URL', 'Not configured')}\n"
         
         return {
