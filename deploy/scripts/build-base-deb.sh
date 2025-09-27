@@ -160,6 +160,7 @@ cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
     "service_name": "nunet-dms"
   },
   "general": {
+    "env": "production",
     "data_dir": "/home/nunet/nunet/data",
     "debug": false,
     "port_available_range_from": 1024,
@@ -207,6 +208,7 @@ cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
   }
 }
 EOF
+
 
 # Systemd services
 cat > "$ROOT/etc/systemd/system/loadubuntukeyring.service" <<'EOF'
@@ -331,6 +333,9 @@ chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/nunet/appliance/backend/scripts
 
+# Set correct permission on DMS config
+chmod 0660 /home/nunet/config/dms_config.json
+chown nunet:nunet /home/nunet/config/dms_config.json
 
 # Set ownership for splash files
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py
