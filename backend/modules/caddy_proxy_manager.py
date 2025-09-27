@@ -28,6 +28,16 @@ class CaddyProxyManager:
         self.caddy_image = "caddy:2"
         self.last_config = None
         self.ddns_manager = DDNSManager()
+        # Load ddns-config.json for default domain
+        self._config_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "ddns-config.json"
+        self.default_domain = "ddns.nunet.network"
+        try:
+            if self._config_path.exists():
+                with open(self._config_path) as f:
+                    cfg = json.load(f)
+                self.default_domain = cfg.get("ddns_domain", self.default_domain)
+        except Exception:
+            pass
         # Optionally, load the current Caddyfile content:
         if os.path.exists(self.caddy_config_path):
             with open(self.caddy_config_path, "r") as f:
@@ -127,8 +137,8 @@ class CaddyProxyManager:
             env = c["env"]
             # Check if DDNS is enabled
             if env.get("DMS_DDNS_URL", "false").lower() == "true":
-                # Get domain from environment or use default
-                domain = env.get("DMS_DDNS_DOMAIN", "ddns.parallelvector.com")
+                # Get domain from environment or use configured default
+                domain = env.get("DMS_DDNS_DOMAIN", self.default_domain)
                 # Construct DDNS URL using container name and domain
                 container_name = c["name"]
                 if '_' in container_name:
