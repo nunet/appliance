@@ -9,6 +9,7 @@ import {
 } from "../../components/ui/tabs";
 import { Separator } from "../../components/ui/separator";
 import { CopyButton } from "../ui/CopyButton";
+import { LeftTruncatedText } from "../ui/LeftTruncatedText";
 
 // Utils
 const toStr = (v: unknown) =>
@@ -19,12 +20,11 @@ const K = ({ label }: { label: string }) => (
 );
 
 const V = ({ value }: { value?: string }) => (
-  <span
-    className="font-mono text-xs sm:text-sm truncate"
+  <LeftTruncatedText
+    text={value || "N/A"}
     title={value || "N/A"}
-  >
-    {value || "N/A"}
-  </span>
+    className="font-mono text-xs sm:text-sm"
+  />
 );
 
 const KV = ({
@@ -36,7 +36,7 @@ const KV = ({
   value?: string;
   canCopy?: boolean;
 }) => (
-  <div className="flex items-center gap-2 py-1">
+  <div className="flex items-center gap-2 py-1 min-w-0">
     <K label={label} />
     <V value={value} />
     {canCopy && value ? <CopyButton className="ml-auto" text={value} /> : null}
@@ -118,7 +118,7 @@ export function AllocationTabs({
         {allocationEntries.map(([key, alloc]) => (
           <TabsContent key={key} value={key} className="mt-4">
             <div className="rounded-lg border bg-background p-5 space-y-4 shadow-sm">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs uppercase text-muted-foreground">
                   Allocation
                 </span>
@@ -163,16 +163,20 @@ export function AllocationTabs({
                 )}
 
                 {alloc?.ddns_url && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <K label="DDNS URL" />
                     <a
-                      className="truncate underline decoration-dotted hover:decoration-solid"
+                      className="flex-1 min-w-0 underline decoration-dotted hover:decoration-solid"
                       href={alloc.ddns_url}
                       target="_blank"
                       rel="noreferrer"
                       title={alloc.ddns_url}
                     >
-                      {alloc.ddns_url}
+                      <LeftTruncatedText
+                        text={alloc.ddns_url}
+                        title={alloc.ddns_url}
+                        className="max-w-full"
+                      />
                     </a>
                     <CopyButton className="ml-auto" text={alloc.ddns_url} />
                   </div>

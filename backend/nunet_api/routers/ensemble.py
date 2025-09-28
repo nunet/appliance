@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from ..utils.pty_bridge import run_pty_ws
 from modules.ensemble_manager_v2 import EnsembleManagerV2
-from modules.dms_utils import run_dms_command_with_passphrase
+from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
@@ -472,7 +472,7 @@ def download_examples(payload: DownloadExamplesRequest, mgr: EnsembleManagerV2 =
 
 
 @router.get("/deployments/{deployment_id}/manifest/raw", response_model=Dict[str, Any])
-def deployment_manifest_raw(deployment_id: str):
+def deployment_manifest_raw(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
     """
     Return the raw JSON manifest as produced by nunet.
     This is a direct pass-through (parsed) of the CLI output:
@@ -492,6 +492,17 @@ def deployment_manifest_raw(deployment_id: str):
         data = json.loads(cp.stdout)
     except json.JSONDecodeError as je:
         raise HTTPException(status_code=502, detail=f"nunet returned invalid JSON: {je}")
+
+    if isinstance(data, dict):
+        try:
+            data = mgr.enrich_manifest_payload(deployment_id, data)
+        except Exception as exc:
+            meta = data.setdefault("meta", {})
+            meta["proxy_enrichment_error"] = str(exc)
+        try:
+            data["dms_status"] = get_dms_status_info()
+        except Exception:
+            pass
     return data
 
 
