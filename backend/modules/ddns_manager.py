@@ -20,7 +20,8 @@ logger = logging.getLogger("DDNSManager")
 def make_dns_label(allocation_id, suffix, first=15, last=15):
     # Remove any non-alphanumeric characters except dash from allocation_id
     allocation_id = allocation_id.replace('_', '').replace('-', '')
-    suffix = suffix.replace('_', '-')
+    # Replace dots with dashes in suffix (handle allocation names with dots)
+    suffix = suffix.replace('.', '-').replace('_', '-')
     if len(allocation_id) <= first + last:
         truncated = allocation_id
     else:
@@ -123,7 +124,8 @@ class DDNSManager:
         self.domain = env.get("DMS_DDNS_DOMAIN", self.default_domain)
         
         # Use container name as allocation id and get suffix (after last underscore or dash)
-        allocation_id = container_name
+        # Replace dots with dashes in container name
+        allocation_id = container_name.replace('.', '-')
         # Try to extract suffix after last underscore or dash
         if '_' in allocation_id:
             base, suffix = allocation_id.rsplit('_', 1)
@@ -175,7 +177,8 @@ class DDNSManager:
     def verify_and_wait(self, container_name: str, expected_ip: str) -> Tuple[bool, str]:
         """Verify DNS record and wait for propagation"""
         # Use the same DNS label logic as registration
-        allocation_id = container_name
+        # Replace dots with dashes in container name
+        allocation_id = container_name.replace('.', '-')
         if '_' in allocation_id:
             base, suffix = allocation_id.rsplit('_', 1)
         elif '-' in allocation_id:

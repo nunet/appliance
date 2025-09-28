@@ -140,13 +140,15 @@ class CaddyProxyManager:
                 # Get domain from environment or use configured default
                 domain = env.get("DMS_DDNS_DOMAIN", self.default_domain)
                 # Construct DDNS URL using container name and domain
+                # Replace dots with dashes in container name (same logic as DDNS Manager)
                 container_name = c["name"]
-                if '_' in container_name:
-                    base, suffix = container_name.rsplit('_', 1)
-                elif '-' in container_name:
-                    base, suffix = container_name.rsplit('-', 1)
+                allocation_id = container_name.replace('.', '-')
+                if '_' in allocation_id:
+                    base, suffix = allocation_id.rsplit('_', 1)
+                elif '-' in allocation_id:
+                    base, suffix = allocation_id.rsplit('-', 1)
                 else:
-                    base, suffix = container_name, "alloc"
+                    base, suffix = allocation_id, "alloc"
                 dns_label = make_dns_label(base, suffix)
                 proxy_url = f"{dns_label}.{domain}"
                 # Add proxy URL to container info
