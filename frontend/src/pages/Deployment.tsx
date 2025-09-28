@@ -16,6 +16,7 @@ import {
   XCircleIcon,
   Download,
   Loader2,
+  Maximize2,
 } from "lucide-react";
 import {
   Card,
@@ -30,11 +31,13 @@ import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
+import { LeftTruncatedText } from "../components/ui/LeftTruncatedText";
 import { useState } from "react";
 import { ManifestPanel } from "../components/deployments/ManifestPanel";
 import { Tooltip } from "../components/ui/tooltip";
 import { RefreshButton } from "../components/ui/RefreshButton";
 import { Skeleton } from "../components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -43,7 +46,7 @@ export default function DeploymentDetailsPage() {
 
   const [_alloc, _setAlloc] = useState<string | null>(null);
 
-  // 🔻 Shutdown handler
+  // ?? Shutdown handler
   const handleShutdown = async (deploymentId: string) => {
     try {
       setIsShuttingDown(true);
@@ -59,7 +62,7 @@ export default function DeploymentDetailsPage() {
     }
   };
 
-  // 🔻 Fetch deployments (for lookup)
+  // ?? Fetch deployments (for lookup)
   const { data: deploymentsData, isLoading: isLoadingDeployments } = useQuery({
     queryKey: ["deployments"],
     queryFn: getDeployments,
@@ -112,7 +115,7 @@ export default function DeploymentDetailsPage() {
   );
 }
 
-// 🔹 Deployment Info
+// ?? Deployment Info
 function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
 
@@ -129,36 +132,86 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
     gcTime: Infinity,
   });
 
+  const pickString = (...candidates: Array<unknown>) => {
+    for (const candidate of candidates) {
+      if (typeof candidate === "string") {
+        const trimmed = candidate.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  const manifestData: Record<string, any> = details?.manifest?.manifest ?? {};
+  const allocationValues = Object.values(manifestData?.allocations ?? {}) as Array<Record<string, any>>;
+  const primaryAllocation = allocationValues[0] ?? {};
+
+  const statusText = pickString(deployment.status, details?.status?.deployment_status) ?? "N/A";
+  const typeText = pickString(
+    deployment.type,
+    primaryAllocation?.type,
+    manifestData?.type,
+    manifestData?.deployment_type,
+    manifestData?.deployment?.type,
+    details?.status?.deployment_type
+  ) ?? "N/A";
+  const sanitizedTypeText = (() => {
+    const candidate = typeText.trim().toLowerCase();
+    if (!candidate || candidate === "n/a" || candidate === "active" || candidate === "historical") {
+      return null;
+    }
+    return typeText;
+  })();
+  const timestampText = pickString(deployment.timestamp) ?? "N/A";
+  const ensembleText = pickString(
+    deployment.ensemble_file,
+    manifestData?.ensemble_file,
+    details?.manifest?.ensemble_file
+  ) ?? "N/A";
+
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
       <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full">
         <CardHeader className="w-full flex flex-col gap-2">
           <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
-            <CardTitle className="font-semibold tabular-nums truncate max-w-[250px] sm:overflow-visible sm:whitespace-normal sm:max-w-full break-words min-w-0">
-              <span title={deployment.id}>{deployment.id}</span>
+            <CardTitle className="font-semibold tabular-nums max-w-[250px] sm:max-w-full break-words min-w-0">
+              <LeftTruncatedText
+                text={deployment.id}
+                title={deployment.id}
+                className="sm:overflow-visible sm:whitespace-normal sm:max-w-full"
+              />
             </CardTitle>
             <CopyButton text={deployment.id} className={undefined} />
           </div>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="text-muted-foreground">
+          <div className="text-muted-foreground space-y-0.5">
             <p>
-              <b>Status:</b> <code>{deployment.status}</code>
+              <b>Status:</b> {statusText}
             </p>
+            {sanitizedTypeText ? (
+              <p>
+                <b>Type:</b> {sanitizedTypeText}
+              </p>
+            ) : null}
             <p>
-              <b>Type:</b> <code>{deployment.type}</code>
+              <b>Timestamp:</b> {timestampText}
             </p>
-            <p>
-              <b>Timestamp:</b> <code>{deployment.timestamp}</code>
-            </p>
-            <p>
-              <b>Ensemble File:</b> <code>{deployment.ensemble_file}</code>
+            <p className="flex items-center gap-2">
+              <span>
+                <b>Ensemble File:</b> {ensembleText}
+              </span>
+              {ensembleText !== "N/A" ? (
+                <CopyButton text={ensembleText} className="h-6 w-6" />
+              ) : null}
             </p>
           </div>
 
           <div className="mt-3 flex flex-col sm:flex-row sm:gap-2">
             <RefreshButton
-              onClick={() => refetch()}
+              onClick={() => void refetch()}
               isLoading={!!isFetching}
               tooltip="Refresh Deployment Info"
               children="Refresh Info..."
@@ -191,7 +244,7 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   );
 }
 
-// 🔹 Deployment Progress
+// ?? Deployment Progress
 export function DeploymentProgressCard({
   deploymentId,
 }: {
@@ -245,15 +298,15 @@ export function DeploymentProgressCard({
             {details.status.deployment_status.toUpperCase()}
           </span>
           <RefreshButton
-            onClick={() => refetch()}
+            onClick={() => void refetch()}
             isLoading={!!isFetching}
             tooltip="Refresh Deployment Info"
           />
         </CardTitle>
         <CardAction>
-          {details.status.status === "success" ? (
+          {details.status.deployment_status === "completed" ? (
             <CheckCircle className="text-green-500" />
-          ) : details.status.status === "running" ? (
+          ) : details.status.deployment_status === "running" ? (
             <Repeat2Icon className="text-blue-500 animate-spin" />
           ) : (
             <XCircleIcon className="text-red-500" />
@@ -270,7 +323,7 @@ export function DeploymentProgressCard({
   );
 }
 
-// 🔹 Deployment Allocations
+// ?? Deployment Allocations
 function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
   const {
     data: details,
@@ -292,7 +345,7 @@ function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
         <CardDescription className="flex items-center gap-2 justify-between w-full">
           <span>Allocations</span>
           <RefreshButton
-            onClick={() => refetch()}
+            onClick={() => void refetch()}
             isLoading={!!isFetching}
             tooltip="Refresh Allocations"
           />
@@ -319,7 +372,7 @@ function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
   );
 }
 
-// 🔹 Deployment Manifest
+// ?? Deployment Manifest
 function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: string, _setAlloc: (alloc: string | null) => void }) {
   const {
     data: details,
@@ -339,14 +392,14 @@ function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: str
     <ManifestPanel
       manifest={details}
       isLoading={isLoading}
-      onRefresh={() => refetch()}
+      onRefresh={() => void refetch()}
       isRefreshing={isFetching}
       _setAlloc={_setAlloc}
     />
   );
 }
 
-// 🔹 Deployment Logs
+// ?? Deployment Logs
 function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
   const allocKey = alloc ?? "__default__";
   const [isRequesting, setIsRequesting] = useState(false);
@@ -440,7 +493,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
   );
 }
 
-// 🔹 Log section component
+// ?? Log section component
 function LogSection({
   title,
   log,
@@ -450,22 +503,65 @@ function LogSection({
   log: string;
   color: string;
 }) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const lines = log ? log.split("\n") : [];
+
+  const renderLogBody = (sizeClass: string) => (
+    <div
+      className={`bg-black text-${color}-400 font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
+      style={{ 
+        overflowX: 'scroll', 
+        overflowY: 'auto',
+        whiteSpace: 'nowrap',
+        width: '100%',
+        maxWidth: '100%'
+      }}
+    >
+      <div style={{ minWidth: 'max-content' }}>
+        {lines.map((line, idx) => (
+          <div key={idx} className="whitespace-nowrap">
+            {line}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <>
       <div className="flex items-center justify-between mt-4">
         <p className="font-semibold">{title}</p>
-        {log && <CopyButton text={log} className="text-xs" />}
+        {log ? (
+          <div className="flex items-center gap-2">
+            <CopyButton text={log} className="text-xs" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-1"
+            >
+              <Maximize2 className="h-4 w-4" />
+              Expand
+            </Button>
+          </div>
+        ) : null}
       </div>
       {log ? (
-        <div
-          className={`bg-black text-${color}-400 font-mono text-sm rounded-md p-3 h-40 overflow-y-auto shadow-inner`}
-        >
-          {log.split("\n").map((line, idx) => (
-            <div key={idx} className="whitespace-pre-wrap">
-              {line}
-            </div>
-          ))}
-        </div>
+        <>
+          {renderLogBody("h-40")}
+          <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+            <DialogContent className="!max-w-[95vw] !w-[95vw] max-h-[90vh] sm:!max-w-[95vw]">
+              <DialogHeader>
+                <DialogTitle>{title} Logs</DialogTitle>
+              </DialogHeader>
+              <div className="flex justify-end mb-2">
+                <CopyButton text={log} className="text-xs" />
+              </div>
+              {renderLogBody("max-h-[70vh] min-h-[50vh]")}
+            </DialogContent>
+          </Dialog>
+        </>
       ) : (
         <p className="text-muted-foreground text-center">
           No {title.toLowerCase()} found.

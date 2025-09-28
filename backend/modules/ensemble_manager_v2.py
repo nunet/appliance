@@ -4,14 +4,16 @@ Includes improved deployment tracking and log management
 """
 
 import os
+import re
 import subprocess
 import shutil
 import json
 import yaml
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from .dms_utils import run_dms_command_with_passphrase
+from .ddns_manager import make_dns_label
 from .utils import get_current_branch, Colors, print_header, print_menu_option, pause
 
 class EnsembleManagerV2:
@@ -31,8 +33,8 @@ class EnsembleManagerV2:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_active_deployments(self) -> Dict[str, str]:
-        """Get list of active deployments from nunet command"""
+    def _fetch_dms_deployments(self) -> List[Dict[str, Any]]:
+        """Fetch deployments directly from DMS and normalize their shape."""
         try:
             result = run_dms_command_with_passphrase(
                 ['nunet', '-c', 'dms', 'actor', 'cmd', '/dms/node/deployment/list'],
@@ -40,7 +42,149 @@ class EnsembleManagerV2:
                 text=True,
                 check=True
             )
-            return json.loads(result.stdout).get('Deployments', {})
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(f"nunet deployment list command failed: {exc}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Unable to execute nunet deployment list: {exc}") from exc
+
+        output = (result.stdout or '').strip()
+        if not output:
+            return []
+
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Unexpected deployment list payload: {exc}") from exc
+
+        deployments_section = (
+            payload.get('Deployments')
+            or payload.get('deployments')
+            or payload.get('data', {}).get('Deployments')
+        )
+
+        deployments: List[Dict[str, Any]] = []
+
+        if isinstance(deployments_section, dict):
+            for dep_id, info in deployments_section.items():
+                status: Any = info
+                timestamp: Any = None
+                extra: Dict[str, Any] = {}
+
+                if isinstance(info, dict):
+                    status = (
+                        info.get('Status')
+                        or info.get('status')
+                        or info.get('State')
+                        or info.get('state')
+                        or ''
+                    )
+                    timestamp = (
+                        info.get('Timestamp')
+                        or info.get('timestamp')
+                        or info.get('UpdatedAt')
+                        or info.get('updated_at')
+                    )
+                    extra = info
+
+                deployments.append({
+                    'id': str(dep_id),
+                    'status': str(status) if status is not None else '',
+                    'timestamp': timestamp,
+                    'raw': extra or info,
+                })
+
+        elif isinstance(deployments_section, list):
+            for entry in deployments_section:
+                if not isinstance(entry, dict):
+                    continue
+
+                dep_id = (
+                    entry.get('ID')
+                    or entry.get('Id')
+                    or entry.get('id')
+                    or entry.get('EnsembleID')
+                    or entry.get('ensemble_id')
+                )
+                if not dep_id:
+                    continue
+
+                status = (
+                    entry.get('Status')
+                    or entry.get('status')
+                    or entry.get('State')
+                    or entry.get('state')
+                    or ''
+                )
+                timestamp = (
+                    entry.get('Timestamp')
+                    or entry.get('timestamp')
+                    or entry.get('UpdatedAt')
+                    or entry.get('updated_at')
+                )
+
+                deployments.append({
+                    'id': str(dep_id),
+                    'status': str(status) if status is not None else '',
+                    'timestamp': timestamp,
+                    'raw': entry,
+                })
+
+        return deployments
+
+    def _normalize_timestamp(self, raw_timestamp: Any) -> Tuple[str, datetime]:
+        """Normalise timestamps from DMS responses for sorting/display."""
+        dt_value: Optional[datetime] = None
+        iso_value = ''
+
+        if isinstance(raw_timestamp, datetime):
+            dt_value = raw_timestamp
+        elif isinstance(raw_timestamp, (int, float)):
+            try:
+                dt_value = datetime.fromtimestamp(raw_timestamp)
+            except (OverflowError, OSError, ValueError):
+                dt_value = None
+        elif isinstance(raw_timestamp, str):
+            ts = raw_timestamp.strip()
+            if ts:
+                try:
+                    dt_value = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                except ValueError:
+                    for fmt in (
+                        '%Y-%m-%d %H:%M:%S',
+                        '%Y/%m/%d %H:%M:%S',
+                        '%d/%m/%Y %H:%M:%S',
+                    ):
+                        try:
+                            dt_value = datetime.strptime(ts, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if dt_value is None:
+                        try:
+                            dt_value = datetime.fromtimestamp(float(ts))
+                        except (ValueError, TypeError, OverflowError, OSError):
+                            dt_value = None
+
+        if dt_value is None:
+            dt_value = datetime.now()
+        if dt_value.tzinfo is not None:
+            dt_value = dt_value.astimezone(timezone.utc).replace(tzinfo=None)
+
+        iso_value = dt_value.isoformat()
+        return iso_value, dt_value
+
+    def get_active_deployments(self) -> Dict[str, str]:
+        """Get list of active deployments from nunet command"""
+        try:
+            deployments = self._fetch_dms_deployments()
+            active: Dict[str, str] = {}
+            for item in deployments:
+                dep_id = item.get('id')
+                status = item.get('status', '')
+                if dep_id:
+                    status_text = str(status).strip()
+                    active[str(dep_id)] = status_text.lower() if status_text else ''
+            return active
         except Exception as e:
             print(f"Error getting active deployments: {e}")
             return {}
@@ -321,6 +465,253 @@ class EnsembleManagerV2:
             # Fallback to 150 if we can't determine the width
             return 150
 
+
+    @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    @classmethod
+    def _env_to_dict(cls, env: Any) -> Dict[str, str]:
+        env_map: Dict[str, str] = {}
+        if env is None:
+            return env_map
+        if isinstance(env, dict):
+            for key, val in env.items():
+                if key is None:
+                    continue
+                env_map[str(key).strip().upper()] = "" if val is None else str(val).strip()
+            return env_map
+        if isinstance(env, str):
+            if "=" in env:
+                key, val = env.split("=", 1)
+                env_map[key.strip().upper()] = val.strip()
+            return env_map
+        if isinstance(env, (list, tuple, set)):
+            for item in env:
+                env_map.update(cls._env_to_dict(item))
+            return env_map
+        return env_map
+
+    @staticmethod
+    def _split_container_name(name: str, fallback_suffix: str) -> Tuple[str, str]:
+        if not name:
+            base = fallback_suffix or "alloc"
+            return base, base
+        base = name
+        suffix = fallback_suffix or "alloc"
+        if "_" in name:
+            base, suffix_candidate = name.rsplit("_", 1)
+            suffix = suffix_candidate or suffix
+        elif "-" in name:
+            base, suffix_candidate = name.rsplit("-", 1)
+            suffix = suffix_candidate or suffix
+        base = base or fallback_suffix or "alloc"
+        suffix = suffix or fallback_suffix or "alloc"
+        return base, suffix
+
+    @staticmethod
+    def _port_is_default(port: Any, scheme: str) -> bool:
+        if port is None:
+            return True
+        try:
+            port_int = int(str(port))
+        except (TypeError, ValueError):
+            return False
+        scheme = (scheme or "").lower()
+        if scheme == "https":
+            return port_int == 443
+        if scheme == "http":
+            return port_int == 80
+        return False
+
+    def _build_proxy_url(self, env: Dict[str, str], alloc_data: Dict[str, Any], alloc_name: str) -> Optional[str]:
+        if not env:
+            return None
+        proxy_url = (
+            env.get("DMS_PROXY_URL")
+            or env.get("HAGALL_PUBLIC_ENDPOINT")
+            or env.get("PUBLIC_ENDPOINT")
+        )
+        scheme = (env.get("DMS_PROXY_SCHEME") or env.get("DMS_PROXY_PROTOCOL") or "https").lower()
+        port = env.get("DMS_PROXY_PORT") or env.get("PROXY_PORT")
+        domain = env.get("DMS_DDNS_DOMAIN") or env.get("DYN_DNS_DOMAIN")
+        dns_name = (
+            alloc_data.get("dns_name")
+            or env.get("DMS_DDNS_NAME")
+            or env.get("DNS_NAME")
+            or alloc_name
+        )
+
+        if proxy_url:
+            proxy_url = str(proxy_url).strip()
+            if not proxy_url:
+                return None
+            if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", proxy_url):
+                host = proxy_url
+                if port and not self._port_is_default(port, scheme):
+                    host_part = host.split("/", 1)[0]
+                    if ":" not in host_part:
+                        host = f"{host}:{port}"
+                proxy_url = f"{scheme}://{host}"
+            return proxy_url
+
+        host = None
+        host_placeholder = False
+        if dns_name:
+            dns_name = str(dns_name).strip()
+            if dns_name:
+                lower_dns = dns_name.lower()
+                if "." not in dns_name:
+                    if domain:
+                        host = f"{dns_name}.{domain}"
+                    else:
+                        host = dns_name
+                        host_placeholder = True
+                else:
+                    host = dns_name
+                    host_placeholder = any(
+                        lower_dns.endswith(suffix) for suffix in (".internal", ".local", ".lan")
+                    ) or lower_dns in {"localhost", alloc_name.lower()}
+
+        ddns_enabled = any(
+            self._is_truthy(env.get(key))
+            for key in ("DMS_DDNS_URL", "DYN_DNS_URL", "DMS_DDNS_ENABLED", "ENABLE_DDNS")
+        )
+
+        allocation_identifier = None
+        if ddns_enabled:
+            allocation_identifier = (
+                alloc_data.get("id")
+                or env.get("DMS_ALLOCATION_ID")
+                or env.get("ALLOCATION_ID")
+            )
+        if ddns_enabled and allocation_identifier:
+            base, suffix = self._split_container_name(str(allocation_identifier), alloc_name)
+            label = make_dns_label(base, suffix)
+            # Use the same default domain as DDNS manager
+            fallback_domain = domain or "ddns.nunet.network"
+            candidate_host = f"{label}.{fallback_domain}"
+            if host is None or host_placeholder:
+                host = candidate_host
+
+        if host:
+            host = host.strip()
+            if not host:
+                return None
+            if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", host):
+                host_part = host
+                # When DDNS is enabled, assume it's going through Caddy proxy
+                # which uses HTTPS on port 443 by default, so don't add port
+                if ddns_enabled:
+                    # Force HTTPS scheme for DDNS-enabled containers (Caddy proxy)
+                    scheme = "https"
+                elif port and not self._port_is_default(port, scheme):
+                    leading = host_part.split("/", 1)[0]
+                    if ":" not in leading:
+                        host_part = f"{host_part}:{port}"
+                host = f"{scheme}://{host_part}"
+            return host
+        return None
+
+    def _load_ensemble_config(self, deployment_id: str) -> Tuple[Optional[dict], Optional[Path]]:
+        try:
+            deployment_log = self.parse_deployment_log()
+        except Exception:
+            deployment_log = {}
+
+        entry = deployment_log.get(deployment_id)
+        if not entry:
+            return None, None
+
+        file_name = entry.get("file_name")
+        if not file_name:
+            return None, None
+
+        path_resolved = Path(file_name).expanduser()
+        if path_resolved.exists():
+            try:
+                with open(path_resolved, "r") as fh:
+                    data = yaml.safe_load(fh) or {}
+                return data, path_resolved
+            except Exception:
+                return None, path_resolved
+        return None, path_resolved
+
+    def enrich_manifest_payload(self, deployment_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return payload
+        manifest = payload.get("manifest")
+        if not isinstance(manifest, dict):
+            return payload
+
+        ensemble_info, ensemble_path = self._load_ensemble_config(deployment_id)
+        if ensemble_info is None:
+            manifest_path = manifest.get("ensemble_file")
+            if manifest_path:
+                candidate_path = Path(str(manifest_path)).expanduser()
+                if candidate_path.exists():
+                    try:
+                        with open(candidate_path, "r") as fh:
+                            ensemble_info = yaml.safe_load(fh) or {}
+                        ensemble_path = candidate_path
+                    except Exception as exc:
+                        manifest.setdefault("meta", {}).setdefault("ensemble_load_error", str(exc))
+
+        if ensemble_path and manifest.get("ensemble_file") is None:
+            manifest["ensemble_file"] = str(ensemble_path)
+
+        allocation_cfgs: Dict[str, Any] = {}
+        if isinstance(ensemble_info, dict):
+            allocation_cfgs = ensemble_info.get("allocations") or {}
+
+        allocations = manifest.get("allocations")
+        ddns_map: Dict[str, str] = {}
+        if isinstance(allocations, dict):
+            for alloc_name, alloc_data in allocations.items():
+                if not isinstance(alloc_data, dict):
+                    continue
+                env_dict: Dict[str, str] = {}
+                cfg = allocation_cfgs.get(alloc_name)
+                if not cfg and "." in alloc_name:
+                    cfg = allocation_cfgs.get(alloc_name.split(".", 1)[-1])
+                if not cfg:
+                    normalized = alloc_name.replace("-", "_")
+                    cfg = allocation_cfgs.get(normalized)
+                    if not cfg and "." in normalized:
+                        cfg = allocation_cfgs.get(normalized.split(".", 1)[-1])
+
+                if isinstance(cfg, dict):
+                    execution = cfg.get("execution") or {}
+                    env_dict.update(self._env_to_dict(execution.get("environment")))
+                    env_dict.update(self._env_to_dict(execution.get("env")))
+                env_dict.update(self._env_to_dict(alloc_data.get("environment")))
+                env_dict.update(self._env_to_dict(alloc_data.get("env")))
+
+                requires_proxy = self._is_truthy(env_dict.get("DMS_REQUIRE_PROXY"))
+                ddns_enabled = any(
+                    self._is_truthy(env_dict.get(key))
+                    for key in ("DMS_DDNS_URL", "DYN_DNS_URL", "DMS_DDNS_ENABLED", "ENABLE_DDNS")
+                )
+
+                ddns_url = None
+                if requires_proxy or ddns_enabled:
+                    ddns_url = self._build_proxy_url(env_dict, alloc_data, alloc_name)
+
+                if requires_proxy:
+                    alloc_data["requires_proxy"] = True
+                if ddns_url:
+                    alloc_data["ddns_url"] = ddns_url
+                    ddns_map[alloc_name] = ddns_url
+
+        if ddns_map:
+            manifest.setdefault("ddns", {}).update(ddns_map)
+
+        return payload
+
     def format_manifest_tables(self, manifest_data: str) -> str:
         """Format manifest data into readable tables"""
         try:
@@ -338,24 +729,10 @@ class EnsembleManagerV2:
             
             # Get deployment ID and look up ensemble file path
             deployment_id = manifest.get("id", "N/A")
-            deployment_log = self.parse_deployment_log()
-            ensemble_file_path = None
-            
-            # Get the full path from deployment log
-            if deployment_id in deployment_log:
-                log_entry = deployment_log[deployment_id]
-                if 'file_name' in log_entry:
-                    # The file_name in the log is actually the full path
-                    ensemble_file_path = Path(log_entry['file_name'])
-            
-            # Parse ensemble file if found
             ensemble_info = None
-            if ensemble_file_path and ensemble_file_path.exists():
-                try:
-                    with open(ensemble_file_path, 'r') as f:
-                        ensemble_info = yaml.safe_load(f)
-                except Exception as e:
-                    print(f"\nDebug: Error reading ensemble file: {e}")
+            ensemble_file_path = None
+            if deployment_id and deployment_id != "N/A":
+                ensemble_info, ensemble_file_path = self._load_ensemble_config(deployment_id)
             
             # Format the main deployment details
             deployment_details = [
@@ -784,14 +1161,29 @@ Nodes Detail:
     def get_deployment_status(self, deployment_id: str) -> Dict[str, str]:
         """Get the current status of a deployment"""
         try:
-            # Check active deployments first
+            # Check active deployments first and get the actual status from DMS
             active_deployments = self.get_active_deployments()
             if deployment_id in active_deployments:
-                return {
-                    "status": "success",
-                    "deployment_status": "running",
-                    "message": "Deployment is currently running"
-                }
+                dms_status = active_deployments[deployment_id]
+                # Check if the deployment is actually completed or failed based on DMS status
+                if dms_status in ['completed', 'finished', 'done', 'success']:
+                    return {
+                        "status": "success",
+                        "deployment_status": "completed",
+                        "message": "Deployment completed successfully"
+                    }
+                elif dms_status in ['failed', 'error', 'cancelled']:
+                    return {
+                        "status": "success",
+                        "deployment_status": "failed",
+                        "message": "Deployment failed"
+                    }
+                else:
+                    return {
+                        "status": "success",
+                        "deployment_status": "running",
+                        "message": "Deployment is currently running"
+                    }
             
             # Check historical deployments
             historical = self.parse_deployment_log()
@@ -858,48 +1250,72 @@ Nodes Detail:
     def get_deployments_for_web(self) -> Dict[str, Any]:
         """Get all deployments in a format suitable for web API consumption"""
         try:
-            # Get active deployments
-            active_deployments = self.get_active_deployments()
+            # Get deployments with their actual timestamps from DMS
+            dms_deployments = self._fetch_dms_deployments()
             
-            # Get historical deployments
-            historical = self.parse_deployment_log()
-            
-            # Combine and format for web
-            deployments = []
-            
-            # Add active deployments
-            for deployment_id, status in active_deployments.items():
-                deployments.append({
-                    "id": deployment_id,
-                    "status": "running",
-                    "type": "active",
-                    "timestamp": datetime.now().isoformat(),
-                    "ensemble_file": "Active deployment"
-                })
-            
-            # Add historical deployments
-            for deployment_id, info in historical.items():
-                deployments.append({
-                    "id": deployment_id,
-                    "status": info['status'].lower(),
-                    "type": "historical",
-                    "timestamp": info['timestamp'].isoformat(),
-                    "ensemble_file": info.get('file_basename', 'Unknown')
-                })
-            
+            # Get deployment history from logs for accurate timestamps
+            deployment_log = self.parse_deployment_log()
+
+            deployments: List[Dict[str, Any]] = []
+
+            for dms_deployment in dms_deployments:
+                deployment_id = dms_deployment['id']
+                status_text = str(dms_deployment.get('status', 'running')).strip().lower() or "running"
+                ensemble_info, ensemble_path = self._load_ensemble_config(deployment_id)
+
+                deployment_type = ""
+                if isinstance(ensemble_info, dict):
+                    allocations = ensemble_info.get("allocations") or {}
+                    if isinstance(allocations, dict):
+                        for alloc in allocations.values():
+                            if isinstance(alloc, dict):
+                                possible_type = str(alloc.get("type") or "").strip()
+                                if possible_type:
+                                    deployment_type = possible_type
+                                    break
+
+                # Use timestamp from deployment log (most accurate), then DMS, then current time
+                deployment_timestamp = None
+                if deployment_id in deployment_log:
+                    deployment_timestamp = deployment_log[deployment_id].get('timestamp')
+                
+                if not deployment_timestamp:
+                    deployment_timestamp = dms_deployment.get('timestamp')
+                
+                if deployment_timestamp:
+                    # Convert to ISO format if it's not already
+                    if isinstance(deployment_timestamp, datetime):
+                        timestamp_iso = deployment_timestamp.isoformat()
+                    else:
+                        timestamp_iso = str(deployment_timestamp)
+                else:
+                    # Fallback to current time if no timestamp available
+                    timestamp_iso = datetime.now(timezone.utc).isoformat()
+
+                deployments.append(
+                    {
+                        "id": str(deployment_id),
+                        "status": status_text,
+                        "type": deployment_type,
+                        "timestamp": timestamp_iso,
+                        "ensemble_file": ensemble_path.name if getattr(ensemble_path, "name", None) else "",
+                    }
+                )
+
             return {
                 "status": "success",
                 "deployments": deployments,
-                "count": len(deployments)
+                "count": len(deployments),
             }
-            
+
         except Exception as e:
             return {
                 "status": "error",
                 "message": f"Error getting deployments: {str(e)}",
                 "deployments": [],
-                "count": 0
+                "count": 0,
             }
+
 
     def manage_deployment_actions(self, deployment_id: str, deployment_type: str):
         """Handle actions for a selected deployment"""
@@ -1288,3 +1704,4 @@ Enhanced Ensemble Manager Help
         self.show_help_message = not self.show_help_message
         state = "ON" if self.show_help_message else "OFF"
         print(f"{Colors.CYAN}Help message is now {state}.{Colors.NC}")
+

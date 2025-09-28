@@ -12,10 +12,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/CopyButton";
+import { LeftTruncatedText } from "@/components/ui/LeftTruncatedText";
 import { RefreshButton } from "@/components/ui/RefreshButton"; // 👈 import your reusable refresh
 import { Server, Network, Container, Globe, Box, ListTree } from "lucide-react";
 import { AllocationTabs } from "./AllocationsTab";
-import { useSelectedAllocation } from "./allocation.hook";
 
 type ManifestPanelProps = {
   manifest: any | null | undefined;
@@ -45,15 +45,14 @@ const K = ({ label }: { label: string }) => (
 );
 
 const V = ({ value }: { value?: string }) => (
-  <span
-    className="
-      font-mono text-xs sm:text-sm truncate
-      max-w-[160px] xs:max-w-[200px] sm:max-w-[280px] md:max-w-[420px] lg:max-w-[560px] xl:max-w-none
-    "
+  <LeftTruncatedText
+    text={value || "N/A"}
     title={value || "N/A"}
-  >
-    {value || "N/A"}
-  </span>
+    className="
+      font-mono text-xs sm:text-sm
+      max-w-[160px] xs:max-w-[200px] sm:max-w-[280px] md:max-w-[420px] lg:max-w-[560px]
+    "
+  />
 );
 
 /**
@@ -68,7 +67,7 @@ const KV = ({
   value?: string;
   canCopy?: boolean;
 }) => (
-  <div className="flex items-center gap-2 py-1">
+  <div className="flex items-center gap-2 py-1 min-w-0">
     <K label={label} />
     <V value={value} />
     {canCopy && value ? <CopyButton className="ml-auto" text={value} /> : null}
@@ -122,13 +121,66 @@ function ManifestPanelImpl({
     [allocations]
   );
   const nodeEntries = useMemo(() => Object.entries(nodes || {}), [nodes]);
-  const [selected_allocation, set_selected_allocation] = useState<string>(
-    allocationEntries[0]?.[0] || "alloc1"
-  );
+  const ddnsEntries = useMemo(() => {
+    const collected: { label: string; url: string }[] = [];
+    const seen = new Set<string>();
+
+    const push = (label: unknown, url: unknown) => {
+      if (!label || url === undefined || url === null) {
+        return;
+      }
+      const name = String(label).trim();
+      const href = String(url).trim();
+      if (!name || !href) {
+        return;
+      }
+      const key = `${name.toLowerCase()}__${href.toLowerCase()}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      collected.push({ label: name, url: href });
+    };
+
+    if (m?.ddns && typeof m.ddns === "object") {
+      Object.entries(m.ddns).forEach(([label, url]) => push(label, url));
+    }
+
+    allocationEntries.forEach(([label, alloc]) => {
+      if (alloc && typeof alloc === "object") {
+        push(label, (alloc as any).ddns_url);
+      }
+    });
+
+    return collected;
+  }, [m?.ddns, allocationEntries]);
+  const [selected_allocation, set_selected_allocation] = useState<string>("");
 
   useEffect(() => {
-    _setAlloc(selected_allocation);
-  }, [selected_allocation, _setAlloc]);
+    if (!allocationEntries.length) {
+      set_selected_allocation("");
+      return;
+    }
+
+    set_selected_allocation((current) => {
+      if (!current || !allocationEntries.some(([key]) => key === current)) {
+        return allocationEntries[0][0];
+      }
+
+      return current;
+    });
+  }, [allocationEntries]);
+
+  useEffect(() => {
+    if (!allocationEntries.length) {
+      _setAlloc(null);
+      return;
+    }
+
+    if (selected_allocation) {
+      _setAlloc(selected_allocation);
+    }
+  }, [selected_allocation, allocationEntries, _setAlloc]);
   if (!hasValidId) {
     return (
       <div className="px-4 my-4 w-full">
@@ -174,7 +226,7 @@ function ManifestPanelImpl({
         <CardContent className="space-y-8">
           {/* === Deployment Overview =================================================== */}
           <section className="space-y-4">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <Server className="h-4 w-4" />
               <CardDescription className="uppercase tracking-wider text-xs">
                 Deployment Overview
@@ -230,7 +282,7 @@ function ManifestPanelImpl({
 
           {/* === Ensemble Configuration / Allocations + Nodes ========================= */}
           <section className="space-y-4">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <Container className="h-4 w-4" />
               <CardDescription className="uppercase tracking-wider text-xs">
                 Ensemble Configuration
@@ -241,7 +293,7 @@ function ManifestPanelImpl({
               {/* Allocations */}
               <AllocationTabs
                 allocationEntries={allocationEntries}
-                selectedAlloc={selected_allocation}
+                selectedAlloc={selected_allocation || allocationEntries[0]?.[0] || ""}
                 setSelectedAlloc={set_selected_allocation}
               />
 
@@ -337,9 +389,9 @@ function ManifestPanelImpl({
           </section>
 
           {/* === Optional DDNS section (renders only when data is present) ============ */}
-          {m?.ddns || allocationEntries.some(([, a]) => a?.ddns_url) ? (
+          {ddnsEntries.length ? (
             <section className="space-y-4">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 min-w-0">
                 <Globe className="h-4 w-4" />
                 <CardDescription className="uppercase tracking-wider text-xs">
                   DDNS URLs
@@ -348,51 +400,28 @@ function ManifestPanelImpl({
 
               <div className="rounded-lg border bg-muted/30 p-4">
                 <div className="space-y-3">
-                  {/* From a generic ddns map if your API provides it */}
-                  {m?.ddns &&
-                    Object.entries(m.ddns).map(([name, url]: any) => (
-                      <div key={name} className="flex items-center gap-2">
-                        <span className="text-sm font-semibold">{name}</span>
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-background border">
-                          URL
-                        </span>
-                        <a
-                          className="truncate underline decoration-dotted hover:decoration-solid"
-                          href={String(url)}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={String(url)}
-                        >
-                          {String(url)}
-                        </a>
-                        <CopyButton className="ml-auto" text={String(url)} />
-                      </div>
-                    ))}
-
-                  {/* From allocations (ddns_url per allocation) */}
-                  {allocationEntries.map(([key, a]: any) =>
-                    a?.ddns_url ? (
-                      <div
-                        key={`${key}-ddns`}
-                        className="flex items-center gap-2"
+                  {ddnsEntries.map(({ label, url }) => (
+                    <div key={`${label}-${url}`} className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-semibold">{label}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-background border">
+                        URL
+                      </span>
+                      <a
+                        className="flex-1 min-w-0 underline decoration-dotted hover:decoration-solid"
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={url}
                       >
-                        <span className="text-sm font-semibold">{key}</span>
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-background border">
-                          URL
-                        </span>
-                        <a
-                          className="truncate underline decoration-dotted hover:decoration-solid"
-                          href={a.ddns_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={a.ddns_url}
-                        >
-                          {a.ddns_url}
-                        </a>
-                        <CopyButton className="ml-auto" text={a.ddns_url} />
-                      </div>
-                    ) : null
-                  )}
+                        <LeftTruncatedText
+                          text={url}
+                          title={url}
+                          className="max-w-full"
+                        />
+                      </a>
+                      <CopyButton className="ml-auto" text={url} />
+                    </div>
+                  ))}
                 </div>
               </div>
             </section>

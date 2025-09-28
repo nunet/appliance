@@ -399,9 +399,9 @@ class NuNetMenu:
             elif choice == "3":
                 # Set DDNS API server address
                 config_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "ddns-config.json"
-                current = getattr(self.ddns_manager, 'api_server', 'https://api.parallelvector.com:8080')
+                current = getattr(self.ddns_manager, 'api_server', 'https://api.nunet.network:8080')
                 print(f"Current DDNS API server: {current}")
-                new_addr = input("Enter new DDNS API server address (e.g. https://api.parallelvector.com:8080): ").strip()
+                new_addr = input("Enter new DDNS API server address (e.g. https://api.nunet.network:8080): ").strip()
                 if new_addr:
                     # Write to config file
                     config_path.parent.mkdir(parents=True, exist_ok=True)
