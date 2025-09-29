@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 export default function Wizzard() {
   const { mode, setMode } = useAppMode();
   const navigate = useNavigate();
+  const isAdvancedModeEnabled = false;
 
   // If user already picked a mode, skip this page
   useEffect(() => {
@@ -15,6 +16,9 @@ export default function Wizzard() {
   }, [mode, navigate]);
 
   const chooseMode = (m: "simple" | "advanced") => {
+    if (m === "advanced" && !isAdvancedModeEnabled) {
+      return;
+    }
     setMode(m);
     navigate("/", { replace: true }); // redirect after picking
   };
@@ -37,11 +41,17 @@ export default function Wizzard() {
 
         {/* Blue pill (Advanced Mode) */}
         <Card
-          onClick={() => chooseMode("advanced")}
-          className="cursor-pointer transition hover:scale-105 rounded-2xl border-2 border-blue-500 bg-gradient-to-b from-blue-600 to-blue-800 shadow-xl"
+          onClick={isAdvancedModeEnabled ? () => chooseMode("advanced") : undefined}
+          aria-disabled={!isAdvancedModeEnabled}
+          className={`transition rounded-2xl border-2 border-blue-500 bg-gradient-to-b from-blue-600 to-blue-800 shadow-xl ${
+            isAdvancedModeEnabled ? "cursor-pointer hover:scale-105" : "opacity-60 cursor-not-allowed pointer-events-none"
+          }`}
         >
-          <CardContent className="flex items-center justify-center h-48">
+          <CardContent className="flex flex-col items-center justify-center h-48 gap-2">
             <p className="text-2xl font-bold text-white">Advanced Mode</p>
+            {!isAdvancedModeEnabled ? (
+              <span className="text-sm text-blue-100/80">Coming soon</span>
+            ) : null}
           </CardContent>
         </Card>
       </div>
