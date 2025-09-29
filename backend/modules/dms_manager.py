@@ -455,24 +455,65 @@ class DMSManager:
         nunet actor cmd --context dms /dms/tokenomics/contract/transactions/confirm
           --unique-id <uniqueid> --tx-hash <txhash>
         Uses keyring-backed passphrase via run_dms_command_with_passphrase.
+        Retries up to three times when the CLI reports transient errors.
         """
-        try:
-            cp = run_dms_command_with_passphrase(
-                [
-                    "nunet", "actor", "cmd", "--context", "dms",
-                    "/dms/tokenomics/contract/transactions/confirm",
-                    "--unique-id", unique_id,
-                    "--tx-hash", tx_hash,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return {"status": "success", "stdout": cp.stdout.strip(), "stderr": cp.stderr.strip()}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": e.stderr or str(e)}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        max_attempts = 3
+        retry_delay_sec = 2
+        last_error: Optional[str] = None
+
+        def _detect_error(stdout: str, stderr: str) -> Optional[str]:
+            for stream in (stdout or "", stderr or ""):
+                if stream and "error" in stream.lower():
+                    return stream.strip()
+            if stdout:
+                try:
+                    data = json.loads(stdout)
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(data, dict):
+                    status = data.get("status") or data.get("Status")
+                    if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
+                        message = data.get("message") or data.get("Message") or data.get("error") or data.get("Error")
+                        if isinstance(message, str) and message.strip():
+                            return message.strip()
+                        return stdout.strip()
+                    error_field = data.get("error") or data.get("Error")
+                    if isinstance(error_field, str) and error_field.strip():
+                        return error_field.strip()
+                    message_field = data.get("message") or data.get("Message")
+                    if isinstance(message_field, str) and "error" in message_field.lower():
+                        return message_field.strip()
+            return None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                cp = run_dms_command_with_passphrase(
+                    [
+                        "nunet", "actor", "cmd", "--context", "dms",
+                        "/dms/tokenomics/contract/transactions/confirm",
+                        "--unique-id", unique_id,
+                        "--tx-hash", tx_hash,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                stdout = (cp.stdout or "").strip()
+                stderr = (cp.stderr or "").strip()
+                error_message = _detect_error(stdout, stderr)
+                if not error_message:
+                    return {"status": "success", "stdout": stdout, "stderr": stderr}
+                last_error = error_message
+            except subprocess.CalledProcessError as e:
+                last_error = (e.stderr or e.stdout or str(e)).strip()
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+            if attempt < max_attempts:
+                time.sleep(retry_delay_sec)
+
+        return {"status": "error", "message": last_error or "Transaction confirmation failed"}
+
 
     def list_transactions(self) -> Dict[str, Any]:
         """

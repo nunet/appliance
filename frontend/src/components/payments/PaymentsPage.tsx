@@ -68,6 +68,12 @@ export default function PaymentsPage() {
 
   const items = list?.items ?? [];
 
+  const errorToastStyles = {
+    className: "text-white [&_*]:!text-white",
+    descriptionClassName: "text-white/80",
+    style: { color: "#fff", "--normal-text": "#fff", "--error-text": "#fff" },
+  };
+
   const filtered = useMemo(() => {
     const term = search.toLowerCase();
     return items.filter((p) => {
@@ -84,7 +90,7 @@ export default function PaymentsPage() {
 
   async function handlePay(p: DmsPaymentItem) {
     if (!config) {
-      toast.error("Missing token config");
+      toast.error("Missing token config", errorToastStyles);
       return;
     }
     if (p.status === "paid") {
@@ -122,6 +128,7 @@ export default function PaymentsPage() {
     } catch (err: any) {
       console.error(err);
       toast.error("Payment failed", {
+        ...errorToastStyles,
         description: err?.message ?? "Something went wrong",
       });
     } finally {
@@ -248,7 +255,7 @@ export default function PaymentsPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 gap-2.5">
+            <div className="grid grid-cols-1 gap-3 lg:gap-2.5">
               {filtered.map((p) => {
                 const isSending = !!sending[p.unique_id];
                 const txHash = sent[p.unique_id];
@@ -258,9 +265,9 @@ export default function PaymentsPage() {
                     : null;
 
                 return (
-                  <Card key={p.unique_id} className="hover:shadow-md transition">
-                    {/* Tighter padding for compact rows */}
-                    <CardHeader className="px-2 py-1.5 lg:px-1.5 lg:py-1">
+                  <Card key={p.unique_id} className="rounded-lg border border-border/60 shadow-sm hover:shadow-md transition">
+                    {/* Lean padding keeps the layout compact without feeling cramped */}
+                    <CardHeader className="px-3 py-2 sm:px-4 sm:py-2.5 lg:px-4 lg:py-1.5 xl:px-5 xl:py-1.5">
                       {/* MOBILE/TABLET: original stacked layout */}
                       <div className="block lg:hidden">
                         <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -317,7 +324,7 @@ export default function PaymentsPage() {
                           <div className="flex flex-col items-start md:items-end shrink-0">
                             <Button
                               size="sm"
-                              className="w-full md:w-auto h-8 px-2"
+                              className="w-full md:w-auto h-8 px-3"
                               onClick={() => handlePay(p)}
                               disabled={isSending || p.status === "paid" || !config}
                             >
@@ -342,79 +349,69 @@ export default function PaymentsPage() {
                         </div>
                       </div>
 
-                      {/* DESKTOP/LAPTOP (>=1024px): ultra-compact single-line row */}
-                      <div className="hidden lg:flex lg:w-full lg:items-center lg:gap-1.5 overflow-hidden">
-                        {/* ID */}
-                        <div className="flex items-center gap-1.5 min-w-0 basis-[160px] shrink-0">
-                          <CopyButton text={p.unique_id} className="shrink-0" />
-                          <CardTitle
-                            className="font-mono text-xs"
-                            title={p.unique_id}
-                          >
-                            {middleEllipsis(p.unique_id, 10, 6)}
-                          </CardTitle>
-                        </div>
+                      {/* DESKTOP/LAPTOP (>=1024px): horizontal row */}
+                      <div className="hidden lg:flex lg:w-full lg:items-center lg:justify-between lg:gap-3 xl:gap-4 overflow-hidden">
+                        <div className="flex items-center gap-3 xl:gap-4 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 min-w-0 shrink-0">
+                            <CopyButton text={p.unique_id} className="shrink-0" />
+                            <CardTitle
+                              className="font-mono text-xs"
+                              title={p.unique_id}
+                            >
+                              {middleEllipsis(p.unique_id, 10, 6)}
+                            </CardTitle>
+                          </div>
 
-                        {/* To address (expands when space exists) */}
-                        <div className="flex items-center gap-1 min-w-0 flex-1">
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            To
-                          </span>
-                          <code
-                            className="bg-muted px-1 py-0.5 rounded text-xs font-mono"
-                            title={p.to_address}
-                          >
-                            {middleEllipsis(p.to_address, 10, 6)}
-                          </code>
-                          <CopyButton text={p.to_address} className="shrink-0" />
-                        </div>
-
-                        {/* Amount */}
-                        <div
-                          className={cn(
-                            "flex items-center gap-1.5 justify-end shrink-0 basis-[130px]",
-                            !(txHash || p.tx_hash) && "lg:mr-3"
-                          )}
-                        >
-                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                            Amount
-                          </span>
-                          <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
-                            {config?.token_symbol ?? "NTX"} {p.amount}
-                          </code>
-                        </div>
-
-                        {/* Last TX - only render if present (no placeholder) */}
-                        {(txHash || p.tx_hash) && (
-                          <div className="flex items-center gap-1.5 justify-end shrink-0 basis-[170px]">
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
                             <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                              Last TX
+                              To
                             </span>
                             <code
                               className="bg-muted px-1 py-0.5 rounded text-xs font-mono"
-                              title={txHash || p.tx_hash}
+                              title={p.to_address}
                             >
-                              {shorten(txHash || p.tx_hash)}
+                              {middleEllipsis(p.to_address, 10, 6)}
                             </code>
-                            {explorer && (
-                              <a
-                                href={explorer}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-primary hover:underline text-xs"
-                                title="View on explorer"
-                              >
-                                View
-                              </a>
-                            )}
+                            <CopyButton text={p.to_address} className="shrink-0" />
+                            <span className="ml-3 text-[10px] uppercase tracking-wide text-muted-foreground">
+                              Amount
+                            </span>
+                            <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
+                              {config?.token_symbol ?? "NTX"} {p.amount}
+                            </code>
                           </div>
-                        )}
+
+                          {(txHash || p.tx_hash) && (
+                            <div className="flex items-center gap-2 min-w-0 shrink-0 max-w-[220px]">
+                              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                Last TX
+                              </span>
+                              <code
+                                className="bg-muted px-1 py-0.5 rounded text-xs font-mono"
+                                title={txHash || p.tx_hash}
+                              >
+                                {shorten(txHash || p.tx_hash)}
+                              </code>
+                              {explorer && (
+                                <a
+                                  href={explorer}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-primary hover:underline text-xs"
+                                  title="View on explorer"
+                                >
+                                  View
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
 
                         {/* Action button (inline) */}
-                        <div className="flex items-center justify-end shrink-0">
+                        <div className="flex items-center justify-end shrink-0 pl-3 xl:pl-4">
                           <Button
                             size="sm"
-                            className="h-7 px-2 text-xs"
+                            className="h-8 px-3 text-xs"
                             onClick={() => handlePay(p)}
                             disabled={isSending || p.status === "paid" || !config}
                           >
@@ -448,3 +445,4 @@ export default function PaymentsPage() {
     </div>
   );
 }
+
