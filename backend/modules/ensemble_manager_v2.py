@@ -11,7 +11,7 @@ import json
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 from .dms_utils import run_dms_command_with_passphrase
 from .ddns_manager import make_dns_label
 from .utils import get_current_branch, Colors, print_header, print_menu_option, pause
@@ -1247,6 +1247,109 @@ Nodes Detail:
                 "message": f"Error getting deployment logs: {str(e)}"
             }
 
+
+    def get_deployment_file_content(self, deployment_id: str) -> Dict[str, Any]:
+        try:
+            log_entries = self.parse_deployment_log()
+        except Exception:
+            log_entries = {}
+
+        log_entry = log_entries.get(deployment_id) or {}
+        candidates: List[Path] = []
+
+        def _add_candidate(value: Any) -> None:
+            if isinstance(value, Path):
+                candidates.append(value.expanduser())
+            elif isinstance(value, str) and value:
+                candidates.append(Path(value).expanduser())
+
+        file_name = log_entry.get("file_name")
+        _add_candidate(file_name)
+
+        file_basename = log_entry.get("file_basename")
+        if isinstance(file_basename, str) and file_basename:
+            _add_candidate(self.base_dir / file_basename)
+            _add_candidate(self.deployments_dir / file_basename)
+
+        if isinstance(file_name, str):
+            rel = Path(file_name)
+            if not rel.is_absolute():
+                _add_candidate(self.base_dir / rel)
+                _add_candidate(self.deployments_dir / rel)
+
+        _, manifest_path = self._load_ensemble_config(deployment_id)
+        if manifest_path is not None:
+            _add_candidate(manifest_path)
+
+        normalized_candidates: List[Path] = []
+        seen: Set[str] = set()
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+            except Exception:
+                resolved = candidate
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_candidates.append(resolved)
+
+        chosen_path: Optional[Path] = None
+        for candidate in normalized_candidates:
+            try:
+                if candidate.exists() and candidate.is_file():
+                    chosen_path = candidate
+                    break
+            except Exception:
+                continue
+
+        default_name = None
+        if isinstance(file_basename, str) and file_basename:
+            default_name = Path(file_basename).name
+        elif isinstance(file_name, str) and file_name:
+            default_name = Path(file_name).name
+
+        if chosen_path is None:
+            return {
+                "status": "error",
+                "message": f"Deployment file for {deployment_id} not found",
+                "exists": False,
+                "file_name": default_name,
+                "candidates": [str(path) for path in normalized_candidates],
+            }
+
+        try:
+            try:
+                content = chosen_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                content = chosen_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            return {
+                "status": "error",
+                "message": f"Failed to read deployment file: {exc}",
+                "file_path": str(chosen_path),
+                "file_name": chosen_path.name,
+                "exists": True,
+            }
+
+        relative_path: Optional[str] = None
+        for root in (self.base_dir, self.deployments_dir):
+            if isinstance(root, Path):
+                try:
+                    relative_path = str(chosen_path.relative_to(root))
+                    break
+                except (TypeError, ValueError):
+                    continue
+
+        return {
+            "status": "success",
+            "file_name": chosen_path.name,
+            "file_path": str(chosen_path),
+            "file_relative_path": relative_path,
+            "content": content,
+            "exists": True,
+        }
+
     def get_deployments_for_web(self) -> Dict[str, Any]:
         """Get all deployments in a format suitable for web API consumption"""
         try:
@@ -1292,13 +1395,58 @@ Nodes Detail:
                     # Fallback to current time if no timestamp available
                     timestamp_iso = datetime.now(timezone.utc).isoformat()
 
+                log_entry = deployment_log.get(deployment_id, {}) or {}
+                log_file_name = log_entry.get('file_name')
+                log_file_basename = log_entry.get('file_basename')
+
+                candidate_path: Optional[Path] = None
+                if isinstance(ensemble_path, Path):
+                    candidate_path = ensemble_path.expanduser()
+                elif isinstance(log_file_name, str) and log_file_name:
+                    candidate_path = Path(log_file_name).expanduser()
+
+                ensemble_file_name = ""
+                if candidate_path:
+                    ensemble_file_name = candidate_path.name
+                elif isinstance(log_file_basename, str):
+                    ensemble_file_name = log_file_basename
+
+                ensemble_file_path = ""
+                if candidate_path:
+                    ensemble_file_path = str(candidate_path)
+                elif isinstance(log_file_name, str) and log_file_name:
+                    ensemble_file_path = str(Path(log_file_name).expanduser())
+                elif ensemble_file_name:
+                    ensemble_file_path = ensemble_file_name
+
+                ensemble_file_relative = ""
+                if candidate_path:
+                    for root in (self.base_dir, self.deployments_dir):
+                        if isinstance(root, Path):
+                            try:
+                                ensemble_file_relative = str(candidate_path.relative_to(root))
+                                break
+                            except ValueError:
+                                continue
+                if not ensemble_file_relative:
+                    if isinstance(log_file_name, str) and log_file_name:
+                        ensemble_file_relative = str(log_file_name)
+                    else:
+                        ensemble_file_relative = ensemble_file_name
+
+                ensemble_file_exists = bool(candidate_path and candidate_path.exists())
+
                 deployments.append(
                     {
                         "id": str(deployment_id),
                         "status": status_text,
                         "type": deployment_type,
                         "timestamp": timestamp_iso,
-                        "ensemble_file": ensemble_path.name if getattr(ensemble_path, "name", None) else "",
+                        "ensemble_file": ensemble_file_relative or ensemble_file_name,
+                        "ensemble_file_name": ensemble_file_name,
+                        "ensemble_file_path": ensemble_file_path,
+                        "ensemble_file_relative": ensemble_file_relative,
+                        "ensemble_file_exists": ensemble_file_exists,
                     }
                 )
 

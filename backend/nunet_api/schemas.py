@@ -137,6 +137,10 @@ class DeploymentWebItem(BaseModel):
     type: str
     timestamp: str
     ensemble_file: str
+    ensemble_file_name: Optional[str] = None
+    ensemble_file_path: Optional[str] = None
+    ensemble_file_relative: Optional[str] = None
+    ensemble_file_exists: Optional[bool] = None
 
 class DeploymentsWebResponse(BaseModel):
     status: str
@@ -164,6 +168,16 @@ class ManifestTextResponse(BaseModel):
 class LogsTextResponse(BaseModel):
     status: str
     message: str
+
+class DeploymentFileResponse(BaseModel):
+    status: str
+    file_name: Optional[str] = None
+    file_path: Optional[str] = None
+    file_relative_path: Optional[str] = None
+    content: Optional[str] = None
+    exists: Optional[bool] = None
+    message: Optional[str] = None
+    candidates: Optional[List[str]] = None
 
 class DeployRequest(BaseModel):
     file_path: str

@@ -8,6 +8,7 @@ import {
   getDeploymentLogs,
   requestDeploymentLogs,
   shutdownDeployment,
+  getDeploymentFile,
 } from "@/api/deployments";
 import {
   ArrowLeft,
@@ -17,6 +18,7 @@ import {
   Download,
   Loader2,
   Maximize2,
+  FileText,
 } from "lucide-react";
 import {
   Card,
@@ -34,7 +36,7 @@ import { CopyButton } from "../components/ui/CopyButton";
 import { LeftTruncatedText } from "../components/ui/LeftTruncatedText";
 import { useEffect, useRef, useState } from "react";
 import { ManifestPanel } from "../components/deployments/ManifestPanel";
-import { Tooltip } from "../components/ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../components/ui/tooltip";
 import { RefreshButton } from "../components/ui/RefreshButton";
 import { Skeleton } from "../components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -118,6 +120,12 @@ export default function DeploymentDetailsPage() {
 // ?? Deployment Info
 function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
+  const [isFileModalOpen, setIsFileModalOpen] = useState(false);
+  const [fileLoading, setFileLoading] = useState(false);
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileMeta, setFileMeta] = useState<{ name?: string; path?: string; relative?: string } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [fileCandidates, setFileCandidates] = useState<string[]>([]);
 
   const {
     data: details,
@@ -170,6 +178,77 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
     manifestData?.ensemble_file,
     details?.manifest?.ensemble_file
   ) ?? "N/A";
+  const relativeCandidate = pickString(
+    deployment.ensemble_file_relative,
+    deployment.ensemble_file,
+    manifestData?.ensemble_file,
+    details?.manifest?.ensemble_file
+  );
+  const hasEnsembleFile = ensembleText !== "N/A";
+  const ensembleDisplayText = hasEnsembleFile
+    ? (ensembleText.split(/[\\/]/).pop() ?? ensembleText)
+    : "N/A";
+  const fullFilePath = fileMeta?.path ?? fileMeta?.relative ?? null;
+  const shortFilePath = fullFilePath ? (fullFilePath.split(/[\\/]/).pop() ?? fullFilePath) : null;
+
+  const handleFileModalChange = (open: boolean) => {
+    setIsFileModalOpen(open);
+    if (!open) {
+      setFileLoading(false);
+      setFileContent(null);
+      setFileError(null);
+      setFileCandidates([]);
+    }
+  };
+
+  const handleViewFile = async () => {
+    if (!hasEnsembleFile) {
+      return;
+    }
+
+    const baseMeta = {
+      name: deployment?.ensemble_file_name ?? relativeCandidate ?? ensembleText,
+      path: deployment?.ensemble_file_path ?? undefined,
+      relative: relativeCandidate ?? ensembleText,
+    };
+
+    setFileMeta(baseMeta);
+    setIsFileModalOpen(true);
+    setFileLoading(true);
+    setFileError(null);
+    setFileContent(null);
+    setFileCandidates([]);
+
+    try {
+      const res = await getDeploymentFile(deployment.id);
+      const nextMeta = {
+        name: res?.file_name ?? baseMeta.name,
+        path: res?.file_path ?? baseMeta.path,
+        relative: res?.file_relative_path ?? baseMeta.relative,
+      };
+      setFileMeta(nextMeta);
+      setFileContent(res?.content ?? "");
+      setFileCandidates(Array.isArray(res?.candidates) ? res.candidates : []);
+      setFileError(null);
+    } catch (error: any) {
+      const detail = error?.response?.data ?? {};
+      const message =
+        detail?.message ||
+        error?.message ||
+        "Unable to load deployment file.";
+      setFileError(message);
+      setFileCandidates(Array.isArray(detail?.candidates) ? detail.candidates : []);
+      const fallbackMeta = {
+        name: detail?.file_name ?? baseMeta.name,
+        path: baseMeta.path,
+        relative: baseMeta.relative,
+      };
+      setFileMeta(fallbackMeta);
+      setFileContent(null);
+    } finally {
+      setFileLoading(false);
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
@@ -199,12 +278,37 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
             <p>
               <b>Timestamp:</b> {timestampText}
             </p>
-            <p className="flex items-center gap-2">
-              <span>
-                <b>Ensemble File:</b> {ensembleText}
+            <p className="flex items-center gap-2 flex-wrap">
+              <span className="flex items-center gap-2">
+                <b>Ensemble File:</b>
+                {hasEnsembleFile ? (
+                  <span
+                    className="font-mono text-sm break-all"
+                    title={ensembleText}
+                  >
+                    {ensembleDisplayText}
+                  </span>
+                ) : (
+                  "N/A"
+                )}
               </span>
-              {ensembleText !== "N/A" ? (
-                <CopyButton text={ensembleText} className="h-6 w-6" />
+              {hasEnsembleFile ? (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={handleViewFile}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>View deployment file</TooltipContent>
+                  </Tooltip>
+                  <CopyButton text={ensembleText} className="h-7 w-7" />
+                </>
               ) : null}
             </p>
           </div>
@@ -240,9 +344,53 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
           </div>
         </CardFooter>
       </Card>
+
+      <Dialog open={isFileModalOpen} onOpenChange={handleFileModalChange}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>{fileMeta?.name ?? "Deployment File"}</DialogTitle>
+            {shortFilePath ? (
+              <p className="text-xs text-muted-foreground break-all" title={fullFilePath ?? undefined}>
+                {shortFilePath}
+              </p>
+            ) : null}
+          </DialogHeader>
+          {fileLoading ? (
+            <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading file...
+            </div>
+          ) : fileError ? (
+            <div className="space-y-3">
+              <p className="text-sm text-red-500">{fileError}</p>
+              {fileCandidates.length ? (
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>Checked locations:</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    {fileCandidates.map((candidate) => (
+                      <li key={candidate} className="break-all">
+                        {candidate}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-end">
+                <CopyButton text={fileContent ?? ""} className="text-xs" />
+              </div>
+              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-xs font-mono">
+                {fileContent ?? ""}
+              </pre>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
 
 // ?? Deployment Progress
 export function DeploymentProgressCard({

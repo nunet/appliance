@@ -45,6 +45,12 @@ export default function DeploymentsCards() {
 
   const deployments = data?.deployments || [];
 
+  const getFileDisplayName = (value?: string) => {
+    if (!value || typeof value !== "string") return "";
+    const parts = value.split(/[\\/]/);
+    return parts.pop() || value;
+  };
+
   // Apply search + filter
   const filteredData = useMemo(() => {
     return deployments
@@ -144,7 +150,10 @@ export default function DeploymentsCards() {
                         <b>Type:</b> {d.type}
                       </p>
                       <p>
-                        <b>Ensemble:</b> {d.ensemble_file}
+                        <b>Ensemble:</b>{" "}
+                        <span title={d.ensemble_file} className="font-mono">
+                          {getFileDisplayName(d.ensemble_file)}
+                        </span>
                       </p>
                       <p>
                         <b>Timestamp:</b> {d.timestamp}
