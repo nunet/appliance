@@ -19,6 +19,11 @@ export async function getDeploymentManifest(id) {
   return res.data;
 }
 
+export async function getDeploymentFile(id) {
+  const res = await api.get(`/ensemble/deployments/${id}/file`);
+  return res.data;
+}
+
 export async function getDeploymentLogs(id, allocation = null) {
   const res = await api.get(`/ensemble/deployments/${id}/logs`, {
     params: allocation ? { allocation } : {},

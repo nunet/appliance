@@ -11,6 +11,7 @@ from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
     ManifestTextResponse, LogsTextResponse,
+    DeploymentFileResponse,
     DeployRequest, DeployResponse,
     ShutdownResponse, TemplatesListItem, TemplatesListResponse,
     CopyRequest, CopyResponse, DownloadExamplesRequest, SimpleStatusResponse
@@ -183,12 +184,19 @@ def list_deployments(mgr: EnsembleManagerV2 = Depends(get_mgr)):
         # ensure isoformat
         if isinstance(ts, datetime):
             ts = ts.isoformat()
+        ensemble_file_value = d.get("ensemble_file", "")
+        if ensemble_file_value is None:
+            ensemble_file_value = ""
         items.append(DeploymentWebItem(
             id=d.get("id", ""),
             status=d.get("status", ""),
             type=d.get("type", ""),
             timestamp=str(ts),
-            ensemble_file=d.get("ensemble_file", ""),
+            ensemble_file=str(ensemble_file_value),
+            ensemble_file_name=d.get("ensemble_file_name"),
+            ensemble_file_path=d.get("ensemble_file_path"),
+            ensemble_file_relative=d.get("ensemble_file_relative"),
+            ensemble_file_exists=d.get("ensemble_file_exists"),
         ))
 
     return DeploymentsWebResponse(
@@ -236,6 +244,30 @@ def deployment_manifest_text(deployment_id: str, mgr: EnsembleManagerV2 = Depend
     if res.get("status") != "success":
         raise HTTPException(status_code=500, detail=res.get("message", "Failed to get manifest"))
     return ManifestTextResponse(status="success", message=res.get("manifest_text", res.get("message", "")))
+
+
+@router.get("/deployments/{deployment_id}/file", response_model=DeploymentFileResponse)
+def deployment_file_content(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
+    res = mgr.get_deployment_file_content(deployment_id)
+    if res.get("status") != "success":
+        detail_message = res.get("message", "Deployment file is unavailable")
+        detail = {"message": detail_message}
+        if res.get("file_name"):
+            detail["file_name"] = res["file_name"]
+        if "candidates" in res:
+            detail["candidates"] = res["candidates"]
+        status_code = 404 if res.get("exists") is False else 500
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    return DeploymentFileResponse(
+        status="success",
+        file_name=res.get("file_name"),
+        file_path=res.get("file_path"),
+        file_relative_path=res.get("file_relative_path"),
+        content=res.get("content"),
+        exists=res.get("exists", True),
+        message=res.get("message"),
+    )
 
 
 @router.get("/deployments/{deployment_id}/allocations", response_model=List[str])
