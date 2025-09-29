@@ -32,7 +32,7 @@ import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
 import { LeftTruncatedText } from "../components/ui/LeftTruncatedText";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ManifestPanel } from "../components/deployments/ManifestPanel";
 import { Tooltip } from "../components/ui/tooltip";
 import { RefreshButton } from "../components/ui/RefreshButton";
@@ -505,51 +505,88 @@ function LogSection({
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const lines = log ? log.split("\n") : [];
+  const isStandardStream = title === "STDOUT" || title === "STDERR";
+  const rawLog = log ?? "";
+  const normalizedLog = rawLog.trim();
+  const hasError = isStandardStream && /\(error:/i.test(normalizedLog);
+  const hasContent = normalizedLog.length > 0 && !hasError;
+  const friendlyPlaceholder = "No logs available for this section right now.";
+  const linesToRender = hasContent ? rawLog.split("\n") : [friendlyPlaceholder];
 
-  const renderLogBody = (sizeClass: string) => (
-    <div
-      className={`bg-black text-${color}-400 font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
-      style={{ 
-        overflowX: 'scroll', 
-        overflowY: 'auto',
-        whiteSpace: 'nowrap',
-        width: '100%',
-        maxWidth: '100%'
-      }}
-    >
-      <div style={{ minWidth: 'max-content' }}>
-        {lines.map((line, idx) => (
-          <div key={idx} className="whitespace-nowrap">
-            {line}
+
+  const LogBody = ({
+    sizeClass,
+    showExpandButton = true,
+    linesToRender: bodyLines,
+    isPlaceholder = false,
+  }: {
+    sizeClass: string;
+    showExpandButton?: boolean;
+    linesToRender: string[];
+    isPlaceholder?: boolean;
+  }) => {
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+      const node = scrollRef.current;
+      if (node) {
+        node.scrollTop = node.scrollHeight;
+      }
+    }, [log]);
+
+    return (
+      <div
+        ref={scrollRef}
+        className={`relative bg-black text-${color}-400 font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
+        style={{
+          overflowX: "scroll",
+          overflowY: "auto",
+          whiteSpace: "nowrap",
+          width: "100%",
+          maxWidth: "100%",
+        }}
+      >
+        {showExpandButton ? (
+          <div className="sticky top-2 flex justify-end pr-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsModalOpen(true)}
+              aria-label={`Expand ${title} logs`}
+              className="size-8 rounded-full bg-black/40 hover:bg-black/60 focus-visible:ring-offset-0"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
           </div>
-        ))}
+        ) : null}
+        <div
+          style={{ minWidth: "max-content" }}
+          className={`${showExpandButton ? "pr-10" : ""} ${isPlaceholder ? "text-muted-foreground" : ""}`}
+        >
+          {bodyLines.map((line, idx) => (
+            <div key={idx} className="whitespace-nowrap">
+              {line}
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <>
       <div className="flex items-center justify-between mt-4">
         <p className="font-semibold">{title}</p>
-        {log ? (
+        {hasContent ? (
           <div className="flex items-center gap-2">
             <CopyButton text={log} className="text-xs" />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-1"
-            >
-              <Maximize2 className="h-4 w-4" />
-              Expand
-            </Button>
           </div>
         ) : null}
       </div>
-      {log ? (
+      {hasContent ? (
         <>
-          {renderLogBody("h-40")}
+          <LogBody sizeClass="h-40" linesToRender={linesToRender} />
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogContent className="!max-w-[95vw] !w-[95vw] max-h-[90vh] sm:!max-w-[95vw]">
               <DialogHeader>
@@ -558,15 +595,19 @@ function LogSection({
               <div className="flex justify-end mb-2">
                 <CopyButton text={log} className="text-xs" />
               </div>
-              {renderLogBody("max-h-[70vh] min-h-[50vh]")}
+              <LogBody sizeClass="max-h-[70vh] min-h-[50vh]" showExpandButton={false} linesToRender={linesToRender} />
             </DialogContent>
           </Dialog>
         </>
       ) : (
-        <p className="text-muted-foreground text-center">
-          No {title.toLowerCase()} found.
-        </p>
+        <LogBody
+          sizeClass="h-40"
+          showExpandButton={false}
+          linesToRender={linesToRender}
+          isPlaceholder
+        />
       )}
     </>
   );
 }
+
