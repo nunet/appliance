@@ -23,7 +23,9 @@ build:deb:
     paths:
       - dist/
   rules:
-    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
 
 
 update-permalinks:
