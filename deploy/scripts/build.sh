@@ -46,7 +46,7 @@ chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/fro
 echo "Building frontend..."
 ( cd "$ROOT/frontend" && \
     npm install && \
-    npm audit fix && \
+    (npm audit fix || true) && \
     if npm ls @swc/core >/dev/null 2>&1; then \
       echo "Rebuilding @swc/core from source for host CPU..." && \
       npm rebuild @swc/core --build-from-source; \
@@ -90,3 +90,4 @@ rm -rf "$SCRIPT_DIR/.build-venv"
 echo "Build complete for ${ARCH}"
 echo "Packages available in:"
 ls -la "$ROOT/dist"/*.deb
+

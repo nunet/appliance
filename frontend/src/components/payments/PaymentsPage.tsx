@@ -25,6 +25,7 @@ import { CheckCheckIcon, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { sendNTX } from "@/lib/sendNTX";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useWalletStore, type WalletType } from "@/stores/walletStore";
 
 function middleEllipsis(value: string, head = 6, tail = 4) {
   if (!value) return "";
@@ -39,6 +40,21 @@ function shorten(addr: string) {
   return middleEllipsis(addr);
 }
 
+function inferWalletType(address: string): WalletType | null {
+  const value = address?.trim() ?? "";
+  if (/^0x[a-fA-F0-9]{40}$/.test(value)) {
+    return "ethereum";
+  }
+  if (/^(addr|stake)[0-9a-z]+$/i.test(value)) {
+    return "cardano";
+  }
+  return null;
+}
+
+function walletDisplayName(type: WalletType) {
+  return type === "ethereum" ? "MetaMask" : "Eternl";
+}
+
 type StatusFilter = "all" | "paid" | "unpaid";
 
 export default function PaymentsPage() {
@@ -47,6 +63,9 @@ export default function PaymentsPage() {
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [sent, setSent] = useState<Record<string, string>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  const activeWalletType = useWalletStore((state) => state.active);
+  const walletConnections = useWalletStore((state) => state.connections);
 
   const cfgQ = useQuery({
     queryKey: ["payments", "config"],
@@ -98,6 +117,23 @@ export default function PaymentsPage() {
       return;
     }
 
+    const requiredWallet = inferWalletType(p.to_address);
+    if (requiredWallet) {
+      const connection = walletConnections[requiredWallet];
+      if (!connection) {
+        toast.error(`Connect ${walletDisplayName(requiredWallet)} to continue`, errorToastStyles);
+        return;
+      }
+      if (activeWalletType !== requiredWallet) {
+        toast.error(`Activate ${walletDisplayName(requiredWallet)} before paying`, errorToastStyles);
+        return;
+      }
+      if (requiredWallet === "cardano") {
+        toast.error("Cardano payments are not yet supported in this build", errorToastStyles);
+        return;
+      }
+    }
+
     try {
       setSending((s) => ({ ...s, [p.unique_id]: true }));
       const { token_address, token_decimals, chain_id, explorer_base_url } =
@@ -147,6 +183,11 @@ export default function PaymentsPage() {
             <div className="flex items-center gap-2">
               <Wallet className="h-5 w-5" />
               <h2 className="text-lg font-semibold">Payments</h2>
+              {activeWalletType && (
+                <Badge variant="outline" className="text-xs font-normal">
+                  {walletConnections[activeWalletType]?.provider ?? walletDisplayName(activeWalletType)}
+                </Badge>
+              )}
 
               {!!list && (
                 <div className="flex items-center gap-2 ml-2">
@@ -263,6 +304,28 @@ export default function PaymentsPage() {
                   config?.explorer_base_url && (txHash || p.tx_hash)
                     ? `${config.explorer_base_url!.replace(/\/$/, "")}/tx/${txHash || p.tx_hash}`
                     : null;
+                const requiredWallet = inferWalletType(p.to_address);
+                const requiredConnection = requiredWallet
+                  ? walletConnections[requiredWallet]
+                  : undefined;
+                const walletRestriction =
+                  requiredWallet === "cardano"
+                    ? "Cardano payments are not yet supported"
+                    : requiredWallet && !requiredConnection
+                    ? `Connect ${walletDisplayName(requiredWallet)} to continue`
+                    : requiredWallet && activeWalletType !== requiredWallet
+                    ? `Activate ${walletDisplayName(requiredWallet)} from the wallet menu`
+                    : null;
+                const buttonDisabled =
+                  isSending || p.status === "paid" || !config || Boolean(walletRestriction);
+                const buttonLabelOverride =
+                  p.status === "unpaid" && walletRestriction
+                    ? requiredWallet === "cardano"
+                      ? "Cardano soon"
+                      : requiredWallet === "ethereum"
+                      ? "Use MetaMask"
+                      : "Select wallet"
+                    : null;
 
                 return (
                   <Card key={p.unique_id} className="rounded-lg border border-border/60 shadow-sm hover:shadow-md transition">
@@ -299,6 +362,14 @@ export default function PaymentsPage() {
                                   {config?.token_symbol ?? "NTX"} {p.amount}
                                 </code>
                               </div>
+                              {requiredWallet && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-foreground">Wallet:</span>
+                                  <Badge variant="outline">
+                                    {walletDisplayName(requiredWallet)}
+                                  </Badge>
+                                </div>
+                              )}
                               {(txHash || p.tx_hash) && (
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="font-medium text-foreground">Last TX:</span>
@@ -326,7 +397,8 @@ export default function PaymentsPage() {
                               size="sm"
                               className="w-full md:w-auto h-8 px-3"
                               onClick={() => handlePay(p)}
-                              disabled={isSending || p.status === "paid" || !config}
+                              disabled={buttonDisabled}
+                              title={walletRestriction ?? undefined}
                             >
                               {isSending ? (
                                 <>
@@ -334,10 +406,14 @@ export default function PaymentsPage() {
                                   Sending...
                                 </>
                               ) : p.status === "unpaid" ? (
-                                <>
-                                  <Send className="mr-2 h-4 w-4" />
-                                  Pay Now
-                                </>
+                                buttonLabelOverride ? (
+                                  buttonLabelOverride
+                                ) : (
+                                  <>
+                                    <Send className="mr-2 h-4 w-4" />
+                                    Pay Now
+                                  </>
+                                )
                               ) : (
                                 <>
                                   <CheckCheckIcon className="mr-2 h-4 w-4" />
@@ -379,6 +455,16 @@ export default function PaymentsPage() {
                             <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
                               {config?.token_symbol ?? "NTX"} {p.amount}
                             </code>
+                            {requiredWallet && (
+                              <>
+                                <span className="ml-3 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  Wallet
+                                </span>
+                                <Badge variant="outline" className="text-[10px]">
+                                  {walletDisplayName(requiredWallet)}
+                                </Badge>
+                              </>
+                            )}
                           </div>
 
                           {(txHash || p.tx_hash) && (
@@ -413,7 +499,8 @@ export default function PaymentsPage() {
                             size="sm"
                             className="h-8 px-3 text-xs"
                             onClick={() => handlePay(p)}
-                            disabled={isSending || p.status === "paid" || !config}
+                            disabled={buttonDisabled}
+                            title={walletRestriction ?? undefined}
                           >
                             {isSending ? (
                               <>
@@ -421,10 +508,14 @@ export default function PaymentsPage() {
                                 Sending...
                               </>
                             ) : p.status === "unpaid" ? (
-                              <>
-                                <Send className="mr-1.5 h-4 w-4" />
-                                Pay Now
-                              </>
+                              buttonLabelOverride ? (
+                                buttonLabelOverride
+                              ) : (
+                                <>
+                                  <Send className="mr-1.5 h-4 w-4" />
+                                  Pay Now
+                                </>
+                              )
                             ) : (
                               <>
                                 <CheckCheckIcon className="mr-1.5 h-4 w-4" />
