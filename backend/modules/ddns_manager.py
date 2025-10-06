@@ -53,7 +53,10 @@ class DDNSManager:
                 with open(self._config_path, "w") as f:
                     json.dump({
                         "ddns_api_server": default_api_server,
-                        "ddns_domain": self.default_domain
+                        "ddns_domain": self.default_domain,
+                        "wildcard_cert_server": "https://api01.nunet.network:8443/live",
+                        "wildcard_cert_path": "~/nunet/appliance/ddns-client/certs",
+                        "cert_auto_download": True
                     }, f, indent=2)
             except Exception:
                 pass
