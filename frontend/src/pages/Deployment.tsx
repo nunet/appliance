@@ -40,6 +40,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "../components/ui/toolti
 import { RefreshButton } from "../components/ui/RefreshButton";
 import { Skeleton } from "../components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { YamlViewer } from "../components/ui/YamlViewer";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -380,9 +381,11 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
               <div className="flex items-center justify-end">
                 <CopyButton text={fileContent ?? ""} className="text-xs" />
               </div>
-              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-xs font-mono">
-                {fileContent ?? ""}
-              </pre>
+              <YamlViewer
+                value={fileContent ?? ""}
+                className="max-h-[60vh]"
+                maxHeight="60vh"
+              />
             </div>
           )}
         </DialogContent>

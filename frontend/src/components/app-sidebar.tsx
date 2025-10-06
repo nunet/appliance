@@ -13,19 +13,26 @@ import {
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "../components/ui/sidebar";
 import { NavMain } from "../components/nav-main";
 import { useNavigate } from "react-router-dom";
 import { useAppMode } from "@/hooks/useAppMode";
 import { CopyPlusIcon } from "lucide-react";
+import { AdvancedModeToggle } from "./global/ModeToggle";
+import { Button } from "./ui/button";
+import { useAuth } from "@/hooks/useAuth";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navigate = useNavigate();
   const { mode, setMode } = useAppMode();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const { logout } = useAuth();
 
   const switchMode = () => {
     setMode(mode === "simple" ? "advanced" : "simple");
@@ -86,16 +93,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              className="data-[slot=sidebar-menu-button]:!p-1.5 flex items-center justify-center"
+              className="data-[slot=sidebar-menu-button]:!px-3 data-[slot=sidebar-menu-button]:!py-4 flex items-center justify-center overflow-visible"
               onClick={() => navigate("/")}
             >
-              <a>
-                <span>
-                  <img
-                    src="nunet_logo.png"
-                    className="w-24 h-24 object-contain"
-                  />
-                </span>
+              <a className="flex w-full items-center justify-center">
+                <img
+                  src="appliance-logo.png"
+                  alt="NuNet Appliance logo"
+                  className="h-auto w-full max-w-[180px] object-contain"
+                />
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -105,6 +111,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <NavMain items={navMain} />
       </SidebarContent>
+      {isMobile && (
+        <SidebarFooter className="mt-auto border-t border-sidebar-border p-4">
+          <div className="flex flex-col gap-3">
+            <AdvancedModeToggle />
+            <Button
+              variant="outline"
+              onClick={() => {
+                logout();
+                setOpenMobile(false);
+              }}
+            >
+              Log out
+            </Button>
+          </div>
+        </SidebarFooter>
+      )}
     </Sidebar>
   );
 }
