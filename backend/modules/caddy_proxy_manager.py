@@ -28,14 +28,19 @@ class CaddyProxyManager:
         self.caddy_image = "caddy:2"
         self.last_config = None
         self.ddns_manager = DDNSManager()
-        # Load ddns-config.json for default domain
+        # Load ddns-config.json for default domain, wildcard cert path and URL
         self._config_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "ddns-config.json"
         self.default_domain = "ddns.nunet.network"
+        self.wildcard_cert_base_path = Path.home() / "nunet" / "appliance" / "ddns-client" / "certs"
+        self.wildcard_cert_server = "https://api01.nunet.network:8443/live"
         try:
             if self._config_path.exists():
                 with open(self._config_path) as f:
                     cfg = json.load(f)
                 self.default_domain = cfg.get("ddns_domain", self.default_domain)
+                self.wildcard_cert_server = cfg.get("wildcard_cert_server", self.wildcard_cert_server)
+                cert_path = cfg.get("wildcard_cert_path", "~/nunet/appliance/ddns-client/certs")
+                self.wildcard_cert_base_path = Path(cert_path).expanduser()
         except Exception:
             pass
         # Optionally, load the current Caddyfile content:
@@ -59,6 +64,136 @@ class CaddyProxyManager:
                 f.write(":80, :443 {\n    respond \"Caddy proxy is running\"\n}\n")
             subprocess.run(["sudo", "chown", f"{os.getuid()}:{os.getgid()}", self.caddy_config_path], check=True)
 
+    def get_wildcard_cert_paths(self, domain: str) -> Optional[Dict[str, str]]:
+        """Get wildcard certificate paths for a domain if they exist."""
+        domain_cert_dir = self.wildcard_cert_base_path / domain
+        cert_file = domain_cert_dir / "fullchain.pem"
+        key_file = domain_cert_dir / "privkey.pem"
+        
+        if cert_file.exists() and key_file.exists():
+            return {
+                "cert": str(cert_file),
+                "key": str(key_file)
+            }
+        return None
+
+    def has_wildcard_certs(self, domain: str) -> bool:
+        """Check if wildcard certificates exist for a domain."""
+        return self.get_wildcard_cert_paths(domain) is not None
+
+    def get_wildcard_cert_server(self) -> str:
+        """Get the server URL for retrieving wildcard certificates."""
+        return self.wildcard_cert_server
+
+    def get_domain_cert_dir(self, domain: str) -> Path:
+        """Get the certificate directory path for a specific domain."""
+        return self.wildcard_cert_base_path / domain
+
+    def download_wildcard_certificates(self, domain: str = None) -> bool:
+        """Download wildcard certificates from the certificate server"""
+        if domain is None:
+            domain = self.default_domain
+            
+        # Certificate server URLs
+        base_url = self.wildcard_cert_server
+        fullchain_url = f"{base_url}/{domain}/fullchain.pem"
+        privkey_url = f"{base_url}/{domain}/privkey.pem"
+        
+        # Local certificate paths
+        cert_dir = self.get_domain_cert_dir(domain)
+        fullchain_path = cert_dir / "fullchain.pem"
+        privkey_path = cert_dir / "privkey.pem"
+        
+        # Client certificate paths for authentication
+        client_cert_path = self.wildcard_cert_base_path / "certs" / "client.crt"
+        client_key_path = self.wildcard_cert_base_path / "certs" / "client.key"
+        ca_bundle_path = self.wildcard_cert_base_path / "certs" / "infra-bundle-ca.crt"
+        
+        # Check if client certificates exist
+        if not all(p.exists() for p in [client_cert_path, client_key_path, ca_bundle_path]):
+            logger.warning("Client certificates not found - skipping wildcard certificate download")
+            return False
+        
+        try:
+            logger.info(f"Downloading wildcard certificates for domain: {domain}")
+            
+            # Create certificate directory
+            cert_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Download fullchain.pem
+            result = subprocess.run([
+                "curl", "-s", "--connect-timeout", "10",
+                "--cert", str(client_cert_path),
+                "--key", str(client_key_path),
+                "--cacert", str(ca_bundle_path),
+                fullchain_url
+            ], capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to download fullchain.pem: {result.stderr}")
+                return False
+            
+            if not result.stdout.startswith("-----BEGIN CERTIFICATE-----"):
+                logger.error("Invalid fullchain.pem format received")
+                return False
+            
+            # Download privkey.pem
+            result = subprocess.run([
+                "curl", "-s", "--connect-timeout", "10",
+                "--cert", str(client_cert_path),
+                "--key", str(client_key_path),
+                "--cacert", str(ca_bundle_path),
+                privkey_url
+            ], capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logger.error(f"Failed to download privkey.pem: {result.stderr}")
+                return False
+            
+            if not result.stdout.startswith("-----BEGIN PRIVATE KEY-----"):
+                logger.error("Invalid privkey.pem format received")
+                return False
+            
+            # Backup existing certificates if they exist
+            if fullchain_path.exists():
+                backup_path = fullchain_path.with_suffix(f'.pem.backup.{int(time.time())}')
+                fullchain_path.rename(backup_path)
+                logger.info(f"Backed up existing fullchain.pem to {backup_path}")
+            
+            if privkey_path.exists():
+                backup_path = privkey_path.with_suffix(f'.pem.backup.{int(time.time())}')
+                privkey_path.rename(backup_path)
+                logger.info(f"Backed up existing privkey.pem to {backup_path}")
+            
+            # Save the privkey content before we overwrite result
+            privkey_content = result.stdout
+            
+            # Get the fullchain content again 
+            result = subprocess.run([
+                "curl", "-s", "--connect-timeout", "10",
+                "--cert", str(client_cert_path),
+                "--key", str(client_key_path),
+                "--cacert", str(ca_bundle_path),
+                fullchain_url
+            ], capture_output=True, text=True)
+            
+            fullchain_content = result.stdout
+            
+            # Write new certificates
+            fullchain_path.write_text(fullchain_content)
+            privkey_path.write_text(privkey_content)
+            
+            # Set proper permissions
+            fullchain_path.chmod(0o644)
+            privkey_path.chmod(0o600)
+            
+            logger.info(f"Successfully downloaded and installed wildcard certificates for {domain}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error downloading wildcard certificates: {e}")
+            return False
+
     def ensure_caddy_container(self):
         """Ensure the Caddy container is running with correct config and ports."""
         # Check if running
@@ -68,16 +203,27 @@ class CaddyProxyManager:
         if not result.stdout.strip():
             # Remove any stopped container with the same name
             subprocess.run(["docker", "rm", self.caddy_container_name], capture_output=True)
-            # Start Caddy container
-            subprocess.run([
+            
+            # Build docker run command
+            docker_cmd = [
                 "docker", "run", "-d",
                 "--name", self.caddy_container_name,
                 "-p", "80:80",
                 "-p", "443:443",
                 "-v", f"{self.caddy_config_path}:{self.caddyfile_container_path}",
-                "-v", f"{self.caddy_data_dir}:/data",
-                self.caddy_image
-            ], check=True)
+                "-v", f"{self.caddy_data_dir}:/data"
+            ]
+            
+            # Add certificate volume mounts if the cert path exists
+            if self.wildcard_cert_base_path.exists():
+                docker_cmd.extend([
+                    "-v", f"{self.wildcard_cert_base_path}:/certs:ro"
+                ])
+            
+            docker_cmd.append(self.caddy_image)
+            
+            # Start Caddy container
+            subprocess.run(docker_cmd, check=True)
 
     def get_docker_containers(self) -> List[Dict[str, str]]:
         """Return a list of running Docker containers with their environment variables and network info."""
@@ -221,6 +367,12 @@ class CaddyProxyManager:
         self._last_proxied_names = current_names
 
         required_networks = self.get_required_networks(proxied)
+        
+        # Download wildcard certificates on startup if needed
+        if not hasattr(self, '_certs_checked'):
+            self.download_wildcard_certificates()
+            self._certs_checked = True
+        
         self.ensure_caddy_container()
         self.update_caddy_networks(required_networks)
         # Generate and write Caddyfile
@@ -375,15 +527,79 @@ WantedBy=multi-user.target
     def generate_caddyfile(self, containers: List[Dict[str, any]]) -> str:
         """Generate a Caddyfile based on containers requiring proxy."""
         caddyfile = ""
+        
+        # Group containers by domain and wildcard usage for efficient certificate handling
+        wildcard_domains = {}
+        regular_containers = []
+        
         for c in containers:
-            if "proxy_url" in c:  # Only process containers that have a proxy URL
+            if "proxy_url" in c:
+                env = c.get('env', {})
+                use_wildcard = env.get("DDNS_PROXY_WILDCARD", "false").lower() == "true"
+                
+                if use_wildcard:
+                    # Extract domain from proxy URL
+                    proxy_url = c['proxy_url']
+                    if '.' in proxy_url:
+                        domain_parts = proxy_url.split('.')
+                        if len(domain_parts) > 1:
+                            domain = '.'.join(domain_parts[1:])
+                            if self.has_wildcard_certs(domain):
+                                if domain not in wildcard_domains:
+                                    wildcard_domains[domain] = []
+                                wildcard_domains[domain].append(c)
+                                continue
+                            else:
+                                logger.warning(f"Wildcard certificate requested but not found for domain {domain}")
+                
+                # Container doesn't use wildcard certs or certs not found
+                regular_containers.append(c)
+        
+        # Generate wildcard certificate blocks
+        for domain, domain_containers in wildcard_domains.items():
+            # Create a single block for all subdomains using the same wildcard certificate
+            subdomain_list = []
+            container_configs = []
+            
+            for c in domain_containers:
+                subdomain_list.append(c['proxy_url'])
                 port = self.get_proxy_port(c)
-                ip = c.get('ip_address')
-                if ip:
-                    caddyfile += f"{c['proxy_url']} {{\n  reverse_proxy {ip}:{port}\n}}\n\n"
-                else:
-                    # fallback to name (shouldn't happen if IP is always present)
-                    caddyfile += f"{c['proxy_url']} {{\n  reverse_proxy {c['name']}:{port}\n}}\n\n"
+                ip = c.get('ip_address', c['name'])
+                container_configs.append({
+                    'proxy_url': c['proxy_url'],
+                    'target': f"{ip}:{port}"
+                })
+            
+            # Generate a block that handles all subdomains with the wildcard certificate
+            subdomains_str = ", ".join(subdomain_list)
+            caddyfile += f"{subdomains_str} {{\n"
+            caddyfile += f"  tls /certs/{domain}/fullchain.pem /certs/{domain}/privkey.pem\n"
+            
+            # Add reverse proxy configuration for each subdomain
+            for config in container_configs:
+                caddyfile += f"  @{config['proxy_url'].replace('.', '_').replace('-', '_')} host {config['proxy_url']}\n"
+                caddyfile += f"  reverse_proxy @{config['proxy_url'].replace('.', '_').replace('-', '_')} {config['target']}\n"
+            
+            caddyfile += "}\n\n"
+            
+            logger.info(f"Using wildcard certificate for domain {domain} with subdomains: {subdomain_list}")
+        
+        # Generate individual blocks for containers not using wildcard certificates
+        for c in regular_containers:
+            port = self.get_proxy_port(c)
+            ip = c.get('ip_address')
+            proxy_url = c['proxy_url']
+            
+            caddyfile += f"{proxy_url} {{\n"
+            
+            # Add reverse proxy configuration
+            if ip:
+                caddyfile += f"  reverse_proxy {ip}:{port}\n"
+            else:
+                caddyfile += f"  reverse_proxy {c['name']}:{port}\n"
+            
+            caddyfile += "}\n\n"
+        
         return caddyfile
 
 if __name__ == "__main__":
