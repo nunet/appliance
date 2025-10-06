@@ -44,7 +44,7 @@ function Layout() {
       }
     >
       <AppSidebar variant="inset" />
-      <SidebarInset>
+      <SidebarInset className="overflow-x-hidden md:overflow-x-visible">
         <SiteHeader />
         <Outlet />
       </SidebarInset>
