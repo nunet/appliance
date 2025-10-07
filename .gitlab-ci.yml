@@ -7,7 +7,7 @@ default:
     - dedicated
     - docker
 
-build:deb:
+.build-deb:
   stage: build
   image: ubuntu:24.04
   before_script:
@@ -27,6 +27,15 @@ build:deb:
       when: never
     - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
 
+build:x86:
+  extends:
+    - .build-deb
+
+build:arm64:
+  extends:
+    - .build-deb
+  tags:
+    - saas-linux-small-arm64
 
 update-permalinks:
   stage: deploy
@@ -36,9 +45,11 @@ update-permalinks:
     PERMALINK_DEPLOY_USER: gitlab-runner
     PERMALINK_DEPLOY_FOLDER: /opt/public
   dependencies:
-    - build:deb
+    - build:x86
+    - build:arm64
   needs:
-    - build:deb
+    - build:x86
+    - build:arm64
   before_script:
     - apk add rsync openssh
   script:
