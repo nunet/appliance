@@ -14,7 +14,11 @@ from pathlib import Path
 menu_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(menu_dir))
 
-from modules.web_manager import WebManager
+try:
+    from modules.web_manager import WebManager  # type: ignore
+except ImportError:
+    WebManager = None  # type: ignore
+
 from modules.onboarding_manager import OnboardingManager
 
 # Configure logging for systemd
@@ -26,6 +30,11 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("WebManagerDaemon")
+
+if WebManager is None:
+    logger.error("WebManager module is not available; exiting.")
+    sys.exit(1)
+
 
 class WebManagerDaemon:
     """Daemon class for running the web manager as a service."""

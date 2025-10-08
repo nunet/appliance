@@ -1,4 +1,4 @@
-# backend/nunet_api/main.py
+﻿# backend/nunet_api/main.py
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
@@ -21,6 +21,7 @@ class SPAStaticFiles(StaticFiles):
             raise
 
 
+setup_logging()
 app = FastAPI(title="NuNet Local API", version="1.0.0")
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -61,7 +62,7 @@ env_dir = os.environ.get(ENV_KEY)
 if env_dir:
     static_path = Path(env_dir).resolve()
 else:
-    # dev fallback – likely *not* valid inside a PEX unless you bundled the dist into the package
+    # dev fallback â€“ likely *not* valid inside a PEX unless you bundled the dist into the package
     static_path = (Path(__file__).resolve().parents[2] / "frontend" / "dist")
 
 if not static_path.exists():
@@ -71,5 +72,6 @@ if not static_path.exists():
     )
 
 app.mount("/", SPAStaticFiles(directory=str(static_path), html=True), name="spa")
+
 
 

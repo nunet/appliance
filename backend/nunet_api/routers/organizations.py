@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -10,13 +9,17 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Body, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
 
+from backend.modules.logging_config import get_logger
 from modules.onboarding_manager import OnboardingManager
-from modules.organization_manager import OrganizationManager
+from modules.organization_service import OrganizationService
 from modules.org_utils import (
     load_known_organizations,
     get_joined_organizations_with_details,
 )
-from modules.dms_utils import get_dms_status_info, get_dms_resource_info
+from modules.dms_utils import (
+    get_cached_dms_resource_info,
+    get_cached_dms_status_info,
+)
 
 router = APIRouter()
 
@@ -24,9 +27,9 @@ router = APIRouter()
 # Globals / singletons
 # ---------------------------------------------------------------------------
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 _onboarding = OnboardingManager()
-_org_mgr = OrganizationManager()
+_org_service = OrganizationService()
 
 ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
 
@@ -162,7 +165,7 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
     """
     runtime: Dict[str, Any] = {}
 
-    dms_info = get_dms_status_info() or {}
+    dms_info = get_cached_dms_status_info() or {}
     runtime["dms_status"] = dms_info
 
     try:
@@ -178,7 +181,7 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
         runtime["peer_info"] = {}
 
     try:
-        res_info = get_dms_resource_info() or {}
+        res_info = get_cached_dms_resource_info() or {}
         onboarding_status = res_info.get("onboarding_status", "Unknown")
         onboarded_resources = res_info.get("onboarded_resources", "Unknown")
         if isinstance(onboarded_resources, str):
@@ -340,6 +343,7 @@ def _enrich_status_for_ui(state: dict) -> dict:
 @router.get("/known")
 def get_known():
     """Known orgs (name + API + join_fields)."""
+    log.debug("GET /organizations/known")
     return load_known_organizations()
 
 
@@ -349,11 +353,13 @@ def get_joined():
     Already joined organizations with details (capabilities, expiry).
     - FE expects fields: did, capabilities[], expiry (ISO)
     """
+    log.debug("GET /organizations/joined")
     return get_joined_organizations_with_details()
 
 
 @router.get("/steps")
 def steps():
+    log.debug("GET /organizations/steps")
     return {
         "steps": [{"id": s["id"], "label": s["label"], "virtual": s.get("virtual", False)} for s in STEP_DEFS],
         "progress_map": PROGRESS_MAP,
@@ -362,6 +368,7 @@ def steps():
 
 @router.get("/status")
 def status(mgr: OnboardingManager = Depends(_mgr)):
+    log.debug("GET /organizations/status")
     state = mgr.get_onboarding_status()
     return _enrich_status_for_ui(state)
 
@@ -372,6 +379,7 @@ def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
     Select an organization and advance to collect_join_data immediately.
     Clears any previous request ids or processing flags.
     """
+    log.debug("POST /organizations/select org_did=%s", body.org_did)
     known = load_known_organizations() or {}
     org_entry = known.get(body.org_did, {})
     org_name = org_entry["name"] if isinstance(org_entry, dict) and "name" in org_entry else body.org_did
@@ -400,8 +408,9 @@ def generate_wormhole():
     """
     Optional: for orgs that still use the wormhole pairing script (join-org-web.sh).
     """
+    log.debug("POST /organizations/wormhole generate")
     try:
-        result = _org_mgr.join_organization(step="generate")
+        result = _org_service.join_organization(step="generate")
         return WormholeResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"wormhole generation failed: {e}")
@@ -413,6 +422,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     Submit join data. If org_did is included, it also selects the org.
     Moves to join_data_sent with request_id / status_token if submit succeeds.
     """
+    log.debug("POST /organizations/join/submit org_did=%s email=%s", body.org_did or "state", body.email)
     # Allow select here for single-call UX
     if body.org_did:
         known = load_known_organizations() or {}
@@ -427,7 +437,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     if not org_data.get("did"):
         raise HTTPException(status_code=400, detail="No organization selected. Call /organizations/select or include org_did.")
 
-    dms_info = get_dms_status_info() or {}
+    dms_info = get_cached_dms_status_info() or {}
     dms_did = dms_info.get("dms_did")
     dms_peer_id = dms_info.get("dms_peer_id")
     if not dms_did or not dms_peer_id:
@@ -507,6 +517,7 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
       - ready / approved -> auto-process (exactly once)
       - error / rejected -> marks rejected
     """
+    log.debug("GET /organizations/join/poll force_check=%s", force_check)
     state = mgr.get_onboarding_status()
     req_id = state.get("request_id")
     token = state.get("status_token")
@@ -618,6 +629,7 @@ def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Bod
     Back-compat finalize endpoint. Idempotent.
     If already processed, returns success immediately.
     """
+    log.debug("POST /organizations/join/process restart_dms=%s", restart_dms)
     state = mgr.get_onboarding_status()
     if state.get("processed_ok"):
         return ProcessResponse(
@@ -649,6 +661,7 @@ def reset_onboarding(mgr: OnboardingManager = Depends(_mgr)):
     """
     Cancel/Reset the flow: clears state and re-creates a fresh file with 'init'.
     """
+    log.debug("POST /organizations/onboarding/reset")
     mgr.clear_state()
     _ensure_state_file(mgr)
     return {"status": "success", "state": mgr.get_onboarding_status()}
