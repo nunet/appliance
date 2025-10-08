@@ -10,19 +10,16 @@ setup_alias() {
   local alias_target="$ROOT/deploy/scripts/devctl.sh"
   local alias_line="alias devctl=\"$alias_target\""
   local bashrc="$HOME/.bashrc"
-  
-  # If alias is missing, add it; if present but incorrect, replace it
+
   if ! grep -q "^alias devctl=" "$bashrc" 2>/dev/null; then
-    echo "🔧 Setting up devctl alias..."
+    echo "[devctl] Setting up devctl alias..."
     echo "$alias_line" >> "$bashrc"
-    echo "✅ Alias added to ~/.bashrc"
-    echo "💡 Run 'source ~/.bashrc' or start a new terminal to use 'devctl' from anywhere"
+    echo "[devctl] Alias added to ~/.bashrc"
+    echo "[devctl] Run 'source ~/.bashrc' or start a new terminal to use 'devctl' from anywhere"
   else
-    # Ensure it points to our absolute path
     if ! grep -q "^$(printf %q "${alias_line}")$" "$bashrc" 2>/dev/null; then
-      # Replace existing devctl alias line with the correct absolute path
       sed -i "s|^alias devctl=.*$|${alias_line}|" "$bashrc"
-      echo "🔄 Updated existing devctl alias to: $alias_target"
+      echo "[devctl] Updated existing devctl alias to: $alias_target"
     fi
   fi
 }
@@ -184,8 +181,8 @@ dev_up() {
   tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
   # Use bash --norc to bypass .bashrc splash screen
   tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev'"
-  tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
-    "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec uvicorn nunet_api.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload\""
+  tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT" \
+    "bash --norc -c \"export PYTHONPATH='$ROOT/backend:$ROOT'; export CORS_ORIGINS='$CORS_ORIGINS'; exec uvicorn backend.nunet_api.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload\""
   echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
   echo "Attach with: tmux attach -t $TMUX_SESSION"
   echo "Note: Using bash --norc to bypass splash screen in dev mode"
@@ -305,5 +302,3 @@ case "${1:-}" in
   *)
     show_help ; exit 1 ;;
 esac
-
-

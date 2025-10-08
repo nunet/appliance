@@ -470,7 +470,8 @@ WantedBy=multi-user.target
         mgr.setup_caddy_dirs_and_file()
         mgr.run_monitor_loop(interval=interval)
 
-    def get_caddy_proxy_status(self):
+    @staticmethod
+    def get_caddy_proxy_status():
         """Return Caddy proxy systemd service status (running/stopped)."""
         try:
             result = subprocess.run(
