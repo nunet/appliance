@@ -1,69 +1,26 @@
 """
-Utilities for interacting with the Device Management Service (DMS).
+Shared DMS utility functions for NuNet menu system
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import os
-import re
 import subprocess
-import threading
-from copy import deepcopy
-from time import monotonic
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+import os
+from .utils import Colors  # kept even though display_peer_info receives Colors param
 
-_CACHE_TTL_DEFAULT = 30.0
 
-_DMS_STATUS_CACHE: Dict[str, Any] = {"data": None, "timestamp": 0.0}
-_DMS_STATUS_LOCK = threading.Lock()
-
-_DMS_RESOURCES_CACHE: Dict[str, Any] = {"data": None, "timestamp": 0.0}
-_DMS_RESOURCES_LOCK = threading.Lock()
-
-_DMS_PEERS_CACHE: Dict[str, Any] = {"data": None, "timestamp": 0.0}
-_DMS_PEERS_LOCK = threading.Lock()
-
-_ANSI_RE = re.compile(r"\u001b\[[0-9;]*m")
-_PRIVATE_IPV4 = re.compile(r"/ip4/(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)")
-
-def _read_cache(cache: Dict[str, Any], lock: threading.Lock, ttl: float) -> Any:
-    now = monotonic()
-    with lock:
-        data = cache.get("data")
-        ts = cache.get("timestamp", 0.0)
-        if data is not None and now - ts < ttl:
-            return deepcopy(data)
-    return None
-
-def _write_cache(cache: Dict[str, Any], lock: threading.Lock, value: Any) -> None:
-    with lock:
-        cache["data"] = deepcopy(value)
-        cache["timestamp"] = monotonic()
-
-def _clear_cache(cache: Dict[str, Any], lock: threading.Lock) -> None:
-    with lock:
-        cache["data"] = None
-        cache["timestamp"] = 0.0
-
-def invalidate_dms_status_cache() -> None:
-    _clear_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK)
-
-def invalidate_dms_resource_cache() -> None:
-    _clear_cache(_DMS_RESOURCES_CACHE, _DMS_RESOURCES_LOCK)
-
-def invalidate_dms_peer_cache() -> None:
-    _clear_cache(_DMS_PEERS_CACHE, _DMS_PEERS_LOCK)
-
-def invalidate_all_dms_caches() -> None:
-    invalidate_dms_status_cache()
-    invalidate_dms_resource_cache()
-    invalidate_dms_peer_cache()
+# -------------------------
+# Internal helpers
+# -------------------------
 
 def _get_keyctl_passphrase(key_name: str = "dms_passphrase") -> Optional[str]:
+    """
+    Fetch a passphrase from the kernel keyring using keyctl.
+    Returns the passphrase string or None if unavailable.
+    """
     try:
         key_id_cp = subprocess.run(
             ["keyctl", "request", "user", key_name],
@@ -71,140 +28,90 @@ def _get_keyctl_passphrase(key_name: str = "dms_passphrase") -> Optional[str]:
             text=True,
             check=True,
         )
-    except FileNotFoundError:
-        logger.warning("keyctl is not available; cannot load %s", key_name)
-        return None
-    except subprocess.CalledProcessError as exc:
-        logger.debug("keyctl request for %s failed: %s", key_name, exc.stderr or exc)
-        return None
+        key_id = key_id_cp.stdout.strip()
+        if not key_id:
+            return None
 
-    key_id = key_id_cp.stdout.strip()
-    if not key_id:
-        logger.debug("keyctl returned no id for key %s", key_name)
-        return None
-
-    try:
         pass_cp = subprocess.run(
             ["keyctl", "pipe", key_id],
             capture_output=True,
             text=True,
             check=True,
         )
-    except subprocess.CalledProcessError as exc:
-        logger.debug("keyctl pipe for %s failed: %s", key_name, exc.stderr or exc)
+        return pass_cp.stdout.strip() or None
+    except subprocess.CalledProcessError:
         return None
 
-    passphrase = pass_cp.stdout.strip()
-    if passphrase:
-        return passphrase
 
-    logger.debug("keyctl pipe returned empty passphrase for %s", key_name)
-    return None
-
-def _merge_env(user_env: Optional[Dict[str, str]]) -> Dict[str, str]:
-    env = os.environ.copy()
-    if user_env:
-        env.update(user_env)
-    passphrase = _get_keyctl_passphrase()
-    if passphrase and not env.get("DMS_PASSPHRASE"):
-        env["DMS_PASSPHRASE"] = passphrase
-    return env
+# -------------------------
+# Public functions
+# -------------------------
 
 def run_dms_command_with_passphrase(cmd: List[str], **kwargs) -> subprocess.CompletedProcess:
-    """Run a command ensuring the DMS passphrase is available in the environment."""
-    env = _merge_env(kwargs.pop("env", None))
-    kwargs.setdefault("text", True)
-    logger.debug("Running DMS command: %s", " ".join(cmd))
-    return subprocess.run(cmd, env=env, **kwargs)
+    """
+    Run a DMS command with the DMS_PASSPHRASE environment variable set.
+    The passphrase is fetched from the keyring only when needed and never stored.
+    Behavior preserved: merges DMS_PASSPHRASE into env if available.
+    """
+    env = os.environ.copy()
+    passphrase = _get_keyctl_passphrase("dms_passphrase")
+    if passphrase:
+        env["DMS_PASSPHRASE"] = passphrase
 
-def _normalize_listen_addrs(value: Iterable[str] | str | None) -> List[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        trimmed = value.strip()
-        if not trimmed:
-            return []
-        if trimmed.startswith("[") and trimmed.endswith("]"):
-            try:
-                data = json.loads(trimmed)
-                return [str(item).strip() for item in data if str(item).strip()]
-            except Exception:
-                pass
-        parts = [part.strip() for part in re.split(r"[,\s]+", trimmed) if part.strip()]
-        return parts
-    if isinstance(value, Iterable):
-        result: List[str] = []
-        for item in value:
-            s = str(item).strip()
-            if s:
-                result.append(s)
-        return result
-    return []
+    # ensure env goes through but otherwise don't change caller's kwargs
+    kwargs = dict(kwargs)
+    kwargs["env"] = env
+    return subprocess.run(cmd, **kwargs)
 
-def categorize_listen_addresses(listen_addrs: Iterable[str] | str | None) -> Tuple[List[str], List[str], List[str]]:
-    """Split listen addresses into local, public, and relay buckets."""
-    addresses = _normalize_listen_addrs(listen_addrs)
-    local: List[str] = []
-    public: List[str] = []
-    relay: List[str] = []
 
-    for addr in addresses:
-        lower = addr.lower()
-        if "/p2p-circuit" in lower or "/relay" in lower or "/circuit/" in lower:
-            relay.append(addr)
-        elif _PRIVATE_IPV4.search(addr) or "/ip6/::1" in lower:
-            local.append(addr)
-        else:
-            public.append(addr)
+def display_peer_info(peer_info: Optional[Dict[str, Any]], Colors) -> None:
+    """Display formatted peer information (output format preserved)."""
+    if not peer_info:
+        print(f"\n{Colors.RED}Error: Could not retrieve peer information{Colors.NC}")
+        return
 
-    return local, public, relay
+    print("\n=== Self Peer Information ===")
+    print(f"Peer ID: {Colors.CYAN}{peer_info['peer_id']}{Colors.NC}")
+    print(f"Context: {Colors.YELLOW}{peer_info['context']}{Colors.NC}")
+    print(f"DID: {Colors.YELLOW}{peer_info['did']}{Colors.NC}\n")
 
-def _run_actor_command(endpoint: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
-    argv = ["nunet", "-c", "dms", "actor", "cmd", endpoint]
-    return run_dms_command_with_passphrase(
-        argv,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    print("Network Addresses:")
 
-def _call_actor_json(endpoint: str, *, timeout: int = 30) -> Optional[Any]:
-    cp = _run_actor_command(endpoint, timeout=timeout)
-    if cp.returncode != 0:
-        logger.debug(
-            "Command %s failed rc=%s: %s",
-            endpoint,
-            cp.returncode,
-            cp.stderr or cp.stdout or "",
-        )
-        return None
+    address_types: Iterable[Tuple[str, Iterable[str], str]] = [
+        ("Local", peer_info["local_addrs"], Colors.CYAN),
+        ("Public", peer_info["public_addrs"], Colors.GREEN),
+        ("Relay", peer_info["relay_addrs"], Colors.YELLOW),
+    ]
 
-    stdout = (cp.stdout or "").strip()
-    if not stdout:
-        return None
+    for name, addresses, color in address_types:
+        print(f"{color}{name}:{Colors.NC}")
+        found = False
+        for addr in addresses:
+            print(f"  {addr}")
+            found = True
+        if not found:
+            print("  None")
+        print()
 
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        logger.warning("Invalid JSON from %s: %s", endpoint, exc)
-        return None
+    print("Connection Summary:")
+    if peer_info["is_relayed"]:
+        print("• Using relay for all connections")
+    else:
+        if peer_info["public_addrs"]:
+            print(f"• {Colors.GREEN}Direct public connection available{Colors.NC}")
+        if peer_info["local_addrs"]:
+            print(f"• {Colors.CYAN}Local network access available{Colors.NC}")
+        if peer_info["relay_addrs"]:
+            print(f"• {Colors.YELLOW}Relay connections available as backup{Colors.NC}")
+    print()
 
-def _extract_version(stdout: str) -> Optional[str]:
-    for line in (stdout or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("version"):
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                return parts[1].strip()
-            tokens = line.split()
-            if tokens:
-                return tokens[-1]
-    return None
 
 def get_dms_status_info() -> Dict[str, Any]:
-    """Return the current high-level DMS status information."""
+    """
+    Returns a dict with the current DMS status, peer info, etc.
+    Keys preserved:
+      dms_status, dms_version, dms_running, dms_context, dms_did, dms_peer_id, dms_is_relayed
+    """
     status: Dict[str, Any] = {
         "dms_status": "Unknown",
         "dms_version": "Unknown",
@@ -215,203 +122,131 @@ def get_dms_status_info() -> Dict[str, Any]:
         "dms_is_relayed": None,
     }
 
+    # -- DMS version
     try:
-        version_cp = subprocess.run(
+        version_result = subprocess.run(
             ["nunet", "version"],
             capture_output=True,
             text=True,
-            check=False,
+            check=True,
         )
-    except FileNotFoundError:
-        logger.warning("nunet CLI not found while checking DMS version")
-        return status
+        for line in version_result.stdout.splitlines():
+            if line.startswith("Version:"):
+                status["dms_version"] = line.split()[1]
+                status["dms_status"] = "Installed"
+                break
+    except Exception:
+        pass  # keep Unknown/Not Installed states
 
-    if version_cp.returncode == 0:
-        version = _extract_version(version_cp.stdout or "")
-        if version:
-            status["dms_version"] = version
-        status["dms_status"] = "Installed"
-    else:
-        logger.debug(
-            "nunet version failed rc=%s: %s",
-            version_cp.returncode,
-            version_cp.stderr or version_cp.stdout or "",
+    # -- Peer info + DID
+    try:
+        result = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        status["dms_status"] = "Not Installed"
-
-    peer_data = _call_actor_json("/dms/node/peers/self")
-    if peer_data:
+        peer_info = json.loads(result.stdout)
         status["dms_running"] = "Running"
-        status["dms_peer_id"] = peer_data.get("id") or peer_data.get("peer_id") or "Unknown"
-        status["dms_context"] = peer_data.get("context") or "dms"
-        local_addrs, public_addrs, relay_addrs = categorize_listen_addresses(peer_data.get("listen_addr"))
-        status["dms_is_relayed"] = bool(relay_addrs and not public_addrs)
+        status["dms_peer_id"] = peer_info.get("id", "Unknown")
+        status["dms_context"] = "dms"
 
-        did_cp = run_dms_command_with_passphrase(
+        did_result = run_dms_command_with_passphrase(
             ["nunet", "key", "did", "dms"],
             capture_output=True,
-            check=False,
+            text=True,
+            check=True,
         )
-        if did_cp.returncode == 0 and did_cp.stdout:
-            status["dms_did"] = did_cp.stdout.strip()
-        else:
-            logger.debug(
-                "nunet key did dms failed rc=%s: %s",
-                did_cp.returncode,
-                did_cp.stderr or did_cp.stdout or "",
-            )
-    else:
-        logger.debug("DMS peer info unavailable; service may not be running")
+        status["dms_did"] = did_result.stdout.strip()
+    except Exception:
+        status["dms_running"] = "Not Running"
 
     return status
 
-def _bytes_to_gb(value: int, precision: int = 2) -> float:
-    return round(value / (1024 ** 3), precision)
+
+def _bytes_to_gb(b: int, precision: int = 2) -> float:
+    return round(b / (1024 ** 3), precision)
+
 
 def _fmt_resources(resources_json: Dict[str, Any]) -> str:
-    resources = resources_json.get("Resources") or resources_json
-
-    def _safe_int(val: Any) -> int:
-        try:
-            return int(val)
-        except (TypeError, ValueError):
-            return 0
-
-    cores = resources.get("cpu", {}).get("cores")
-    ram_bytes = _safe_int(resources.get("ram", {}).get("size"))
-    disk_bytes = _safe_int(resources.get("disk", {}).get("size"))
-
-    cores_display = cores if cores not in (None, "") else "N/A"
+    resources = resources_json.get("Resources", {})
+    cpu_cores = resources.get("cpu", {}).get("cores", "N/A")
+    ram_bytes = int(resources.get("ram", {}).get("size", 0) or 0)
+    disk_bytes = int(resources.get("disk", {}).get("size", 0) or 0)
     ram_gb = _bytes_to_gb(ram_bytes)
     disk_gb = _bytes_to_gb(disk_bytes)
+    return f"Cores: {cpu_cores}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
 
-    return f"Cores: {cores_display}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
 
 def get_dms_resource_info() -> Dict[str, str]:
-    """Return onboarding and resource allocation information."""
-    info: Dict[str, str] = {
-        "onboarding_status": "Unknown",
-        "free_resources": "Unknown",
-        "allocated_resources": "Unknown",
-        "onboarded_resources": "Unknown",
-    }
+    """
+    Returns onboarding and resource info.
+    Keys preserved:
+      onboarding_status, free_resources, allocated_resources, onboarded_resources
+    Values and color usage preserved.
+    """
+    info: Dict[str, str] = {}
 
-    onboarding = _call_actor_json("/dms/node/onboarding/status")
+    # --- Onboarding status ---
     onboarded = False
-    if onboarding is not None:
-        onboarded = bool(onboarding.get("onboarded", False))
-        info["onboarding_status"] = "ONBOARDED" if onboarded else "NOT ONBOARDED"
-    else:
-        info["onboarding_status"] = "Unknown"
-
-    if not onboarded:
-        placeholder = "N/A (not onboarded)"
-        info["free_resources"] = placeholder
-        info["allocated_resources"] = placeholder
-        info["onboarded_resources"] = placeholder
-        return info
-
-    def _load_resource(endpoint: str) -> str:
-        payload = _call_actor_json(endpoint)
-        if payload is None:
-            return "Unknown"
-        try:
-            return _fmt_resources(payload)
-        except Exception as exc:  # defensive: malformed payloads
-            logger.debug("Unable to format %s payload: %s", endpoint, exc)
-            return "Unknown"
-
-    info["free_resources"] = _load_resource("/dms/node/resources/free")
-    info["allocated_resources"] = _load_resource("/dms/node/resources/allocated")
-    info["onboarded_resources"] = _load_resource("/dms/node/resources/onboarded")
-    return info
-
-def get_cached_dms_status_info(
-    ttl: float = _CACHE_TTL_DEFAULT,
-    *,
-    force_refresh: bool = False,
-) -> Dict[str, Any]:
-    if not force_refresh:
-        cached = _read_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, ttl)
-        if cached is not None:
-            return cached
-    info = get_dms_status_info()
-    _write_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, info)
-    return deepcopy(info)
-
-def get_cached_dms_resource_info(
-    ttl: float = _CACHE_TTL_DEFAULT,
-    *,
-    force_refresh: bool = False,
-) -> Dict[str, str]:
-    if not force_refresh:
-        cached = _read_cache(_DMS_RESOURCES_CACHE, _DMS_RESOURCES_LOCK, ttl)
-        if cached is not None:
-            return cached
-    info = get_dms_resource_info()
-    _write_cache(_DMS_RESOURCES_CACHE, _DMS_RESOURCES_LOCK, info)
-    return deepcopy(info)
-
-def _fetch_peer_snapshot() -> Dict[str, Any]:
-    cp = _run_actor_command("/dms/node/peers/list")
-    raw_output = cp.stdout or ""
-
-    if cp.returncode != 0:
-        logger.debug(
-            "peers/list failed rc=%s: %s",
-            cp.returncode,
-            cp.stderr or raw_output or "",
-        )
-        return {"peers": [], "raw": raw_output}
-
-    clean_output = _ANSI_RE.sub("", raw_output)
-    peers: List[str] = []
-
     try:
-        payload = json.loads(clean_output)
-    except json.JSONDecodeError:
-        payload = None
+        onboarding_result = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/onboarding/status"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        onboarding_json = json.loads(onboarding_result.stdout)
+        onboarded = bool(onboarding_json.get("onboarded", False))
+        info["onboarding_status"] = (
+            f"{Colors.GREEN}ONBOARDED{Colors.NC}" if onboarded else f"{Colors.RED}NOT ONBOARDED{Colors.NC}"
+        )
+    except Exception:
+        info["onboarding_status"] = f"{Colors.RED}Unknown (error){Colors.NC}"
 
-    if isinstance(payload, list):
-        peers = [str(entry).strip() for entry in payload if str(entry).strip()]
-    elif isinstance(payload, dict):
-        for key in ("Peers", "peers"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                peers = [str(entry).strip() for entry in value if str(entry).strip()]
-                break
+    # --- Free resources ---
+    if onboarded:
+        try:
+            resources_result = run_dms_command_with_passphrase(
+                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/resources/free"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            info["free_resources"] = _fmt_resources(json.loads(resources_result.stdout))
+        except Exception:
+            info["free_resources"] = "Unknown"
+    else:
+        info["free_resources"] = f"{Colors.RED}N/A (not onboarded){Colors.NC}"
 
-    if not peers:
-        peers = [line.strip() for line in clean_output.splitlines() if line.strip()]
+    # --- Allocated resources ---
+    if onboarded:
+        try:
+            allocated_result = run_dms_command_with_passphrase(
+                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/resources/allocated"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            info["allocated_resources"] = _fmt_resources(json.loads(allocated_result.stdout))
+        except Exception:
+            info["allocated_resources"] = "Unknown"
+    else:
+        info["allocated_resources"] = f"{Colors.RED}N/A (not onboarded){Colors.NC}"
 
-    return {"peers": peers, "raw": raw_output}
+    # --- Onboarded resources ---
+    if onboarded:
+        try:
+            onboarded_result = run_dms_command_with_passphrase(
+                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/resources/onboarded"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            info["onboarded_resources"] = _fmt_resources(json.loads(onboarded_result.stdout))
+        except Exception:
+            info["onboarded_resources"] = "Unknown"
+    else:
+        info["onboarded_resources"] = f"{Colors.RED}N/A (not onboarded){Colors.NC}"
 
-def _get_cached_peer_snapshot(ttl: float, force_refresh: bool = False) -> Dict[str, Any]:
-    if not force_refresh:
-        cached = _read_cache(_DMS_PEERS_CACHE, _DMS_PEERS_LOCK, ttl)
-        if cached is not None:
-            if isinstance(cached, list):  # legacy cache shape
-                snapshot = {"peers": cached, "raw": ""}
-                _write_cache(_DMS_PEERS_CACHE, _DMS_PEERS_LOCK, snapshot)
-                return snapshot
-            return cached
-
-    snapshot = _fetch_peer_snapshot()
-    _write_cache(_DMS_PEERS_CACHE, _DMS_PEERS_LOCK, snapshot)
-    return snapshot
-
-def get_cached_dms_peer_list(
-    ttl: float = _CACHE_TTL_DEFAULT,
-    *,
-    force_refresh: bool = False,
-) -> List[str]:
-    snapshot = _get_cached_peer_snapshot(ttl, force_refresh=force_refresh)
-    return deepcopy(snapshot.get("peers", []))
-
-def get_cached_dms_peer_raw(
-    ttl: float = _CACHE_TTL_DEFAULT,
-    *,
-    force_refresh: bool = False,
-) -> str:
-    snapshot = _get_cached_peer_snapshot(ttl, force_refresh=force_refresh)
-    return snapshot.get("raw", "")
+    return info
