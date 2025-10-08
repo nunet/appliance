@@ -1,11 +1,10 @@
-﻿import json, subprocess, os
+import json, subprocess, os
 from modules.dms_manager import DMSManager
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, WebSocket
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from ..utils.pty_bridge import run_pty_ws
-from backend.modules.logging_config import get_logger
 from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from ..schemas import (
@@ -26,7 +25,6 @@ from modules.ensemble_utils import (
 
 
 router = APIRouter()
-logger = get_logger(__name__)
 
 def _metadata_without_peer_requirement(meta: dict | None) -> dict | None:
     """
@@ -57,7 +55,7 @@ def _autofill_local_peer(values: dict) -> dict:
             if local_peer:
                 v["peer_id"] = local_peer
         except Exception:
-            # Swallowâ€”validation will catch if still required
+            # Swallow—validation will catch if still required
             pass
     return v
 
@@ -702,7 +700,7 @@ def render_template(
         values = dict(values_in)
         meta_for_validation = meta
 
-    # Validate after weâ€™ve adjusted for the type
+    # Validate after we’ve adjusted for the type
     if meta_for_validation:
         ok, errs = validate_form_data(meta_for_validation, values)
         if not ok:
@@ -808,5 +806,3 @@ def deploy_from_template(
         "saved_path": saved_path or str(deploy_path),
         "message": res.get("message", "")
     }
-
-
