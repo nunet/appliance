@@ -44,6 +44,7 @@ update-permalinks:
     PERMALINK_DEPLOY_SERVER: d.nunet.io
     PERMALINK_DEPLOY_USER: gitlab-runner
     PERMALINK_DEPLOY_FOLDER: /opt/public
+    PERMALINK_BUILD_CHANNELS: "main:latest release:stable"
   dependencies:
     - build:x86
     - build:arm64
@@ -55,18 +56,32 @@ update-permalinks:
   script:
     - echo $PROD_SSH_KEY_B64 | base64 -d > prod_ssh_key && chmod 600 prod_ssh_key && ls -latrh prod_ssh_key
     - |
+      for build_channel_cfg in $PERMALINK_BUILD_CHANNELS; do
+        target_branch=$(cut -d ':' -f 1 <<<"$build_channel_cfg")
+        build_channel_candidate=$(cut -d ':' -f 2 <<<"$build_channel_cfg")
+        if [[ "$target_branch" == "$CI_COMMIT_REF_NAME" ]]; then
+          build_channel="$build_channel_candidate"
+        fi
+      done
+      if [[ "$build_channel" == "" ]]; then
+        echo no build channel for branch $CI_COMMIT_REF_NAME
+        exit 1
+      fi
+      echo using build channel $build_channel
+    - |
       shopt -s globstar nullglob
       cd dist
       mkdir -p deploy
       for file in *.deb; do
         echo $file
+
         if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
           type=${BASH_REMATCH[1]}
           version=${BASH_REMATCH[2]}
           arch=${BASH_REMATCH[3]}
 
-          new_name="nunet-appliance-$type-$version-$arch.deb"
-          new_versionless_name="nunet-appliance-$type-latest-$arch.deb"
+          new_name="nunet-appliance-$type-$version-$arch-$build_channel.deb"
+          new_versionless_name="nunet-appliance-$type-$arch-$build_channel.deb"
 
           cp $file deploy/$new_name
           cp $file deploy/$new_versionless_name
