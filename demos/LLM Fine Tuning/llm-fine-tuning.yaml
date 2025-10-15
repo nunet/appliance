@@ -1,0 +1,50 @@
+version: "V1"
+
+allocations:
+  llm-finetune:
+    type: service
+    executor: docker
+    resources:
+      cpu:
+        cores: 3
+      ram:
+        size: 15
+      disk:
+        size: 15
+      gpus:
+        - vendor: NVIDIA
+    execution:
+      type: docker
+      image: huggingface/transformers-pytorch-gpu:latest
+      cmd: ["bash","-c","echo starting && date && python3 /LLM/ft-llama3.2-1b-dms-readme-alpaca-packing.py && echo script-finished && date && tail -f /dev/null"]
+      environment:
+       -  HF_TOKEN=<HuggingFace_Auth_Token>
+    # volume:
+    #  -  type: glusterfs
+    #     name: llmtest
+    #     mount_destination: "/home"
+    #     servers: ["<IP>"]
+    #     client_private_key: /home/ubuntu/ensembles/glusterfs_certificates/glusterfs.key
+    #     client_pem: /home/ubuntu/ensembles/glusterfs_certificates/glusterfs.pem
+    #     client_ca: /home/ubuntu/ensembles/glusterfs_certificates/glusterfs.ca
+    # keys:
+    #   - type: ssh
+    #     file: "${file:/home/ubuntu/keys/appliancekey.pub}"
+    provision:
+      - setup
+
+scripts:
+  setup: "${file:/home/ubuntu/ensembles/finetune-setup.sh}"
+
+nodes:
+  node1:
+    allocations:
+      - llm-finetune
+    # ports:
+    #   - public: 18100
+    #     private: 22
+    #     allocation: llm-finetune 
+    peer: {{peer_id}}
+
+# subnet:
+#   join: true
