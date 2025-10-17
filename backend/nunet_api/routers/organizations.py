@@ -16,7 +16,10 @@ from modules.org_utils import (
     load_known_organizations,
     get_joined_organizations_with_details,
 )
-from modules.dms_utils import get_dms_status_info, get_dms_resource_info
+from modules.dms_utils import (
+    get_cached_dms_resource_info,
+    get_cached_dms_status_info,
+)
 
 router = APIRouter()
 
@@ -162,7 +165,7 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
     """
     runtime: Dict[str, Any] = {}
 
-    dms_info = get_dms_status_info() or {}
+    dms_info = get_cached_dms_status_info() or {}
     runtime["dms_status"] = dms_info
 
     try:
@@ -178,7 +181,7 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
         runtime["peer_info"] = {}
 
     try:
-        res_info = get_dms_resource_info() or {}
+        res_info = get_cached_dms_resource_info() or {}
         onboarding_status = res_info.get("onboarding_status", "Unknown")
         onboarded_resources = res_info.get("onboarded_resources", "Unknown")
         if isinstance(onboarded_resources, str):
@@ -255,12 +258,17 @@ def _compute_step_states(current_step: str) -> dict:
     }
 
 
-def _get_onboarding_ui_state_and_message(onboarding_status: dict) -> tuple[str, str]:
+def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> tuple[str, str]:
+    if not onboarding_status:
+        return ("init", "Onboarding has not started yet.")
     step = onboarding_status.get("step")
     api_status = onboarding_status.get("api_status")
     rejection_reason = onboarding_status.get("rejection_reason", "")
     error = onboarding_status.get("error")
-    org_name = onboarding_status.get("org_data", {}).get("name", "the organization")
+    org_data = onboarding_status.get("org_data") or {}
+    if not isinstance(org_data, dict):
+        org_data = {}
+    org_name = org_data.get("name", "the organization")
 
     if step == "collect_join_data" and onboarding_status.get("form_data"):
         return ("data_ready", "Your join data is ready. Preparing to submit to the organization's onboarding service...")
@@ -310,6 +318,7 @@ def _redact_state_for_ui(state: dict) -> dict:
 
 
 def _enrich_status_for_ui(state: dict) -> dict:
+    state = state or {}
     current_step = _resolve_current_step_from_state(state)
     timeline = _compute_step_states(current_step)
     ui_state, ui_message = _get_onboarding_ui_state_and_message(state)
@@ -362,7 +371,7 @@ def steps():
 
 @router.get("/status")
 def status(mgr: OnboardingManager = Depends(_mgr)):
-    state = mgr.get_onboarding_status()
+    state = mgr.get_onboarding_status() or {}
     return _enrich_status_for_ui(state)
 
 
@@ -427,7 +436,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     if not org_data.get("did"):
         raise HTTPException(status_code=400, detail="No organization selected. Call /organizations/select or include org_did.")
 
-    dms_info = get_dms_status_info() or {}
+    dms_info = get_cached_dms_status_info() or {}
     dms_did = dms_info.get("dms_did")
     dms_peer_id = dms_info.get("dms_peer_id")
     if not dms_did or not dms_peer_id:

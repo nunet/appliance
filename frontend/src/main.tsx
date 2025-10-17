@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 import ReactDOM from "react-dom/client";
 import {
   HashRouter,
@@ -18,7 +18,7 @@ import { Toaster } from "./components/ui/sonner";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { AppSidebar } from "./components/app-sidebar";
 import { SiteHeader } from "./components/site-header";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import DeploymentDetailsPage from "./pages/Deployment";
 import Ensembles from "./pages/Ensembles";
 import Wizzard from "./pages/Wizzard";
@@ -29,10 +29,8 @@ import PaymentsPage from "@/components/payments/PaymentsPage";
 import LoginPage from "./pages/Login";
 import SetupAdmin from "./pages/SetupAdmin";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { queryClient } from "./query-client";
 
-const queryClient = new QueryClient();
-
-// Layout wrapper
 function Layout() {
   return (
     <SidebarProvider
@@ -52,7 +50,6 @@ function Layout() {
   );
 }
 
-// Guard that redirects if no mode is chosen
 // eslint-disable-next-line react-refresh/only-export-components
 function ProtectedRoutes() {
   const { mode } = useAppMode();

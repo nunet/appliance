@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   AuthResponse,
@@ -6,7 +6,15 @@ import {
   login as requestLogin,
   setupAdminPassword,
 } from "../api/auth";
-import { setAuthToken, setUnauthorizedHandler } from "../api/api";
+import {
+  setAuthToken,
+  setUnauthorizedHandler,
+  allInfo,
+  allSysInfo,
+  getDockerContainer,
+  getConnectedPeers,
+} from "../api/api";
+import { queryClient } from "../query-client";
 
 interface AuthContextValue {
   loading: boolean;
@@ -57,6 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [username, setUsername] = useState("admin");
+  const hasPrefetched = useRef(false);
 
   const logout = useCallback(() => {
     setAuthToken(null);
@@ -130,6 +139,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const id = window.setTimeout(() => logout(), delta);
     return () => window.clearTimeout(id);
   }, [token, expiresAt, logout]);
+
+  useEffect(() => {
+    if (!token) {
+      hasPrefetched.current = false;
+      return;
+    }
+
+    if (hasPrefetched.current) {
+      return;
+    }
+
+    hasPrefetched.current = true;
+
+    queryClient.prefetchQuery({ queryKey: ["apiData"], queryFn: allInfo }).catch(() => {});
+    queryClient.prefetchQuery({ queryKey: ["sysInfo"], queryFn: allSysInfo }).catch(() => {});
+    queryClient.prefetchQuery({ queryKey: ["docker_containers"], queryFn: getDockerContainer }).catch(() => {});
+    queryClient.prefetchQuery({ queryKey: ["connected-peers-main"], queryFn: getConnectedPeers }).catch(() => {});
+  }, [token]);
 
   const login = useCallback(
     async (password: string) => {

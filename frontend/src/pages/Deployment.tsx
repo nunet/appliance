@@ -1,7 +1,7 @@
 "use client";
 
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery, useIsFetching } from "@tanstack/react-query";
+import { useQuery, useIsFetching, useQueryClient } from "@tanstack/react-query";
 import {
   getDeployments,
   getDeploymentDetails,
@@ -34,7 +34,7 @@ import { toast } from "sonner";
 import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
 import { LeftTruncatedText } from "../components/ui/LeftTruncatedText";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ManifestPanel } from "../components/deployments/ManifestPanel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../components/ui/tooltip";
 import { RefreshButton } from "../components/ui/RefreshButton";
@@ -55,11 +55,13 @@ export default function DeploymentDetailsPage() {
       setIsShuttingDown(true);
       const res = await shutdownDeployment(deploymentId);
       toast.success(res.status, { description: res.message });
+      return true;
     } catch (error: any) {
       toast.error("Shutdown Failed", {
         description:
           error?.response?.data?.message || "An unexpected error occurred",
       });
+      return false;
     } finally {
       setIsShuttingDown(false);
     }
@@ -118,6 +120,7 @@ export default function DeploymentDetailsPage() {
   );
 }
 
+
 // ?? Deployment Info
 function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
@@ -127,6 +130,8 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [fileMeta, setFileMeta] = useState<{ name?: string; path?: string; relative?: string } | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileCandidates, setFileCandidates] = useState<string[]>([]);
+  const shutdownRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryClient = useQueryClient();
 
   const {
     data: details,
@@ -157,7 +162,7 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const allocationValues = Object.values(manifestData?.allocations ?? {}) as Array<Record<string, any>>;
   const primaryAllocation = allocationValues[0] ?? {};
 
-  const statusText = pickString(deployment.status, details?.status?.deployment_status) ?? "N/A";
+  const statusText = pickString(details?.status?.deployment_status, deployment.status) ?? "N/A";
   const typeText = pickString(
     deployment.type,
     primaryAllocation?.type,
@@ -201,6 +206,27 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
       setFileCandidates([]);
     }
   };
+
+  const scheduleStatusRefresh = () => {
+    if (shutdownRefreshTimeoutRef.current) {
+      clearTimeout(shutdownRefreshTimeoutRef.current);
+    }
+
+    shutdownRefreshTimeoutRef.current = setTimeout(() => {
+      void refetch().finally(() => {
+        void queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      });
+      shutdownRefreshTimeoutRef.current = null;
+    }, 10_000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (shutdownRefreshTimeoutRef.current) {
+        clearTimeout(shutdownRefreshTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleViewFile = async () => {
     if (!hasEnsembleFile) {
@@ -326,8 +352,14 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
               <Button
                 onClick={async () => {
                   setIsShuttingDown(true);
-                  await handleShutdown(deployment.id);
-                  setIsShuttingDown(false);
+                  try {
+                    const didShutdown = await handleShutdown(deployment.id);
+                    if (didShutdown) {
+                      scheduleStatusRefresh();
+                    }
+                  } finally {
+                    setIsShuttingDown(false);
+                  }
                 }}
                 className="block bg-red-500 hover:bg-red-600 text-white mt-3 sm:mt-0 flex flex-row gap-2"
                 disabled={isShuttingDown}
@@ -560,7 +592,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     isFetching,
   } = useQuery({
     queryKey: ["deployment-logs", deploymentId, allocKey],
-    queryFn: () => getDeploymentLogs(deploymentId, alloc ?? undefined),
+    queryFn: () => getDeploymentLogs(deploymentId, alloc ?? null),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
@@ -592,21 +624,79 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
 
   function parseLogs(logMessage: string) {
     if (!logMessage) return { stdout: "", stderr: "", dms: "" };
-    const stdout =
-      logMessage
-        .split("=== STDERR ===")[0]
-        ?.split("=== STDOUT ===")[1]
-        ?.trim() || "";
-    const stderr =
-      logMessage
-        .split("=== DMS LOG ENTRIES ===")[0]
-        ?.split("=== STDERR ===")[1]
-        ?.trim() || "";
-    const dms = logMessage.split("=== DMS LOG ENTRIES ===")[1]?.trim() || "";
-    return { stdout, stderr, dms };
+
+    const extractSection = (text: string, start: string, end: string): string => {
+      const startSplit = text.split(start);
+      if (startSplit.length < 2) return "";
+      const section = end ? startSplit[1].split(end)[0] : startSplit[1];
+      return section?.trim() || "";
+    };
+
+    const stripMetadata = (value: string, type: "std" | "dms"): string => {
+      if (!value) return "";
+      const metadataPrefixes =
+        type === "dms"
+          ? ["Source:", "Lines:", "Return Code:", "[returncode]", "[stderr]"]
+          : [
+              "Path:",
+              "Tail Lines:",
+              "Readable:",
+              "Exists:",
+              "Size:",
+              "Updated:",
+              "Error:",
+              "(error:",
+              "No log file found.",
+            ];
+
+      const filtered = value
+        .split(/\r?\n/)
+        .map((line) => line.trimEnd())
+        .filter((line) => {
+          if (!line) return false;
+          return !metadataPrefixes.some((prefix) => line.startsWith(prefix));
+        });
+
+      return filtered.join("\n").trim();
+    };
+
+    const stdoutRaw = extractSection(logMessage, "=== STDOUT ===", "=== STDERR ===");
+    const stderrRaw = extractSection(logMessage, "=== STDERR ===", "=== DMS LOG ENTRIES ===");
+    const dmsRaw = extractSection(logMessage, "=== DMS LOG ENTRIES ===", "");
+
+    return {
+      stdout: stripMetadata(stdoutRaw, "std"),
+      stderr: stripMetadata(stderrRaw, "std"),
+      dms: stripMetadata(dmsRaw, "dms"),
+    };
   }
 
-  const { stdout, stderr, dms } = parseLogs(logsData?.message || "");
+  const parsedLogs = useMemo(() => {
+    if (!logsData) return { stdout: "", stderr: "", dms: "" };
+    if (
+      logsData.stdout !== undefined ||
+      logsData.stderr !== undefined ||
+      logsData.dms !== undefined
+    ) {
+      return {
+        stdout: logsData.stdout ?? "",
+        stderr: logsData.stderr ?? "",
+        dms: logsData.dms ?? "",
+      };
+    }
+    return parseLogs(logsData.message || "");
+  }, [logsData]);
+
+  const { stdout, stderr, dms } = parsedLogs;
+
+  const logSections = useMemo(
+    () => [
+      { key: "stdout", title: "STDOUT", color: "green", log: stdout },
+      { key: "stderr", title: "STDERR", color: "red", log: stderr },
+      { key: "dms", title: "DMS Logs", color: "blue", log: dms },
+    ],
+    [stdout, stderr, dms]
+  );
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4">
@@ -632,12 +722,14 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
           </div>
           <Separator className="my-2" />
 
-          {/* STDOUT */}
-          <LogSection title="STDOUT" log={stdout} color="green" />
-          {/* STDERR */}
-          <LogSection title="STDERR" log={stderr} color="red" />
-          {/* DMS */}
-          <LogSection title="DMS Logs" log={dms} color="blue" />
+          {logSections.map((section) => (
+            <LogSection
+              key={section.key}
+              title={section.title}
+              log={section.log}
+              color={section.color}
+            />
+          ))}
         </CardHeader>
       </Card>
     </div>
@@ -656,14 +748,13 @@ function LogSection({
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const isStandardStream = title === "STDOUT" || title === "STDERR";
   const rawLog = log ?? "";
   const normalizedLog = rawLog.trim();
-  const hasError = isStandardStream && /\(error:/i.test(normalizedLog);
-  const hasContent = normalizedLog.length > 0 && !hasError;
-  const friendlyPlaceholder = "No logs available for this section right now.";
-  const linesToRender = hasContent ? rawLog.split("\n") : [friendlyPlaceholder];
-
+  const hasContent = normalizedLog.length > 0;
+  const friendlyPlaceholder = "No logs available yet.";
+  const sanitizedLines = hasContent
+    ? rawLog.replace(/\r\n/g, "\n").split("\n")
+    : [friendlyPlaceholder];
 
   const LogBody = ({
     sizeClass,
@@ -737,7 +828,7 @@ function LogSection({
       </div>
       {hasContent ? (
         <>
-          <LogBody sizeClass="h-40" linesToRender={linesToRender} />
+          <LogBody sizeClass="h-40" linesToRender={sanitizedLines} />
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogContent className="!max-w-[95vw] !w-[95vw] max-h-[90vh] sm:!max-w-[95vw]">
               <DialogHeader>
@@ -746,7 +837,11 @@ function LogSection({
               <div className="flex justify-end mb-2">
                 <CopyButton text={log} className="text-xs" />
               </div>
-              <LogBody sizeClass="max-h-[70vh] min-h-[50vh]" showExpandButton={false} linesToRender={linesToRender} />
+              <LogBody
+                sizeClass="max-h-[70vh] min-h-[50vh]"
+                showExpandButton={false}
+                linesToRender={sanitizedLines}
+              />
             </DialogContent>
           </Dialog>
         </>
@@ -754,11 +849,10 @@ function LogSection({
         <LogBody
           sizeClass="h-40"
           showExpandButton={false}
-          linesToRender={linesToRender}
+          linesToRender={sanitizedLines}
           isPlaceholder
         />
       )}
     </>
   );
 }
-

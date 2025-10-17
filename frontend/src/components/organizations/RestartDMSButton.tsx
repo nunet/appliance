@@ -8,9 +8,11 @@ import { organizationsApi } from "../../api/organizations";
 function RestartDmsButton({
   qc,
   setStartOperation,
+  onAfterRestart,
 }: {
   qc: any;
   setStartOperation: (val: boolean) => void;
+  onAfterRestart?: () => void;
 }) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -20,10 +22,14 @@ function RestartDmsButton({
     try {
       await restartDms();
       setStartOperation(false);
+      onAfterRestart?.();
       toast.success("DMS is restarting");
-      organizationsApi.reset().then(() => {
-        qc.invalidateQueries({ queryKey: ["org-status"] });
-      });
+      try {
+        await organizationsApi.reset();
+      } catch (resetError) {
+        console.error("Failed to reset onboarding after restarting DMS", resetError);
+      }
+      await qc.invalidateQueries({ queryKey: ["org-status"] });
     } catch (err) {
       toast.error("Failed to restart DMS");
     } finally {

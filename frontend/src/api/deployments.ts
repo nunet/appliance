@@ -1,6 +1,41 @@
 import { api } from "./api";
 
 
+export interface FileLog {
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  size_bytes?: number | null;
+  mtime_iso?: string | null;
+  tail_lines?: number | null;
+  content?: string | null;
+  error?: string | null;
+}
+
+export interface AllocationLogsResponse {
+  dir?: string | null;
+  stdout: FileLog;
+  stderr: FileLog;
+}
+
+export interface DmsLogBundleResponse {
+  source?: string | null;
+  lines?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  returncode?: number | null;
+}
+
+export interface DeploymentLogsResponse {
+  status: string;
+  message: string;
+  stdout?: string | null;
+  stderr?: string | null;
+  dms?: string | null;
+  allocation?: AllocationLogsResponse | null;
+  dms_logs?: DmsLogBundleResponse | null;
+}
+
 // deployments
 export async function getDeployments() {
   const res = await api.get(`/ensemble/deployments`);
@@ -24,14 +59,14 @@ export async function getDeploymentFile(id) {
   return res.data;
 }
 
-export async function getDeploymentLogs(id, allocation = null) {
+export async function getDeploymentLogs(id, allocation: string | null = null): Promise<DeploymentLogsResponse> {
   const res = await api.get(`/ensemble/deployments/${id}/logs`, {
     params: allocation ? { allocation } : {},
   });
   return res.data;
 }
 
-export async function requestDeploymentLogs(id, allocation = null) {
+export async function requestDeploymentLogs(id, allocation: string | null = null) {
   const res = await api.post(`/ensemble/deployments/${id}/logs/request`, null, {
     params: allocation ? { allocation } : {},
   });

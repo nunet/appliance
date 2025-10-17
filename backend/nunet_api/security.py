@@ -10,6 +10,8 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from modules.path_constants import ADMIN_CREDENTIALS_PATH
+
 ADMIN_USERNAME = "admin"
 CREDENTIALS_ENV_KEY = "e4c7f92a1d8b3f6e0a9d7c4b2f1e8a6c5d0f3b9a7c2d6e1f0a8c4d7b3e9f2a6d"
 JWT_SECRET_ENV_KEY = "f9a2c3e7d54b8a1f0c69f4e2d8b1a7c6e0d4f8b5c2a7e9f3b6d1c4e8f0a2b7d9"
@@ -20,15 +22,11 @@ ALGORITHM = "HS256"
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
 def _credentials_path() -> Path:
     env_path = os.getenv(CREDENTIALS_ENV_KEY)
     if env_path:
         return Path(env_path).expanduser().resolve()
-    return (_repo_root() / "deploy" / "admin_credentials.json").resolve()
+    return ADMIN_CREDENTIALS_PATH.resolve()
 
 
 def load_credentials() -> Optional[Dict[str, Any]]:

@@ -125,11 +125,24 @@ export function OnboardingFlow({
 
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [forceOrgSelect, setForceOrgSelect] = useState(false);
+
+  const goToOrgSelect = () => {
+    setForceOrgSelect(true);
+    setStartOperation(false);
+  };
 
   const resetOnboarding = async () => {
-    await organizationsApi.reset();
+    const response = await organizationsApi.reset();
+    goToOrgSelect();
+    try {
+      const latestStatus = await organizationsApi.getStatus();
+      qc.setQueryData(["org-status"], latestStatus);
+    } catch (statusError) {
+      console.warn("Failed to refresh onboarding status after reset", statusError);
+    }
     await qc.invalidateQueries({ queryKey: ["org-status"] });
-    setStartOperation(false);
+    return response;
   };
 
   const handleCancelConfirm = async () => {
@@ -184,12 +197,16 @@ export function OnboardingFlow({
   });
 
   // --- UI flags ---
-  const showSelect = currentStep === "init" || currentStep === "select_org";
+  const showSelect =
+    forceOrgSelect ||
+    currentStep === "init" ||
+    currentStep === "select_org";
   const showForm =
-    currentStep === "collect_join_data" || currentStep === "submit_data";
+    !forceOrgSelect &&
+    (currentStep === "collect_join_data" || currentStep === "submit_data");
 
-  const showComplete = isComplete;
-  const canCancel = currentStep !== "init" && !isComplete;
+  const showComplete = !forceOrgSelect && isComplete;
+  const canCancel = !forceOrgSelect && currentStep !== "init" && !isComplete;
 
   return (
     <div className="space-y-4">
@@ -245,7 +262,9 @@ export function OnboardingFlow({
           </Dialog>
         </>
       )}
-      {currentStep !== "init" && currentStep !== "select_org" && (
+      {!forceOrgSelect &&
+        currentStep !== "init" &&
+        currentStep !== "select_org" && (
         <>
           <div className="text-muted-foreground text-sm mb-2">
             Joining {status?.raw?.org_data?.name ?? "organization"}
@@ -269,6 +288,7 @@ export function OnboardingFlow({
           disabled={selectMutation.isPending}
           onSelect={(did) => selectMutation.mutate(did)}
           setStartOperation={setStartOperation}
+          onBeginOnboarding={() => setForceOrgSelect(false)}
         />
       )}
 
@@ -311,12 +331,16 @@ export function OnboardingFlow({
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Onboarding is complete.
-            <RestartDmsButton setStartOperation={setStartOperation} qc={qc} />
+            <RestartDmsButton
+              setStartOperation={setStartOperation}
+              qc={qc}
+              onAfterRestart={goToOrgSelect}
+            />
           </CardContent>
         </Card>
       )}
 
-      {isRejected && (
+      {!forceOrgSelect && isRejected && (
         <Card className="border-red-300">
           <CardHeader>
             <div className="flex items-center gap-2">

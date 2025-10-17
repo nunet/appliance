@@ -8,13 +8,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import StreamingResponse
 
 from modules.ensemble_manager_v2 import EnsembleManagerV2
+from modules.path_constants import DMS_DEPLOYMENTS_LOGS, DMS_LOG_PATH
 from ..security import is_password_set, validate_token
 
 
 
 router = APIRouter()
-
-DMS_LOG_PATH = Path("/home/nunet/logs/nunet-dms.log")
 
 # ---------- auth helpers ----------
 
@@ -167,7 +166,7 @@ async def ws_ensemble_logs(ws: WebSocket, deployment_id: str):
             return
         allocation = allocs[0]
 
-    deployment_dir = Path(f"/home/nunet/nunet/deployments/{deployment_id}/{allocation}")
+    deployment_dir = DMS_DEPLOYMENTS_LOGS / deployment_id / allocation
     tails: List[asyncio.subprocess.Process] = []
 
     # choose which files to stream
@@ -266,7 +265,7 @@ async def sse_ensemble_logs(
             )
         allocation = allocs[0]
 
-    deployment_dir = Path(f"/home/nunet/nunet/deployments/{deployment_id}/{allocation}")
+    deployment_dir = DMS_DEPLOYMENTS_LOGS / deployment_id / allocation
     to_stream: List[tuple[str, Path]] = []
     if include in ("stdout", "both"):
         to_stream.append(("stdout", deployment_dir / "stdout.logs"))
