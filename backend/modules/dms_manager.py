@@ -1,554 +1,381 @@
 """
-DMS (Device Management Service) management module
+Device Management Service (DMS) management helpers.
 """
 
-from __future__ import annotations
-import os
 import json
+import logging
 import platform
-import re
 import subprocess
 import time
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, List
 from datetime import datetime
-from .utils import Colors, format_status
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 from .dms_utils import (
     run_dms_command_with_passphrase,
-    get_dms_status_info,
-    get_dms_resource_info,
+    categorize_listen_addresses,
 )
+from .path_constants import DMS_DEPLOYMENTS_LOGS
 
-# -------------------------
-# Constants & configuration
-# -------------------------
+logger = logging.getLogger(__name__)
 
 NUNET_SERVICE = "nunetdms"
-KEYRING_SERVICES: Tuple[str, str] = ("loadubuntukeyring", "loadnunetkeyring")
+ONBOARD_SCRIPT_NAME = "onboard-max.sh"
 
 DEFAULT_MENU_DIR = Path.home() / "menu"
 DEFAULT_SCRIPTS_DIR = DEFAULT_MENU_DIR / "scripts"
-
-CONFIGURE_DMS_SCRIPT = Path("/home/ubuntu/menu/scripts/configure-dms.sh")
-ONBOARD_SCRIPT_NAME = "onboard-max.sh"
 
 POLL_ATTEMPTS = 30
 POLL_DELAY_SEC = 1.0
 
 
 class DMSManager:
-    """
-    Facade for DMS control via 'nunet' CLI and systemd.
-    Public method signatures and return shapes intentionally match the original
-    implementation to avoid breaking callers.
-    """
+    """Helpers for interacting with the DMS via the nunet CLI and systemd."""
 
     def __init__(self, menu_dir: Optional[Path] = None, scripts_dir: Optional[Path] = None) -> None:
         self.menu_dir = menu_dir or DEFAULT_MENU_DIR
         candidate_scripts_dir = scripts_dir or (self.menu_dir / "scripts")
 
-        # Prefer provided or default scripts dir, but fall back to repo's backend/scripts in dev
-        onboard_script = candidate_scripts_dir / ONBOARD_SCRIPT_NAME
-        if not onboard_script.exists():
+        if not (candidate_scripts_dir / ONBOARD_SCRIPT_NAME).exists():
             try:
                 repo_scripts = Path(__file__).resolve().parents[1] / "scripts"
-                repo_onboard = repo_scripts / ONBOARD_SCRIPT_NAME
-                if repo_onboard.exists():
+                if (repo_scripts / ONBOARD_SCRIPT_NAME).exists():
                     candidate_scripts_dir = repo_scripts
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Unable to resolve repository scripts directory: %s", exc)
 
         self.scripts_dir = candidate_scripts_dir
-
-    # -------------------------
-    # Private helper functions
-    # -------------------------
+        logger.debug("Using scripts directory: %s", self.scripts_dir)
 
     @staticmethod
-    def _run(cmd: List[str], *, check: bool = False, capture: bool = True) -> subprocess.CompletedProcess:
-        """
-        Thin wrapper around subprocess.run with consistent defaults.
-        """
-        return subprocess.run(cmd, text=True, capture_output=capture, check=check)
+    def _run(
+        cmd: List[str],
+        *,
+        check: bool = False,
+        capture: bool = True,
+        timeout: Optional[int] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> subprocess.CompletedProcess:
+        logger.debug("Executing command: %s", " ".join(cmd))
+        return subprocess.run(
+            cmd,
+            text=True,
+            capture_output=capture,
+            check=check,
+            timeout=timeout,
+            env=env,
+        )
 
     @staticmethod
     def _systemctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-        """
-        Call systemctl with sudo, e.g., _systemctl('start', 'nunetdms').
-        """
         return DMSManager._run(["sudo", "systemctl", *args], check=check)
 
     @staticmethod
     def _service_status(service: str) -> str:
-        """
-        Return 'systemctl status' output for a service without raising on non-zero status.
-        """
         cp = DMSManager._systemctl("status", service, check=False)
-        return cp.stdout
+        return cp.stdout or ""
 
     @staticmethod
     def _wait_for_dms_ready(attempts: int = POLL_ATTEMPTS, delay_sec: float = POLL_DELAY_SEC) -> bool:
-        """
-        Poll 'nunet -c dms actor cmd /dms/node/peers/self' until it succeeds or attempts exhausted.
-        """
-        for _ in range(attempts):
-            try:
-                cp = run_dms_command_with_passphrase(
-                    ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                # If check=True didn't raise, the command succeeded.
-                return cp.returncode == 0
-            except subprocess.CalledProcessError:
-                time.sleep(delay_sec)
+        for attempt in range(1, attempts + 1):
+            cp = run_dms_command_with_passphrase(
+                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if cp.returncode == 0:
+                logger.debug("DMS readiness confirmed after %s attempt(s)", attempt)
+                return True
+            logger.debug(
+                "DMS readiness probe failed (attempt %s/%s, rc=%s)",
+                attempt,
+                attempts,
+                cp.returncode,
+            )
+            time.sleep(delay_sec)
+        logger.warning("Timed out waiting for DMS readiness after %s attempts", attempts)
         return False
 
     @staticmethod
     def _package_url_for_arch(arch: str) -> Optional[str]:
-        """
-        Determine correct DMS package URL based on machine arch.
-        """
-        a = arch.lower()
-        if "arm" in a or "aarch" in a:
+        arch_lower = arch.lower()
+        if "arm" in arch_lower or "aarch" in arch_lower:
             return "https://d.nunet.io/nunet-dms-arm64-latest.deb"
-        if "x86_64" in a or "amd64" in a or "amd" in a:
+        if "x86_64" in arch_lower or "amd64" in arch_lower or "amd" in arch_lower:
             return "https://d.nunet.io/nunet-dms-amd64-latest.deb"
         return None
 
     @staticmethod
-    def _categorize_addresses(listen_addrs_str: str) -> Tuple[List[str], List[str], List[str]]:
-        """
-        Split the comma+space delimited listen addresses and bucket them into local/public/relay.
-        Mirrors original logic to preserve behavior.
-        """
-        listen_addrs = [a for a in listen_addrs_str.split(", ") if a]
-        local: List[str] = []
-        public: List[str] = []
-        relay: List[str] = []
-
-        for addr in listen_addrs:
-            if "/p2p-circuit" in addr:
-                relay.append(addr)
-            elif any(p in addr for p in ["/ip4/127.", "/ip4/192.168.", "/ip4/10.", "/ip4/172."]):
-                # Note: original used broad 172.* to match local; we keep that as-is.
-                local.append(addr)
-            else:
-                public.append(addr)
-
-        return local, public, relay
-
-    # -------------------------
-    # Public API
-    # -------------------------
+    def _extract_version(output: str) -> Optional[str]:
+        for line in (output or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.lower().startswith("version"):
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    return parts[1].strip()
+                tokens = line.split()
+                if tokens:
+                    return tokens[-1]
+        return None
 
     def get_dms_version(self) -> str:
-        """Get the DMS version from 'nunet version'."""
         try:
-            result = self._run(["nunet", "version"], capture=True, check=True)
-            # More robust parsing while keeping the same return values.
-            # Expect lines like: "Version: 1.2.3"
-            version_re = re.compile(r"^Version:\s*(\S+)")
-            for line in result.stdout.splitlines():
-                m = version_re.match(line.strip())
-                if m:
-                    return m.group(1)
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            cp = self._run(["nunet", "version"], capture=True, check=False)
+        except FileNotFoundError:
+            logger.warning("nunet CLI not available while checking version")
             return "Not Installed"
-        return "Unknown"
+        if cp.returncode != 0:
+            logger.debug("nunet version failed rc=%s: %s", cp.returncode, cp.stderr or cp.stdout or "")
+            return "Not Installed"
+        version = self._extract_version(cp.stdout or "")
+        return version or "Unknown"
 
     def check_dms_installation(self) -> Dict[str, str]:
-        """Check if DMS is installed and get its version."""
         try:
-            self._run(["nunet", "version"], capture=True, check=True)
-            version = self.get_dms_version()
-            return {"status": "Installed", "version": version}
-        except (subprocess.CalledProcessError, FileNotFoundError):
+            cp = self._run(["nunet", "version"], capture=True, check=False)
+        except FileNotFoundError:
+            logger.debug("nunet CLI not found while checking installation status")
             return {"status": "Not Installed", "version": "N/A"}
+        if cp.returncode != 0:
+            logger.debug("DMS not installed or nunet CLI unavailable: rc=%s", cp.returncode)
+            return {"status": "Not Installed", "version": "N/A"}
+        version = self._extract_version(cp.stdout or "") or "Unknown"
+        return {"status": "Installed", "version": version}
 
     def restart_dms(self) -> Dict[str, str]:
-        """Restart the DMS service and wait for it to be ready."""
         try:
             self._systemctl("stop", NUNET_SERVICE, check=True)
             self._systemctl("start", NUNET_SERVICE, check=True)
             status_out = self._service_status(NUNET_SERVICE)
-
             if self._wait_for_dms_ready():
                 return {
                     "status": "success",
-                    "message": "DMS service restarted and is fully operational\n" + status_out,
+                    "message": "DMS service restarted and is operational.\n" + status_out,
                 }
             return {
                 "status": "warning",
-                "message": "DMS service restarted but may not be fully operational yet\n" + status_out,
+                "message": "DMS service restarted but readiness probe failed.\n" + status_out,
             }
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
-
-    def stop_dms(self) -> Dict[str, str]:
-        """Stop the DMS service."""
-        try:
-            self._systemctl("stop", NUNET_SERVICE, check=True)
-            status_out = self._service_status(NUNET_SERVICE)
-            return {"status": "success", "message": status_out}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
-
-    def enable_dms(self) -> Dict[str, str]:
-        """Enable DMS service and related services."""
-        try:
-            # Enable services
-            for service in (*KEYRING_SERVICES, NUNET_SERVICE):
-                self._systemctl("enable", service, check=True)
-
-            # Start keyring services
-            for service in KEYRING_SERVICES:
-                self._systemctl("start", service, check=True)
-
-            status_out = self._service_status(NUNET_SERVICE)
-            return {"status": "success", "message": status_out}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
-
-    def disable_dms(self) -> Dict[str, str]:
-        """Disable DMS service and related services."""
-        try:
-            for service in (NUNET_SERVICE, *reversed(KEYRING_SERVICES)):
-                self._systemctl("disable", service, check=True)
-
-            status_out = self._service_status(NUNET_SERVICE)
-            return {"status": "success", "message": status_out}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
+        except subprocess.CalledProcessError as exc:
+            logger.error("Failed to restart DMS: %s", exc)
+            return {"status": "error", "message": str(exc)}
 
     def get_peer_id(self) -> Optional[str]:
-        """Get the peer ID."""
-        try:
-            result = run_dms_command_with_passphrase(
-                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            data = json.loads(result.stdout)
-            return data.get("id")
-        except (subprocess.CalledProcessError, json.JSONDecodeError):
+        cp = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode != 0 or not cp.stdout:
+            logger.debug("Failed to fetch peer id: rc=%s, stderr=%s", cp.returncode, cp.stderr or "")
             return None
+        try:
+            payload = json.loads(cp.stdout)
+        except json.JSONDecodeError as exc:
+            logger.warning("Invalid JSON while reading peer id: %s", exc)
+            return None
+        return payload.get("id") or payload.get("peer_id")
 
     def get_dms_status(self) -> str:
-        """Get current DMS status ('Running' or 'Not Running')."""
-        try:
-            peer_id = self.get_peer_id()
-            return "Running" if peer_id else "Not Running"
-        except Exception:
-            return "Not Running"
+        return "Running" if self.get_peer_id() else "Not Running"
 
     def view_peer_details(self) -> Dict[str, str]:
-        """View list of connected peers."""
-        try:
-            result = run_dms_command_with_passphrase(
-                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/list"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return {"status": "success", "message": result.stdout}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
+        cp = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/list"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode == 0:
+            return {"status": "success", "message": cp.stdout or ""}
+        message = cp.stderr or cp.stdout or f"Command failed with return code {cp.returncode}"
+        logger.debug("Failed to list peers: %s", message)
+        return {"status": "error", "message": message}
 
     def get_self_peer_info(self) -> Optional[Dict[str, Any]]:
-        """Get self peer information including ID, context, DID and categorized listen addresses."""
+        cp = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode != 0 or not cp.stdout:
+            logger.debug("Failed to fetch self peer info: rc=%s, stderr=%s", cp.returncode, cp.stderr or "")
+            return None
         try:
-            # Peer info (includes listen addresses)
-            result = run_dms_command_with_passphrase(
-                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/peers/self"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            peer_info = json.loads(result.stdout)
-
-            # DID for DMS context using keyring
-            did_result = run_dms_command_with_passphrase(
-                ["nunet", "key", "did", "dms"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            did = did_result.stdout.strip()
-
-            local_addrs, public_addrs, relay_addrs = self._categorize_addresses(
-                peer_info.get("listen_addr", "")
-            )
-
-            return {
-                "peer_id": peer_info.get("id", "Unknown"),
-                "context": "dms",
-                "did": did,
-                "local_addrs": local_addrs,
-                "public_addrs": public_addrs,
-                "relay_addrs": relay_addrs,
-                "is_relayed": len(relay_addrs) > 0 and len(public_addrs) == 0,
-            }
-        except subprocess.CalledProcessError as e:
-            print(f"Error executing command: {e.stderr}")
-            return None
-        except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response: {e}")
-            return None
-        except Exception as e:
-            print(f"Unexpected error: {e}")
+            payload = json.loads(cp.stdout)
+        except json.JSONDecodeError as exc:
+            logger.warning("Invalid self peer JSON: %s", exc)
             return None
 
-    def onboard_compute(self) -> Dict[str, str]:
-        """Onboard compute resources via onboard-max.sh."""
-        try:
-            script_path = self.scripts_dir / ONBOARD_SCRIPT_NAME
-            if not script_path.exists():
-                return {"status": "error", "message": f"Script not found at {script_path}"}
+        local_addrs, public_addrs, relay_addrs = categorize_listen_addresses(payload.get("listen_addr"))
 
-            run_dms_command_with_passphrase([str(script_path)], check=True)
-            return {"status": "success", "message": "Compute resources onboarded successfully"}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": f"Error during compute onboarding: {str(e)}"}
+        did_cp = run_dms_command_with_passphrase(
+            ["nunet", "key", "did", "dms"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        did = did_cp.stdout.strip() if did_cp.returncode == 0 and did_cp.stdout else "Unknown"
+        if did_cp.returncode != 0:
+            logger.debug("Failed to read DMS DID: rc=%s, stderr=%s", did_cp.returncode, did_cp.stderr or "")
 
-    def offboard_compute(self) -> Dict[str, str]:
-        """Offboard compute resources."""
-        try:
-            result = run_dms_command_with_passphrase(
-                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/onboarding/offboard"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return {"status": "success", "message": result.stdout}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
-
-    def get_resource_allocation(self) -> Dict[str, str]:
-        """Get current resource allocation."""
-        try:
-            result = run_dms_command_with_passphrase(
-                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/resources/allocated"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            return {"status": "success", "message": result.stdout}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": str(e)}
-
-    def initialize_dms(self) -> Dict[str, str]:
-        """Initialize the DMS system."""
-        try:
-            script_path = CONFIGURE_DMS_SCRIPT
-            if not script_path.exists():
-                return {"status": "error", "message": f"Script not found at {script_path}"}
-
-            try:
-                # Show real-time progress (no capture)
-                run_dms_command_with_passphrase(["sudo", "-u", "ubuntu", str(script_path)], check=True)
-                return {"status": "success", "message": "DMS initialization completed successfully"}
-            except KeyboardInterrupt:
-                return {"status": "error", "message": "DMS initialization was interrupted by user"}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": f"Error during DMS initialization: {str(e)}"}
-
-    def update_dms(self) -> Dict[str, str]:
-        """Update DMS to latest version."""
-        try:
-            arch = platform.machine().lower()
-            print(f"🖥️  Detected architecture: {arch}")
-
-            url = self._package_url_for_arch(arch)
-            if not url:
-                return {"status": "error", "message": f"❌ Unsupported architecture: {arch}"}
-
-            print(f"⬇️  Downloading latest DMS package from {url}...")
-            download = self._run(["wget", "-N", url, "-O", "dms-latest.deb"], capture=True, check=False)
-            if download.returncode != 0:
-                return {"status": "error", "message": f"❌ Download failed: {download.stderr}"}
-
-            print("🔄 Installing updated DMS...")
-            install = self._run(
-                ["sudo", "apt", "install", "./dms-latest.deb", "-y", "--allow-downgrades"],
-                capture=True,
-                check=False,
-            )
-            if install.returncode == 0:
-                # Match original behavior: remove deb only on success
-                self._run(["rm", "-f", "dms-latest.deb"], check=False)
-                return {"status": "success", "message": "✅ DMS updated successfully!"}
-            return {"status": "error", "message": f"❌ Installation failed: {install.stderr}"}
-
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": f"⚠️  Critical error during update:  {str(e)}"}
-
-    def update_dms_status(self) -> Dict[str, Any]:
-        """
-        Update and return the current DMS status information.
-        Returns a dictionary with all relevant DMS status fields.
-        """
-        status: Dict[str, Any] = {
-            "dms_status": "Unknown",
-            "dms_version": "Unknown",
-            "dms_running": format_status("Not Running"),
-            "dms_context": "Unknown",
-            "dms_did": "Unknown",
-            "dms_peer_id": "Unknown",
-            "dms_is_relayed": None,
+        return {
+            "peer_id": payload.get("id") or payload.get("peer_id") or "Unknown",
+            "context": payload.get("context") or "dms",
+            "did": did,
+            "local_addrs": local_addrs,
+            "public_addrs": public_addrs,
+            "relay_addrs": relay_addrs,
+            "is_relayed": bool(relay_addrs and not public_addrs),
         }
 
-        # Installation + version
-        install_check = self.check_dms_installation()
-        status["dms_status"] = install_check["status"]
-        status["dms_version"] = install_check["version"]
-
-        # Try to enrich with live peer info
+    def onboard_compute(self) -> Dict[str, str]:
+        script_path = self.scripts_dir / ONBOARD_SCRIPT_NAME
+        if not script_path.exists():
+            message = f"Script not found at {script_path}"
+            logger.error(message)
+            return {"status": "error", "message": message}
         try:
-            peer_info = self.get_self_peer_info()
-            if peer_info and "error" not in peer_info:
-                status["dms_running"] = format_status("Running")
-                status["dms_peer_id"] = peer_info["peer_id"]
-                status["dms_context"] = peer_info["context"]
-                status["dms_did"] = peer_info["did"]
-                status["dms_is_relayed"] = peer_info["is_relayed"]
-        except Exception:
-            status["dms_running"] = format_status("Not Running")
+            run_dms_command_with_passphrase([str(script_path)], check=True)
+            return {"status": "success", "message": "Compute resources onboarded successfully"}
+        except subprocess.CalledProcessError as exc:
+            logger.error("Error during compute onboarding: %s", exc)
+            return {"status": "error", "message": str(exc)}
 
-        return status
-
-    def get_full_status_info(self) -> Dict[str, Any]:
-        """
-        Merge basic DMS status with resource info (original behavior preserved).
-        """
-        status = get_dms_status_info()
-        resources = get_dms_resource_info()
-        return {**status, **resources}
-
-    def show_full_status(self) -> None:
-        """
-        Print a colorized, human-readable status summary (unchanged behavior).
-        """
-        full_status = self.get_full_status_info()
-        print("\n=== DMS Full Status ===")
-        print(f"Onboarding Status: {full_status.get('onboarding_status', 'Unknown')}")
-        print(f"Free Resources: {full_status.get('free_resources', 'Unknown')}")
-        print(f"Allocated Resources: {full_status.get('allocated_resources', 'Unknown')}")
-        print(f"Onboarded Resources: {full_status.get('onboarded_resources', 'Unknown')}")
-        print(
-            f"DMS Status: {full_status['dms_status']} (v{full_status['dms_version']}) "
-            f"{full_status['dms_running']} Context: {Colors.YELLOW}{full_status['dms_context']}{Colors.NC} "
+    def offboard_compute(self) -> Dict[str, str]:
+        cp = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/onboarding/offboard"],
+            capture_output=True,
+            text=True,
+            check=False,
         )
-        if full_status["dms_peer_id"] != "Unknown":
-            print(f"DMS DID: {Colors.YELLOW}{full_status['dms_did']}{Colors.NC}")
-            print(f"DMS Peer ID: {Colors.CYAN}{full_status['dms_peer_id']}{Colors.NC}")
-            if full_status["dms_is_relayed"] is not None:
-                relay_status = "Using relay" if full_status["dms_is_relayed"] else "Direct connection"
-                relay_color = Colors.YELLOW if full_status["dms_is_relayed"] else Colors.GREEN
-                print(f"NuNet Network Connection Type: {relay_color}{relay_status}{Colors.NC}")
+        if cp.returncode == 0:
+            return {"status": "success", "message": cp.stdout or ""}
+        message = cp.stderr or cp.stdout or f"Command failed with return code {cp.returncode}"
+        logger.error("Failed to offboard compute: %s", message)
+        return {"status": "error", "message": message}
+
+    def get_resource_allocation(self) -> Dict[str, str]:
+        cp = run_dms_command_with_passphrase(
+            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/resources/allocated"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode == 0:
+            return {"status": "success", "message": cp.stdout or ""}
+        message = cp.stderr or cp.stdout or f"Command failed with return code {cp.returncode}"
+        logger.error("Failed to fetch resource allocation: %s", message)
+        return {"status": "error", "message": message}
+
+    def update_dms(self) -> Dict[str, str]:
+        arch = platform.machine().lower()
+        logger.info("Detected architecture: %s", arch)
+        url = self._package_url_for_arch(arch)
+        if not url:
+            message = f"Unsupported architecture: {arch}"
+            logger.error(message)
+            return {"status": "error", "message": message}
+
+        download = self._run(["wget", "-N", url, "-O", "dms-latest.deb"], capture=True, check=False)
+        if download.returncode != 0:
+            message = download.stderr or download.stdout or "Download failed"
+            logger.error("Failed to download DMS package: %s", message)
+            return {"status": "error", "message": f"Download failed: {message}"}
+
+        install = self._run(
+            ["sudo", "apt", "install", "./dms-latest.deb", "-y", "--allow-downgrades"],
+            capture=True,
+            check=False,
+        )
+        if install.returncode == 0:
+            self._run(["rm", "-f", "dms-latest.deb"], capture=True, check=False)
+            logger.info("DMS updated successfully")
+            return {"status": "success", "message": "DMS updated successfully."}
+
+        message = install.stderr or install.stdout or "Installation failed"
+        logger.error("Failed to install DMS package: %s", message)
+        return {"status": "error", "message": f"Installation failed: {message}"}
+
+    @staticmethod
+    def _extract_error(stdout: str, stderr: str) -> Optional[str]:
+        for stream in (stderr, stdout):
+            if stream:
+                lowered = stream.lower()
+                if "error" in lowered or "failed" in lowered or "failure" in lowered:
+                    return stream.strip()
+        if not stdout:
+            return None
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(data, dict):
+            status = data.get("status") or data.get("Status")
+            if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
+                message = data.get("message") or data.get("Message") or data.get("error") or data.get("Error")
+                if isinstance(message, str) and message.strip():
+                    return message.strip()
+                return stdout.strip()
+            for key in ("error", "Error", "message", "Message"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip() and "error" in value.lower():
+                    return value.strip()
+        return None
 
     def confirm_transaction(self, unique_id: str, tx_hash: str) -> Dict[str, Any]:
-        """
-        Call DMS to confirm a transaction:
-        nunet actor cmd --context dms /dms/tokenomics/contract/transactions/confirm
-          --unique-id <uniqueid> --tx-hash <txhash>
-        Uses keyring-backed passphrase via run_dms_command_with_passphrase.
-        Retries up to three times when the CLI reports transient errors.
-        """
-        max_attempts = 3
-        retry_delay_sec = 2
+        argv = [
+            "nunet", "actor", "cmd", "--context", "dms",
+            "/dms/tokenomics/contract/transactions/confirm",
+            "--unique-id", unique_id,
+            "--tx-hash", tx_hash,
+        ]
         last_error: Optional[str] = None
-
-        def _detect_error(stdout: str, stderr: str) -> Optional[str]:
-            for stream in (stdout or "", stderr or ""):
-                if stream and "error" in stream.lower():
-                    return stream.strip()
-            if stdout:
-                try:
-                    data = json.loads(stdout)
-                except json.JSONDecodeError:
-                    return None
-                if isinstance(data, dict):
-                    status = data.get("status") or data.get("Status")
-                    if isinstance(status, str) and status.lower() in {"error", "failed", "failure"}:
-                        message = data.get("message") or data.get("Message") or data.get("error") or data.get("Error")
-                        if isinstance(message, str) and message.strip():
-                            return message.strip()
-                        return stdout.strip()
-                    error_field = data.get("error") or data.get("Error")
-                    if isinstance(error_field, str) and error_field.strip():
-                        return error_field.strip()
-                    message_field = data.get("message") or data.get("Message")
-                    if isinstance(message_field, str) and "error" in message_field.lower():
-                        return message_field.strip()
-            return None
-
-        for attempt in range(1, max_attempts + 1):
-            try:
-                cp = run_dms_command_with_passphrase(
-                    [
-                        "nunet", "actor", "cmd", "--context", "dms",
-                        "/dms/tokenomics/contract/transactions/confirm",
-                        "--unique-id", unique_id,
-                        "--tx-hash", tx_hash,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                stdout = (cp.stdout or "").strip()
-                stderr = (cp.stderr or "").strip()
-                error_message = _detect_error(stdout, stderr)
+        for attempt in range(1, 4):
+            cp = run_dms_command_with_passphrase(argv, capture_output=True, text=True, check=False)
+            stdout = (cp.stdout or "").strip()
+            stderr = (cp.stderr or "").strip()
+            if cp.returncode == 0:
+                error_message = self._extract_error(stdout, stderr)
                 if not error_message:
                     return {"status": "success", "stdout": stdout, "stderr": stderr}
                 last_error = error_message
-            except subprocess.CalledProcessError as e:
-                last_error = (e.stderr or e.stdout or str(e)).strip()
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-
-            if attempt < max_attempts:
-                time.sleep(retry_delay_sec)
-
+                logger.debug("Confirm transaction returned error payload (attempt %s): %s", attempt, error_message)
+            else:
+                last_error = stderr or stdout or f"Command failed with return code {cp.returncode}"
+                logger.debug("Confirm transaction failed (attempt %s): %s", attempt, last_error)
+            if attempt < 3:
+                time.sleep(2)
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
 
-
     def list_transactions(self) -> Dict[str, Any]:
-        """
-        Call DMS to list transactions:
-        nunet actor cmd --context dms /dms/tokenomics/contract/transactions/list
-        Expects JSON on stdout with shape: { "transactions": [ ... ] }
-        """
+        cp = run_dms_command_with_passphrase(
+            [
+                "nunet", "actor", "cmd", "--context", "dms",
+                "/dms/tokenomics/contract/transactions/list",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if cp.returncode != 0:
+            message = cp.stderr or cp.stdout or f"Command failed with return code {cp.returncode}"
+            logger.error("Failed to list transactions: %s", message)
+            return {"status": "error", "message": message}
         try:
-            cp = run_dms_command_with_passphrase(
-                [
-                    "nunet", "actor", "cmd", "--context", "dms",
-                    "/dms/tokenomics/contract/transactions/list",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            out = cp.stdout.strip() or "{}"
-            data = json.loads(out)
-            txs = data.get("transactions", [])
-            return {"status": "success", "transactions": txs}
-        except subprocess.CalledProcessError as e:
-            return {"status": "error", "message": e.stderr or str(e)}
+            data = json.loads(cp.stdout or "{}")
         except json.JSONDecodeError:
+            logger.error("Invalid JSON from transactions list command")
             return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
-    
+        transactions = data.get("transactions", [])
+        return {"status": "success", "transactions": transactions}
+
     def get_structured_logs(self, alloc_dir: Optional[Path] = None, *, lines: int = 200) -> Dict[str, Any]:
-        """
-        Return structured logs:
-          - allocation stdout/stderr (tail of files) if alloc_dir given
-          - DMS service logs from journalctl
-        Does not affect the menu; purely read-only helpers.
-        """
         result: Dict[str, Any] = {
             "status": "success",
             "message": "Structured logs fetched",
@@ -556,53 +383,80 @@ class DMSManager:
             "dms_logs": None,
         }
 
-        # DMS service logs
         result["dms_logs"] = _journalctl_dms(lines)
 
-        # Allocation logs (optional)
         if alloc_dir:
-            base = Path("/home/nunet/nunet/deployments")
+            base = DMS_DEPLOYMENTS_LOGS
             alloc_path = Path(alloc_dir)
             if not _safe_under(base, alloc_path):
+                message = f"alloc_dir must live under {base}"
+                logger.error(message)
                 return {
                     "status": "error",
-                    "message": f"alloc_dir must live under {base}",
+                    "message": message,
                     "dms_logs": result["dms_logs"],
                     "allocation": None,
                 }
 
+            try:
+                # Request fresh stdout/stderr logs via the DMS CLI before reading files from disk.
+                parts = _extract_deployment_allocation(base, alloc_path)
+                if parts:
+                    dep_id, allocation_name = parts
+                    ok, req_message = _request_allocation_logs(dep_id, allocation_name)
+                    if not ok:
+                        logger.warning(
+                            "Failed to request logs for deployment %s allocation %s: %s",
+                            dep_id,
+                            allocation_name,
+                            req_message or "no message",
+                        )
+                else:
+                    logger.debug(
+                        "Unable to determine deployment/allocation from path: %s",
+                        alloc_path,
+                    )
+            except Exception as exc:  # defensive: log request failures shouldn't abort log collection
+                logger.warning("Error requesting allocation logs: %s", exc)
+
             stdout_path = alloc_path / "stdout.logs"
             stderr_path = alloc_path / "stderr.logs"
-            result["allocation"] = {
+            allocation = {
                 "dir": str(alloc_path),
                 "stdout": _make_filelog(stdout_path, lines),
                 "stderr": _make_filelog(stderr_path, lines),
             }
-
-            # if both files missing, downgrade message
-            a = result["allocation"]
-            if not a["stdout"]["exists"] and not a["stderr"]["exists"]:
+            result["allocation"] = allocation
+            if not allocation["stdout"]["exists"] and not allocation["stderr"]["exists"]:
                 result["message"] = "Structured logs fetched (allocation files not found)"
 
         return result
 
 
-def _to_iso(ts: float) -> str:
+def _to_iso(ts: float) -> Optional[str]:
     try:
         return datetime.utcfromtimestamp(ts).isoformat() + "Z"
     except Exception:
         return None
 
-def _run_capture(argv: list[str], env: dict | None = None, cwd: str | None = None, timeout: int = 30):
+
+def _run_capture(
+    argv: List[str],
+    env: Optional[Dict[str, str]] = None,
+    cwd: Optional[Path | str] = None,
+    timeout: int = 30,
+) -> subprocess.CompletedProcess:
+    logger.debug("Capturing command output: %s", " ".join(argv))
     return subprocess.run(
         argv,
         text=True,
         capture_output=True,
         env=env,
-        cwd=cwd,
+        cwd=str(cwd) if isinstance(cwd, Path) else cwd,
         timeout=timeout,
         check=False,
     )
+
 
 def _safe_under(base: Path, child: Path) -> bool:
     try:
@@ -610,10 +464,8 @@ def _safe_under(base: Path, child: Path) -> bool:
     except Exception:
         return False
 
-def _stat_file_with_sudo(path: Path) -> tuple[Optional[int], Optional[str], Optional[str]]:
-    """
-    Return (size_bytes, mtime_iso, err). Uses sudo stat to tolerate perms.
-    """
+
+def _stat_file_with_sudo(path: Path) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     cp = _run_capture(["sudo", "-n", "stat", "-c", "%s,%Y", str(path)])
     if cp.returncode == 0:
         try:
@@ -621,24 +473,20 @@ def _stat_file_with_sudo(path: Path) -> tuple[Optional[int], Optional[str], Opti
             size = int(size_s)
             mtime_iso = _to_iso(float(mtime_s))
             return size, mtime_iso, None
-        except Exception as e:
-            return None, None, f"stat parse error: {e}"
-    else:
-        return None, None, (cp.stderr or cp.stdout or "").strip() or "stat failed"
+        except Exception as exc:
+            return None, None, f"stat parse error: {exc}"
+    return None, None, (cp.stderr or cp.stdout or "").strip() or "stat failed"
 
-def _tail_file_with_sudo(path: Path, lines: int) -> tuple[str, bool, Optional[str]]:
-    """
-    Return (content, readable, err). Uses sudo tail -n <lines>.
-    """
+
+def _tail_file_with_sudo(path: Path, lines: int) -> Tuple[str, bool, Optional[str]]:
     cp = _run_capture(["sudo", "-n", "tail", "-n", str(lines), str(path)])
     if cp.returncode == 0:
         return cp.stdout, True, None
-    else:
-        err = (cp.stderr or cp.stdout or "").strip() or f"tail failed rc={cp.returncode}"
-        return "", False, err
+    err = (cp.stderr or cp.stdout or "").strip() or f"tail failed rc={cp.returncode}"
+    return "", False, err
 
-def _resolve_log_path(path: Path) -> tuple[Path, bool]:
-    """Try common filename variants to find the real log file."""
+
+def _resolve_log_path(path: Path) -> Tuple[Path, bool]:
     candidates = [path]
     suffix = path.suffix.lower()
     try:
@@ -650,11 +498,10 @@ def _resolve_log_path(path: Path) -> tuple[Path, bool]:
             candidates.append(path.with_suffix(".logs"))
             candidates.append(path.with_suffix(".log"))
     except ValueError:
-        # Path without a stem or with an invalid suffix; ignore fallbacks
         pass
 
     seen: set[str] = set()
-    unique_candidates = []
+    unique_candidates: List[Path] = []
     for candidate in candidates:
         key = str(candidate)
         if key in seen:
@@ -671,7 +518,7 @@ def _resolve_log_path(path: Path) -> tuple[Path, bool]:
     return path, False
 
 
-def _make_filelog(path: Path, lines: int) -> dict:
+def _make_filelog(path: Path, lines: int) -> Dict[str, Any]:
     resolved_path, exists = _resolve_log_path(path)
     size, mtime_iso, stat_err = (None, None, None)
     content, readable, read_err = ("", False, None)
@@ -699,11 +546,15 @@ def _make_filelog(path: Path, lines: int) -> dict:
         "error": error,
     }
 
-def _journalctl_dms(lines: int) -> dict:
-    cp = _run_capture([
-        "sudo", "-n", "journalctl", "-u", "nunetdms",
-        "-n", str(lines), "--no-pager", "--output=short-iso"
-    ], timeout=60)
+
+def _journalctl_dms(lines: int) -> Dict[str, Any]:
+    cp = _run_capture(
+        [
+            "sudo", "-n", "journalctl", "-u", "nunetdms",
+            "-n", str(lines), "--no-pager", "--output=short-iso",
+        ],
+        timeout=60,
+    )
     return {
         "source": "journalctl",
         "lines": lines,
@@ -712,3 +563,56 @@ def _journalctl_dms(lines: int) -> dict:
         "returncode": cp.returncode,
     }
 
+
+def _extract_deployment_allocation(base: Path, alloc_path: Path) -> Optional[Tuple[str, str]]:
+    try:
+        rel = alloc_path.resolve(strict=False).relative_to(base.resolve(strict=False))
+    except Exception:
+        return None
+
+    parts = rel.parts
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+    return None
+
+
+def _request_allocation_logs(deployment_id: str, allocation_name: str) -> Tuple[bool, Optional[str]]:
+    cmd = [
+        "nunet",
+        "-c",
+        "dms",
+        "actor",
+        "cmd",
+        "/dms/node/deployment/logs",
+        "--id",
+        deployment_id,
+        "--allocation",
+        allocation_name,
+    ]
+    try:
+        cp = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        return False, "nunet CLI not available"
+    except subprocess.TimeoutExpired as exc:
+        return False, f"log request timed out: {exc}"
+    except Exception as exc:
+        return False, str(exc)
+
+    message = (cp.stdout or cp.stderr or "").strip() or None
+
+    if cp.returncode != 0:
+        return False, message
+
+    logger.debug(
+        "Log request for deployment %s allocation %s succeeded: %s",
+        deployment_id,
+        allocation_name,
+        message or "no message",
+    )
+    return True, message

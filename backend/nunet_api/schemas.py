@@ -141,6 +141,8 @@ class DeploymentWebItem(BaseModel):
     ensemble_file_path: Optional[str] = None
     ensemble_file_relative: Optional[str] = None
     ensemble_file_exists: Optional[bool] = None
+    deployment_url: Optional[str] = None
+    allocations: Optional[List[str]] = None
 
 class DeploymentsWebResponse(BaseModel):
     status: str
@@ -168,6 +170,11 @@ class ManifestTextResponse(BaseModel):
 class LogsTextResponse(BaseModel):
     status: str
     message: str
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    dms: Optional[str] = None
+    allocation: Optional["AllocationLogs"] = None
+    dms_logs: Optional["DmsLogBundle"] = None
 
 class DeploymentFileResponse(BaseModel):
     status: str
@@ -268,6 +275,10 @@ class StructuredLogs(BaseModel):
     message: str
     allocation: Optional[AllocationLogs] = None
     dms_logs: Optional[DmsLogBundle] = None
+
+
+LogsTextResponse.model_rebuild()
+StructuredLogs.model_rebuild()
 
 
 class FormFieldOption(BaseModel):

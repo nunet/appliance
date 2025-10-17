@@ -1,15 +1,15 @@
 # modules/org_utils.py
 
-from pathlib import Path
+import json
 import os
 import re
 import stat
 from pathlib import Path
-import json
 from typing import Dict
 
+from .path_constants import KNOWN_ORGS_FILE
+
 # Use JSON for known organizations for extensibility
-KNOWN_ORGS_FILE = Path("/home/ubuntu/nunet/appliance/known_orgs/known_organizations.json")
 
 TRUSTED_ORGS = [
     {

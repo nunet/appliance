@@ -7,6 +7,7 @@ from datetime import datetime
 from ..utils.pty_bridge import run_pty_ws
 from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
+from modules.path_constants import DMS_DEPLOYMENTS_DIR
 from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
@@ -55,7 +56,7 @@ def _autofill_local_peer(values: dict) -> dict:
             if local_peer:
                 v["peer_id"] = local_peer
         except Exception:
-            # Swallow—validation will catch if still required
+            # Swallow - validation will catch if still required
             pass
     return v
 
@@ -114,6 +115,16 @@ def _resolve_path(mgr: EnsembleManagerV2, p: str) -> Path:
     return path if path.is_absolute() else (mgr.base_dir / path)
 
 
+def _read_allocations_from_disk(deployment_id: str) -> List[str]:
+    """Return allocation directory names present on disk for this deployment."""
+    base = DMS_DEPLOYMENTS_DIR / deployment_id
+    try:
+        if not base.exists() or not base.is_dir():
+            return []
+        return sorted(entry.name for entry in base.iterdir() if entry.is_dir())
+    except Exception:
+        return []
+
 
 def _resolve_allocation_choice(
     mgr: EnsembleManagerV2,
@@ -121,6 +132,31 @@ def _resolve_allocation_choice(
     requested_alloc: str | None,
 ) -> Tuple[Optional[str], List[str]]:
     allocs = mgr.get_deployment_allocations(deployment_id) or []
+    disk_allocs = _read_allocations_from_disk(deployment_id)
+    if allocs and disk_allocs:
+        disk_lower_map = {name.lower(): name for name in disk_allocs}
+        disk_suffix_map: Dict[str, List[str]] = {}
+        for name in disk_allocs:
+            suffix = name.rsplit(".", 1)[-1].lower()
+            disk_suffix_map.setdefault(suffix, []).append(name)
+
+        def _to_disk(name: str) -> str:
+            lowered = name.lower()
+            if lowered in disk_lower_map:
+                return disk_lower_map[lowered]
+            candidates = disk_suffix_map.get(lowered)
+            if candidates and len(candidates) == 1:
+                return candidates[0]
+            if "." in lowered:
+                suffix = lowered.rsplit(".", 1)[-1]
+                suffix_matches = disk_suffix_map.get(suffix)
+                if suffix_matches and len(suffix_matches) == 1:
+                    return suffix_matches[0]
+            return name
+
+        allocs = [_to_disk(name) for name in allocs]
+    if not allocs:
+        allocs = disk_allocs
     if not allocs:
         return None, allocs
 
@@ -170,8 +206,6 @@ def _resolve_allocation_choice(
         status_code=400,
         detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
     )
-
-
 @router.get("/deployments", response_model=DeploymentsWebResponse)
 def list_deployments(mgr: EnsembleManagerV2 = Depends(get_mgr)):
     res = mgr.get_deployments_for_web()
@@ -321,6 +355,31 @@ def _format_dms_section(bundle: dict | None) -> str:
         lines.append(f"[returncode] {returncode}")
     return "\n".join(lines)
 
+
+def _extract_log_content(entry: dict | None) -> str:
+    if not entry:
+        return ""
+    content = entry.get("content")
+    if content:
+        return content
+    # Suppress error metadata from reaching the UI; callers will fall back to placeholders.
+    # For empty files, keep empty string so UI shows placeholder.
+    return ""
+
+
+def _extract_dms_content(bundle: dict | None) -> str:
+    if not bundle:
+        return ""
+    stdout = (bundle.get("stdout") or "").strip()
+    if stdout:
+        return stdout
+    stderr = (bundle.get("stderr") or "").strip()
+    if stderr:
+        rc = bundle.get("returncode")
+        prefix = "[stderr]\n" if rc not in (0, None) else ""
+        return f"{prefix}{stderr}"
+    return ""
+
 @router.post("/deployments/{deployment_id}/logs/request", response_model=SimpleStatusResponse)
 def request_deployment_logs(
     deployment_id: str,
@@ -414,7 +473,7 @@ def deployment_logs_text(
 
     alloc_dir = None
     if selected_alloc:
-        alloc_dir = Path("/home/nunet/nunet/deployments") / deployment_id / selected_alloc
+        alloc_dir = DMS_DEPLOYMENTS_DIR / deployment_id / selected_alloc
 
     try:
         dm = DMSManager()
@@ -452,7 +511,15 @@ def deployment_logs_text(
     lines_out.append(_format_dms_section(structured.get("dms_logs")))
 
     log_message = "\n".join(lines_out).strip()
-    return LogsTextResponse(status=status_text, message=log_message)
+    return LogsTextResponse(
+        status=status_text,
+        message=log_message,
+        stdout=_extract_log_content(stdout_section),
+        stderr=_extract_log_content(stderr_section),
+        dms=_extract_dms_content(structured.get("dms_logs")),
+        allocation=structured.get("allocation"),
+        dms_logs=structured.get("dms_logs"),
+    )
 
 @router.post("/deployments", response_model=DeployResponse)
 def deploy_ensemble(payload: DeployRequest, mgr: EnsembleManagerV2 = Depends(get_mgr)):
@@ -700,7 +767,7 @@ def render_template(
         values = dict(values_in)
         meta_for_validation = meta
 
-    # Validate after we’ve adjusted for the type
+    # Validate after we've adjusted for the type
     if meta_for_validation:
         ok, errs = validate_form_data(meta_for_validation, values)
         if not ok:

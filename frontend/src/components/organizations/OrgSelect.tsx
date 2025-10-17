@@ -13,11 +13,13 @@ export function OrgSelect({
   onSelect,
   disabled,
   setStartOperation,
+  onBeginOnboarding,
 }: {
   known: Record<string, any>;
   onSelect: (did: string) => void;
   disabled?: boolean;
   setStartOperation: (val: boolean) => void;
+  onBeginOnboarding?: () => void;
 }) {
   const [joinedOrgs, setJoinedOrgs] = useState<any>([]);
   const [orgData, setOrgData] = useState<any>([]);
@@ -45,6 +47,7 @@ export function OrgSelect({
   const handleJoin = (did: string) => {
     onSelect(did); // trigger join flow
     setStartOperation(true);
+    onBeginOnboarding?.();
   };
 
   if (loading) return <div>Loading organizations...</div>;

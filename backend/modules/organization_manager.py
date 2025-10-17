@@ -1,147 +1,114 @@
 """
-Organizations management module for NuNet
+Utility helpers for organisation onboarding flows exposed via FastAPI.
+
+Only the script-backed wormhole generation/join logic is preserved; all menu
+specific presentation code has been removed.
 """
 
-import datetime
+import logging
 import subprocess
-import requests
-import os
 from pathlib import Path
-from typing import Dict, Literal
-from .dms_utils import run_dms_command_with_passphrase
-from modules.utils import (
-    Colors, ConfigManager, clear_screen, pause)
-from .org_utils import load_known_organizations, get_joined_organizations_with_names
+from typing import Dict, Optional
 
-OrganizationType = Literal["nunet", "auki", "jam_galaxy", "ocean"]
+from .org_utils import get_joined_organizations_with_names, load_known_organizations
+
+logger = logging.getLogger(__name__)
+
+JOIN_SCRIPT = "join-org-web.sh"
+
 
 class OrganizationManager:
-    def __init__(self):
-        self.home_dir = Path.home()
-        self.scripts_dir = self.home_dir / "menu" / "scripts"
+    def __init__(self, scripts_dir: Optional[Path] = None) -> None:
+        self.scripts_dir = scripts_dir or (Path.home() / "menu" / "scripts")
 
-    def join_organization(self, org_type: str = None, step: str = 'generate', code: str = None, email: str = None, location: str = None, discord: str = None, dms_did: str = None, peer_id: str =None) -> Dict[str, str]:
-        """
-        Two-step join process for web onboarding.
-        step='generate': generate and return wormhole code.
-        step='join': join using the provided wormhole code.
-        """
+    # ------------------------------------------------------------------ #
+    # Script helpers
+    # ------------------------------------------------------------------ #
+
+    def _script_path(self) -> Path:
+        candidate = self.scripts_dir / JOIN_SCRIPT
+        if candidate.exists():
+            return candidate
+        repo_scripts = Path(__file__).resolve().parents[1] / "scripts"
+        alt = repo_scripts / JOIN_SCRIPT
+        return alt
+
+    def _run_script(self, *args: str) -> Dict[str, str]:
+        script = self._script_path()
+        if not script.exists():
+            location = script if script == self.scripts_dir / JOIN_SCRIPT else script.resolve()
+            return {"status": "error", "message": f"Organization join script not found at {location}"}
+
         try:
-            script_path = self.scripts_dir / "join-org-web.sh"
-            if not script_path.exists():
-                return {
-                    "status": "error",
-                    "message": "Organization join script for web not found"
-                }
-            if step == 'generate':
-                result = subprocess.run(['bash', str(script_path), 'generate'], capture_output=True, text=True)
-                output = result.stdout + result.stderr
-                # Log output
-                with open("/home/ubuntu/nunet/appliance/onboarding.log", "a") as logf:
-                    logf.write("[SCRIPT OUTPUT] join-org-web.sh generate:\n")
-                    logf.write(output + "\n")
-                if result.returncode == 0:
-                    return {
-                        "status": "success",
-                        "wormhole_code": result.stdout.strip(),
-                        "output": output
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": result.stderr.strip() or result.stdout.strip(),
-                        "output": output
-                    }
-            elif step == 'join' and code:
-                payload = {
-                    'email': email,
-                    'location': location,
-                    'discord': discord,
-                    'wormhole': code,
-                    'dms_did': dms_did,
-                    'peer_id': peer_id
-                }
-                print("==========")
-                print(payload)
-                print("==========")
+            cp = subprocess.run(
+                ["bash", str(script), *args],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            logger.exception("bash executable not available while running %s", script)
+            return {"status": "error", "message": "bash executable not available"}
 
-                result = subprocess.run(['bash', str(script_path), 'join', code], capture_output=True, text=True)
-                output = result.stdout + result.stderr
-                # Log output
-                with open("/home/ubuntu/nunet/appliance/onboarding.log", "a") as logf:
-                    logf.write("[SCRIPT OUTPUT] join-org-web.sh join:\n")
-                    logf.write(output + "\n")
-                if result.returncode == 0:
-                    return {
-                        "status": "success",
-                        "message": f"✅ Organization join process completed.",
-                        "output": output
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": f"Failed to join organization. Process exited with code {result.returncode}",
-                        "output": output
-                    }
-            else:
-                return {
-                    "status": "error",
-                    "message": "Invalid step or missing wormhole code."
-                }
-        except Exception as e:
+        stdout = cp.stdout or ""
+        stderr = cp.stderr or ""
+        output = (stdout + stderr).strip()
+
+        if cp.returncode != 0:
+            logger.warning("join-org script failed (%s): %s", cp.returncode, output)
             return {
                 "status": "error",
-                "message": f"Error joining organization: {str(e)}"
+                "message": stderr.strip() or stdout.strip() or f"Exited with {cp.returncode}",
+                "output": output,
             }
 
-    def join_nunet_network(self) -> Dict[str, str]:
-        """Join the NuNet Compute Testnet"""
-        return self.join_organization("nunet")
+        return {"status": "success", "message": stdout.strip() or "completed", "output": output}
 
-    def join_auki_network(self) -> Dict[str, str]:
-        """Join the AUKI Compute Testnet"""
-        return self.join_organization("auki")
+    # ------------------------------------------------------------------ #
+    # Public API
+    # ------------------------------------------------------------------ #
 
-    def join_jam_galaxy_network(self) -> Dict[str, str]:
-        """Join the Jam Galaxy Testnet"""
-        return self.join_organization("jam_galaxy")
+    def join_organization(
+        self,
+        org_type: Optional[str] = None,
+        step: str = "generate",
+        code: Optional[str] = None,
+        **_extras: str,
+    ) -> Dict[str, str]:
+        """
+        Run the legacy join-org script in a controlled way.
 
-    def join_ocean_network(self) -> Dict[str, str]:
-        """Join the Ocean Protocol Testnet"""
-        return self.join_organization("ocean") 
+        Parameters mirror the historical implementation so the FastAPI layer can
+        keep its contract.
+        """
+        step = step or "generate"
 
-    def view_capability_relationships(self):
-        """Display trusted organizations and who trusts the user"""
-        from modules.capability_inspector import inspect_capabilities
+        if step not in {"generate", "join"}:
+            return {"status": "error", "message": f"Unsupported step: {step}"}
 
-        clear_screen()
-        print(f"{Colors.CYAN}{'='*50}\nKnown Organizations Considered Safe by NuNet\n{'='*50}{Colors.NC}")
-        known = load_known_organizations()
-        if known:
-            for idx, (did, name) in enumerate(known.items(), start=1):
-                print(f"{idx}. {name} ({did})")
-        else:
-            print(f"{Colors.MAGENTA}No known organizations found.{Colors.NC}")
+        if step == "join" and not code:
+            return {"status": "error", "message": "Wormhole code is required for join step."}
 
-        print(f"{Colors.CYAN}{'='*50}\nOrganisations You have joined \n{'='*50}{Colors.NC}")
-        org_list = get_joined_organizations_with_names()
-        if not org_list:
-            print(f"{Colors.MAGENTA}You are not part of any organization yet.{Colors.NC}")
-        else:
-            for idx, org in enumerate(org_list, start=1):
-                did = org["did"]
-                name = org.get("name")
-                if name:
-                    print(f"{idx}. {Colors.YELLOW}{name}{Colors.NC} ({Colors.BLUE}{did}{Colors.NC})")
-                else:
-                    print(f"{idx}. {Colors.BLUE}{did}{Colors.NC} (Unknown Organization)")
-        print(f"{Colors.CYAN}{'='*50}\nTrust Table (Your relationship with organisations) \n{'='*50}{Colors.NC}")
-        inspect_capabilities()
-        pause()
+        args = [step]
+        if step == "join" and code:
+            args.append(code)
 
-    def get_organization_status(self):
-        """Return joined and known organizations using org_utils functions."""
+        result = self._run_script(*args)
+        if result.get("status") != "success":
+            return result
+
+        # The generate step prints the wormhole code on stdout; expose it explicitly.
+        if step == "generate":
+            wormhole = result.get("message", "").splitlines()[-1].strip()
+            result["wormhole_code"] = wormhole
+            if org_type:
+                result["organization"] = org_type
+
+        return result
+
+    def get_organization_status(self) -> Dict[str, object]:
+        """Expose joined/known organisation data expected by the API."""
         return {
             "joined": get_joined_organizations_with_names(),
-            "known": load_known_organizations()
+            "known": load_known_organizations(),
         }

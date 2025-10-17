@@ -58,6 +58,7 @@ rm -rf "$PKGDIR"
 mkdir -p "$PKGDIR/DEBIAN"
 mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist"
+mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles"
 mkdir -p "$PKGDIR/lib/systemd/system"
 mkdir -p "$PKGDIR/etc/nunet-appliance-web"
 
@@ -65,6 +66,11 @@ mkdir -p "$PKGDIR/etc/nunet-appliance-web"
 install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-web/nunet-dms.pex"
 install -m 0644 "$ROOT/release/gunicorn_conf.py" "$PKGDIR/usr/lib/nunet-appliance-web/gunicorn_conf.py"
 cp -a "$ROOT/release/frontend-dist/." "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist/"
+
+# Include default ensembles (if present in repo)
+if [ -d "$ROOT/backend/ensembles" ]; then
+  cp -a "$ROOT/backend/ensembles/." "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles/" || true
+fi
 
 # (Optional) Data files you want on disk at runtime:
 # mkdir -p "$PKGDIR/usr/share/nunet-dms/data"
@@ -139,14 +145,23 @@ cat > "$PKGDIR/DEBIAN/postinst" <<'EOF'
 # Create appliance directory with proper permissions
 mkdir -p /home/ubuntu/nunet/appliance/known_orgs
 mkdir -p /home/ubuntu/nunet/appliance/deployments
+# Create ensembles directory and populate defaults if missing/empty
+mkdir -p /home/ubuntu/ensembles
+if [ -z "$(ls -A /home/ubuntu/ensembles 2>/dev/null)" ]; then
+  if [ -d /usr/share/nunet-appliance-web/data/ensembles ]; then
+    cp -a /usr/share/nunet-appliance-web/data/ensembles/. /home/ubuntu/ensembles/
+  fi
+fi
 
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/known_orgs
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/deployments
+chown -R ubuntu:ubuntu /home/ubuntu/ensembles || true
 
 chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
+chmod 755 /home/ubuntu/ensembles || true
 
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true

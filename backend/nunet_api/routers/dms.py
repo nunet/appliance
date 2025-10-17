@@ -13,7 +13,12 @@ from pathlib import Path
 import json, subprocess
 from ..utils.pty_bridge import run_pty_ws
 from modules.dms_manager import DMSManager
-from modules.dms_utils import get_dms_status_info, get_dms_resource_info
+from modules.dms_utils import (
+    get_cached_dms_peer_raw,
+    get_cached_dms_resource_info,
+    get_cached_dms_status_info,
+    invalidate_all_dms_caches,
+)
 
 router = APIRouter()
 
@@ -102,19 +107,30 @@ def install_status(mgr: DMSManager = Depends(get_mgr)):
     return InstallStatus(**info)
 
 @router.get("/status", response_model=DmsStatus)
-def status(mgr: DMSManager = Depends(get_mgr)):
-    raw = mgr.update_dms_status()
+def status(
+    fresh: bool = Query(
+        False,
+        alias="refresh",
+        description="When true, bypass the DMS status cache for a fresh read.",
+    )
+):
+    raw = get_cached_dms_status_info(force_refresh=fresh) or {}
     return DmsStatus(**normalize_dms_status(raw))
 
 @router.get("/status/full", response_model=ResourcesInfo)
-def status_full(mgr: DMSManager = Depends(get_mgr)):
-    # Combines dms + resources; you can also return them separately
-    info = mgr.get_full_status_info()
+def status_full(
+    fresh: bool = Query(
+        False,
+        alias="refresh",
+        description="When true, bypass the DMS resource cache for a fresh read.",
+    )
+):
+    resources = get_cached_dms_resource_info(force_refresh=fresh) or {}
     return ResourcesInfo(
-        onboarding_status=info.get("onboarding_status", "Unknown"),
-        free_resources=info.get("free_resources", "Unknown"),
-        allocated_resources=info.get("allocated_resources", "Unknown"),
-        onboarded_resources=info.get("onboarded_resources", "Unknown"),
+        onboarding_status=resources.get("onboarding_status", "Unknown"),
+        free_resources=resources.get("free_resources", "Unknown"),
+        allocated_resources=resources.get("allocated_resources", "Unknown"),
+        onboarded_resources=resources.get("onboarded_resources", "Unknown"),
     )
 
 @router.get("/peer-id", response_model=str)
@@ -134,7 +150,7 @@ def self_peer(mgr: DMSManager = Depends(get_mgr)):
 @router.post("/restart", response_model=CommandResult)
 def restart(mgr: DMSManager = Depends(get_mgr)):
     result = mgr.restart_dms()
-    
+
     # Archive onboarding state if onboarding was completed
     try:
         from modules.onboarding_manager import OnboardingManager
@@ -146,8 +162,10 @@ def restart(mgr: DMSManager = Depends(get_mgr)):
             onboarding_mgr.mark_onboarding_complete(org_name)
     except Exception as e:
         logging.error(f"Error archiving onboarding state during DMS restart: {e}")
-    
-    return CommandResult(**result)
+
+    response = CommandResult(**result)
+    invalidate_all_dms_caches()
+    return response
 
 @router.post("/stop", response_model=CommandResult)
 def stop():
@@ -155,7 +173,9 @@ def stop():
         ["sudo", "-n", "systemctl", "stop", "nunetdms"],
         ["sudo", "-n", "systemctl", "status", "nunetdms", "--no-pager", "--full"],
     ]
-    return _run_many(cmds, label="dms stop")
+    result = _run_many(cmds, label="dms stop")
+    invalidate_all_dms_caches()
+    return result
 
 @router.post("/enable", response_model=CommandResult)
 def enable():
@@ -167,7 +187,9 @@ def enable():
         ["sudo", "-n", "systemctl", "start", "loadnunetkeyring"],
         ["sudo", "-n", "systemctl", "status", "nunetdms", "--no-pager", "--full"],
     ]
-    return _run_many(cmds, label="dms enable")
+    result = _run_many(cmds, label="dms enable")
+    invalidate_all_dms_caches()
+    return result
 
 @router.post("/disable", response_model=CommandResult)
 def disable():
@@ -177,15 +199,21 @@ def disable():
         ["sudo", "-n", "systemctl", "disable", "loadubuntukeyring"],
         ["sudo", "-n", "systemctl", "status", "nunetdms", "--no-pager", "--full"],
     ]
-    return _run_many(cmds, label="dms disable")
+    result = _run_many(cmds, label="dms disable")
+    invalidate_all_dms_caches()
+    return result
 
 @router.post("/onboard", response_model=CommandResult)
 def onboard(mgr: DMSManager = Depends(get_mgr)):
-    return CommandResult(**mgr.onboard_compute())
+    result = CommandResult(**mgr.onboard_compute())
+    invalidate_all_dms_caches()
+    return result
 
 @router.post("/offboard", response_model=CommandResult)
 def offboard(mgr: DMSManager = Depends(get_mgr)):
-    return CommandResult(**mgr.offboard_compute())
+    result = CommandResult(**mgr.offboard_compute())
+    invalidate_all_dms_caches()
+    return result
 
 @router.get("/resources/allocated", response_model=dict)
 def resources_allocated(mgr: DMSManager = Depends(get_mgr)):
@@ -216,7 +244,9 @@ def init():
     # -n: non-interactive fail if sudo password is required
     # -E: preserve environment (so DMS_PASSPHRASE survives)
     argv = ["sudo", "-n", "-E", "-u", "ubuntu", str(script_path)]
-    return _run_captured(argv, env=env, label="dms init")
+    result = _run_captured(argv, env=env, label="dms init")
+    invalidate_all_dms_caches()
+    return result
 
 
 @router.post("/update", response_model=CommandResult)
@@ -245,10 +275,12 @@ def update():
         sudo -n apt install ./dms-latest.deb -y --allow-downgrades
         echo "Cleaning up ..."
         rm -f dms-latest.deb || true
-        echo "✅ Update complete."
+        echo "Update complete."
     '''
     argv = ["bash", "-lc", update_script]
-    return _run_captured(argv, env=env, label="dms update")
+    result = _run_captured(argv, env=env, label="dms update")
+    invalidate_all_dms_caches()
+    return result
 
 
 
@@ -299,7 +331,9 @@ def onboard():
         return CommandResult(status="error", message=f"Script not found: {script_path}", returncode=2)
 
     argv = ["sudo", "-n", "-E", "-u", "ubuntu", str(script_path)]
-    return _run_captured(argv, env=env, label="dms onboard")
+    result = _run_captured(argv, env=env, label="dms onboard")
+    invalidate_all_dms_caches()
+    return result
 
 
 @router.websocket("/ws/update")
@@ -333,46 +367,62 @@ async def ws_dms_update(ws: WebSocket):
         sudo apt install ./dms-latest.deb -y --allow-downgrades
         echo "Cleaning up ..."
         rm -f dms-latest.deb || true
-        echo "✅ Update complete."
+        echo "Update complete."
     '''
     argv = ["bash", "-lc", update_script]
     await run_pty_ws(ws, argv, env=env, cwd=None, label="update")
 
 @router.get("/peers/connected", response_model=ConnectedPeers)
-def peers_connected(mgr: DMSManager = Depends(get_mgr)):
+def peers_connected(
+    mgr: DMSManager = Depends(get_mgr),
+    fresh: bool = Query(
+        False,
+        alias="refresh",
+        description="When true, bypass the peer cache for a fresh snapshot.",
+    ),
+):
     """
     Returns the list of connected peers, normalized into JSON.
-    Uses the existing DMSManager.view_peer_details() and parses stdout.
+    Uses cached CLI output when available to avoid repeated subprocess calls.
     """
-    res = mgr.view_peer_details()
-    if not res or res.get("status") != "success":
-        # Propagate a helpful error but keep behavior pure (we don't change the module)
-        raise HTTPException(status_code=503, detail=res.get("message", "Peer list unavailable"))
+    stdout = get_cached_dms_peer_raw(force_refresh=fresh)
+    if not stdout:
+        res = mgr.view_peer_details()
+        if not res or res.get("status") != "success":
+            raise HTTPException(status_code=503, detail=res.get("message", "Peer list unavailable"))
+        stdout = res.get("message") or ""
 
-    stdout = res.get("message") or ""
     parsed = parse_connected_peers(stdout)
     peers_models = [ConnectedPeer(**p) for p in parsed]
-    # If parsing failed, include raw so the UI can show the text
-    return ConnectedPeers(count=len(peers_models), peers=peers_models, raw=None if peers_models else stdout)
+    raw_payload = None if peers_models else stdout
+    return ConnectedPeers(count=len(peers_models), peers=peers_models, raw=raw_payload)
 
 @router.get("/status/combined", response_model=FullStatusCombined)
-def status_combined(mgr: DMSManager = Depends(get_mgr)):
+def status_combined(
+    fresh: bool = Query(
+        False,
+        alias="refresh",
+        description="When true, bypass the DMS caches for a fresh combined snapshot.",
+    )
+):
     """
     Combined resources + DMS status as JSON, plus a human-readable summary text
     (mirrors show_full_status without colors).
     """
-    info = mgr.get_full_status_info()
-    # Normalize DMS fields so dms_running is a proper bool, etc.
-    dms_norm = normalize_dms_status(info)
+    status_info = get_cached_dms_status_info(force_refresh=fresh) or {}
+    resources_dict = get_cached_dms_resource_info(force_refresh=fresh) or {}
 
+    dms_norm = normalize_dms_status(status_info)
     resources = ResourcesInfo(
-        onboarding_status=info.get("onboarding_status", "Unknown"),
-        free_resources=info.get("free_resources", "Unknown"),
-        allocated_resources=info.get("allocated_resources", "Unknown"),
-        onboarded_resources=info.get("onboarded_resources", "Unknown"),
+        onboarding_status=resources_dict.get("onboarding_status", "Unknown"),
+        free_resources=resources_dict.get("free_resources", "Unknown"),
+        allocated_resources=resources_dict.get("allocated_resources", "Unknown"),
+        onboarded_resources=resources_dict.get("onboarded_resources", "Unknown"),
     )
     dms = DmsStatus(**dms_norm)
-    summary_text = build_full_status_summary({**info, **dms_norm})
+
+    summary_source = {**resources_dict, **status_info, **dms_norm}
+    summary_text = build_full_status_summary(summary_source)
 
     return FullStatusCombined(resources=resources, dms=dms, summary_text=summary_text)
 
