@@ -1,0 +1,41 @@
+version: "V1"
+
+allocations:
+    alloc1:
+        executor: docker
+        type: task
+        resources:
+            cpu:
+                cores: 4
+            gpus: []
+            ram:
+                size: 6 # in GiB
+            disk:
+                size: 10 # in GiB
+        execution:
+            type: docker
+            image: kabirkbr/mork:amd64
+            cmd: ["bash","-c","./target/release/mork bench default"]
+    alloc2:
+        executor: docker
+        type: task
+        resources:
+            cpu:
+                cores: 2
+            gpus: []
+            ram:
+                size: 2 # in GiB
+            disk:
+                size: 2 # in GiB
+        execution:
+            type: docker
+            image: kabirkbr/mork:amd64
+            cmd: ["bash","-c","./target/release/mork test"]              
+
+nodes:
+    CustomRemote:
+        allocations:
+            - alloc1
+            - alloc2
+        peer: {{peer_id}}
+    
