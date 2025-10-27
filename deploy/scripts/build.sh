@@ -58,10 +58,12 @@ echo "Building backend for ${ARCH}..."
 python3 -m venv "$SCRIPT_DIR/.build-venv"
 # shellcheck disable=SC1090
 source "$SCRIPT_DIR/.build-venv/bin/activate"
-pip install -U pip wheel pex
+export PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
+export PIP_RETRIES="${PIP_RETRIES:-5}"
+python -m pip install --no-cache-dir --progress-bar off --upgrade pip wheel pex
 
 # Build wheels for dependencies
-pip wheel -r "$ROOT/backend/nunet_api/requirements.txt" -w "$ROOT/release/wheels"
+python -m pip wheel --no-cache-dir --progress-bar off -r "$ROOT/backend/nunet_api/requirements.txt" -w "$ROOT/release/wheels"
 
 # Build PEX
 ( cd "$ROOT/backend" && \
@@ -90,4 +92,3 @@ rm -rf "$SCRIPT_DIR/.build-venv"
 echo "Build complete for ${ARCH}"
 echo "Packages available in:"
 ls -la "$ROOT/dist"/*.deb
-

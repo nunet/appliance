@@ -23,6 +23,7 @@ import { OrgSelect } from "./OrgSelect";
 import { Stepper } from "./Stepper";
 import { StatusBanner } from "./StatusBanner";
 import RestartDmsButton from "./RestartDMSButton";
+import { RenewalModal } from "./RenewalModal";
 import { toast } from "sonner";
 
 export function OnboardingFlow({
@@ -126,10 +127,24 @@ export function OnboardingFlow({
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [forceOrgSelect, setForceOrgSelect] = useState(false);
+  const [renewingOrgDid, setRenewingOrgDid] = useState<string | null>(null);
+  const [renewalModal, setRenewalModal] = useState<{
+    open: boolean;
+    orgDid: string | null;
+    orgName?: string;
+  }>({
+    open: false,
+    orgDid: null,
+    orgName: undefined,
+  });
+  const isRenewalModalOpen = renewalModal.open && Boolean(renewalModal.orgDid);
+  const previousStepRef = useRef<string | null>(null);
 
   const goToOrgSelect = () => {
     setForceOrgSelect(true);
     setStartOperation(false);
+    setRenewingOrgDid(null);
+    setRenewalModal({ open: false, orgDid: null, orgName: undefined });
   };
 
   const resetOnboarding = async () => {
@@ -203,10 +218,47 @@ export function OnboardingFlow({
     currentStep === "select_org";
   const showForm =
     !forceOrgSelect &&
+    !isRenewalModalOpen &&
     (currentStep === "collect_join_data" || currentStep === "submit_data");
 
   const showComplete = !forceOrgSelect && isComplete;
-  const canCancel = !forceOrgSelect && currentStep !== "init" && !isComplete;
+  const canCancel = !forceOrgSelect && currentStep !== "init" && !isComplete && !isRenewalModalOpen;
+  const activeOrgDid = status?.raw?.org_data?.did;
+  const backendRenewalFlag =
+    Boolean(status?.raw?.org_data?.renewal) || Boolean(status?.raw?.form_data?.renewal) || Boolean(status?.raw?.renewal);
+  const isRenewingActive =
+    Boolean(activeOrgDid) &&
+    (backendRenewalFlag || (renewingOrgDid !== null && renewingOrgDid === activeOrgDid));
+
+  useEffect(() => {
+    if (!status) {
+      return;
+    }
+    const payload = {
+      prevStep: previousStepRef.current,
+      currentStep,
+      apiStatus,
+      progress: status.progress,
+      forceOrgSelect,
+      showSelect,
+      showForm,
+      showComplete,
+      isComplete,
+      isRenewalModalOpen,
+    };
+    console.debug("[OnboardFlow] status update", payload, status);
+    previousStepRef.current = currentStep;
+  }, [
+    status,
+    currentStep,
+    apiStatus,
+    forceOrgSelect,
+    showSelect,
+    showForm,
+    showComplete,
+    isComplete,
+    isRenewalModalOpen,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -285,8 +337,22 @@ export function OnboardingFlow({
       {showSelect && (
         <OrgSelect
           known={knownOrgs}
-          disabled={selectMutation.isPending}
-          onSelect={(did) => selectMutation.mutate(did)}
+          disabled={selectMutation.isPending || joinMutation.isPending || isRenewalModalOpen}
+          onSelect={(did) => {
+            setRenewingOrgDid(null);
+            selectMutation.mutate(did);
+          }}
+          onRenew={(did) => {
+            const orgEntry = knownOrgs?.[did];
+            setRenewingOrgDid(did);
+            setRenewalModal({
+              open: true,
+              orgDid: did,
+              orgName: orgEntry?.name ?? did,
+            });
+            setForceOrgSelect(true);
+            setStartOperation(true);
+          }}
           setStartOperation={setStartOperation}
           onBeginOnboarding={() => setForceOrgSelect(false)}
         />
@@ -294,11 +360,17 @@ export function OnboardingFlow({
 
       {showForm && (
         <JoinForm
-          orgDid={status?.raw?.org_data?.did}
+          orgDid={activeOrgDid}
           submitting={joinMutation.isPending}
-          onSubmit={(data) => joinMutation.mutate(data)}
+          onSubmit={(data) =>
+            joinMutation.mutate({
+              ...data,
+              renewal: isRenewingActive,
+            })
+          }
           knownOrgs={knownOrgs}
           onCancel={() => setIsCancelDialogOpen(true)}
+          renewal={isRenewingActive}
         />
       )}
 
@@ -382,6 +454,27 @@ export function OnboardingFlow({
           </CardFooter>
         </Card>
       )}
+
+      <RenewalModal
+        open={renewalModal.open}
+        orgDid={renewalModal.orgDid}
+        orgName={renewalModal.orgName}
+        qc={qc}
+        onClose={(wasSuccessful) => {
+          const succeeded = Boolean(wasSuccessful);
+          setRenewalModal({ open: false, orgDid: null, orgName: undefined });
+          setStartOperation(false);
+          setRenewingOrgDid(null);
+          if (succeeded) {
+            toast.success("Renewal finished successfully.");
+            setForceOrgSelect(true);
+            qc.invalidateQueries({ queryKey: ["org-status"] });
+            qc.invalidateQueries({ queryKey: ["orgs-known"] });
+          } else if (wasSuccessful === false) {
+            toast.error("Renewal did not complete. Please check the status and try again.");
+          }
+        }}
+      />
     </div>
   );
 }

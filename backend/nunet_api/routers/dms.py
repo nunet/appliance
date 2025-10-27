@@ -1,6 +1,6 @@
 # nunet_api/app/routers/dms.py
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Depends, WebSocket
+from fastapi import APIRouter, HTTPException, Depends
 import os
 import logging
 from ..schemas import (
@@ -11,7 +11,6 @@ from pathlib import Path
 from ..adapters import normalize_dms_status, parse_connected_peers, build_full_status_summary
 from pathlib import Path
 import json, subprocess
-from ..utils.pty_bridge import run_pty_ws
 from modules.dms_manager import DMSManager
 from modules.dms_utils import (
     get_cached_dms_peer_raw,
@@ -294,30 +293,6 @@ def _get_dms_passphrase() -> str | None:
     except Exception:
         return None
 
-@router.websocket("/ws/init")
-async def ws_dms_init(ws: WebSocket):
-    """
-    Run the interactive DMS initialization script under a PTY.
-    Your UI can answer y/n etc. by sending:
-      {"type":"stdin","data":"y\\n"}
-    """
-    await ws.accept()
-    env = os.environ.copy()
-    dms_pw = _get_dms_passphrase()
-    if dms_pw:
-        env["DMS_PASSPHRASE"] = dms_pw
-
-    # Use the same path the manager uses
-    script_path = Path("/home/ubuntu/menu/scripts/configure-dms.sh")
-    if not script_path.exists():
-        await ws.send_json({"type": "error", "message": f"Script missing: {script_path}"})
-        await ws.close(code=4404)
-        return
-
-    # run as ubuntu like your manager does
-    argv = ["sudo", "-u", "ubuntu", str(script_path)]
-    await run_pty_ws(ws, argv, env=env, cwd=None, label="init")
-
 @router.post("/onboard", response_model=CommandResult)
 def onboard():
     env = os.environ.copy()
@@ -335,42 +310,6 @@ def onboard():
     invalidate_all_dms_caches()
     return result
 
-
-@router.websocket("/ws/update")
-async def ws_dms_update(ws: WebSocket):
-    """
-    Stream the DMS update (wget + apt) under a PTY so progress bars render nicely.
-    This mirrors your manager's update behavior but streams output live.
-    """
-    await ws.accept()
-    env = os.environ.copy()
-    # apt may ask for confirmation if flags change; keep PTY and send "-y"
-    # You can also export DEBIAN_FRONTEND=noninteractive to be extra safe:
-    env["DEBIAN_FRONTEND"] = env.get("DEBIAN_FRONTEND", "noninteractive")
-
-    # We'll run a small bash that replicates manager.update_dms steps with streaming
-    # Detect arch + set URL
-    update_script = r'''
-        set -euo pipefail
-        arch="$(uname -m | tr '[:upper:]' '[:lower:]')"
-        echo "Detected arch: $arch"
-        if echo "$arch" | grep -qi 'arm\|aarch'; then
-          url="https://d.nunet.io/nunet-dms-arm64-latest.deb"
-        elif echo "$arch" | grep -qi 'x86_64\|amd64\|amd'; then
-          url="https://d.nunet.io/nunet-dms-amd64-latest.deb"
-        else
-          echo "Unsupported architecture: $arch" >&2; exit 2
-        fi
-        echo "Downloading $url ..."
-        wget -N "$url" -O dms-latest.deb
-        echo "Installing ..."
-        sudo apt install ./dms-latest.deb -y --allow-downgrades
-        echo "Cleaning up ..."
-        rm -f dms-latest.deb || true
-        echo "Update complete."
-    '''
-    argv = ["bash", "-lc", update_script]
-    await run_pty_ws(ws, argv, env=env, cwd=None, label="update")
 
 @router.get("/peers/connected", response_model=ConnectedPeers)
 def peers_connected(

@@ -1,13 +1,13 @@
 import json, subprocess, os
 from modules.dms_manager import DMSManager
-from fastapi import APIRouter, HTTPException, Depends, Query, Body, WebSocket
+from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
-from ..utils.pty_bridge import run_pty_ws
 from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from modules.path_constants import DMS_DEPLOYMENTS_DIR
+from modules.onboarding_manager import OnboardingManager
 from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
@@ -23,9 +23,20 @@ from modules.ensemble_utils import (
     validate_form_data, save_deployment_instance, get_deployment_options
 )
 
-
-
 router = APIRouter()
+
+def _resolve_deploy_permission() -> Tuple[bool, Optional[str], str]:
+    """
+    Determine whether the active role is allowed to deploy ensembles.
+    Returns (allowed, role_id, display_name).
+    """
+    mgr = OnboardingManager()
+    allowed = mgr.role_allows("deploy")
+    role_id = mgr.get_selected_role_id()
+    profile = mgr.get_active_role_profile()
+    label = profile.get("label") if isinstance(profile, dict) else None
+    display = label or role_id or "current role"
+    return allowed, role_id, display
 
 def _metadata_without_peer_requirement(meta: dict | None) -> dict | None:
     """
@@ -523,6 +534,16 @@ def deployment_logs_text(
 
 @router.post("/deployments", response_model=DeployResponse)
 def deploy_ensemble(payload: DeployRequest, mgr: EnsembleManagerV2 = Depends(get_mgr)):
+    allowed, role_id, role_display = _resolve_deploy_permission()
+    if not allowed:
+        OnboardingManager().append_log(
+            "permissions",
+            f"Blocked deployment attempt for role '{role_display}' ({role_id or 'unknown'}).",
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{role_display}' is not permitted to deploy ensembles.",
+        )
     file_path = _resolve_path(mgr, payload.file_path)
     res = mgr.deploy_ensemble(file_path, timeout=payload.timeout or 60)
     if res.get("status") != "success":
@@ -605,54 +626,6 @@ def deployment_manifest_raw(deployment_id: str, mgr: EnsembleManagerV2 = Depends
     return data
 
 
-def _get_dms_passphrase() -> str | None:
-    try:
-        key_id = subprocess.run(["keyctl", "request", "user", "dms_passphrase"], text=True, capture_output=True, check=True).stdout.strip()
-        if not key_id:
-            return None
-        return subprocess.run(["keyctl", "pipe", key_id], text=True, capture_output=True, check=True).stdout.strip() or None
-    except Exception:
-        return None
-
-@router.websocket("/ws/deploy")
-async def ws_deploy(ws: WebSocket):
-    """
-    WebSocket to perform a deployment in real-time:
-    Client should connect with query params:
-      file=<abs or relative to ~/ensembles>  timeout=<seconds, default 60>
-    Server streams stdout/stderr and exit event.
-    """
-    await ws.accept()
-
-    params = ws.query_params
-    file_path = params.get("file")
-    timeout = params.get("timeout") or "60"
-
-    if not file_path:
-        await ws.send_json({"type": "error", "message": "Missing 'file' query param"})
-        await ws.close(code=4400)
-        return
-
-    mgr = EnsembleManagerV2()
-    # resolve path relative to ~/ensembles
-    p = (mgr.base_dir / file_path).expanduser()
-    if not p.is_absolute():
-        p = (mgr.base_dir / file_path).resolve()
-
-    env = os.environ.copy()
-    dms_pw = _get_dms_passphrase()
-    if dms_pw:
-        env["DMS_PASSPHRASE"] = dms_pw
-
-    argv = [
-        "nunet", "-c", "dms", "actor", "cmd", "/dms/node/deployment/new",
-        "-t", f"{int(timeout)}s", "-f", str(p)
-    ]
-
-    # PTY streaming; UI can watch stdout and parse EnsembleID as it appears.
-    await run_pty_ws(ws, argv, env=env, cwd=None, label="deploy")
-
-
 @router.get("/templates/yamls", response_model=dict)
 def list_yaml_templates(
     page: int = Query(1, ge=1, description="Page number (1-based)"),
@@ -662,7 +635,7 @@ def list_yaml_templates(
 ):
     """
     List YAML ensemble files (for deployment) under ~/ensembles.
-    Frontend can use 'path' with your WS deploy endpoint: file=<path>
+    Returned paths feed directly into the standard deployment endpoints.
     """
     root = mgr.base_dir
     yaml_files = sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml")))

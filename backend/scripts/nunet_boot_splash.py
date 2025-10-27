@@ -34,9 +34,11 @@ class NuNetBootSplash:
     
     def __init__(self):
         self.colors = Colors()
-        repo_root = Path(__file__).resolve().parents[2]
-        self.credentials_file = repo_root / "deploy" / "admin_credentials.json"
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.credentials_file = self.repo_root / "deploy" / "admin_credentials.json"
         self.onboarding_state = Path.home() / "nunet" / "appliance" / "onboarding_state.json"
+        self.known_orgs_dir = self.repo_root / "known_orgs"
+        self.known_orgs_file = self.known_orgs_dir / "known_organizations.json"
         
     def clear_screen(self):
         """Clear the terminal screen"""
@@ -301,7 +303,7 @@ class NuNetBootSplash:
         # Update Organizations
         try:
             # Download known organizations from GitLab
-            url = "https://gitlab.com/nunet/solutions/nunet-appliance/-/raw/main/config/known_orgs/known_organizations.json"
+            url = "https://gitlab.com/nunet/appliance/-/raw/main/known_orgs/known_organizations.json"
             print(f"{self.colors.CYAN} Downloading organizations from GitLab...{self.colors.NC}")
             
             response = requests.get(url, timeout=10)
@@ -312,19 +314,17 @@ class NuNetBootSplash:
             print(f"{self.colors.GREEN} Downloaded {len(orgs_data)} organizations{self.colors.NC}")
             
             # Create target directory if it doesn't exist
-            target_dir = Path.home() / "nunet" / "appliance" / "known_orgs"
-            target_dir.mkdir(parents=True, exist_ok=True)
+            self.known_orgs_dir.mkdir(parents=True, exist_ok=True)
             
             # Write to local file
-            target_file = target_dir / "known_organizations.json"
-            with open(target_file, 'w') as f:
+            with open(self.known_orgs_file, 'w') as f:
                 json.dump(orgs_data, f, indent=2)
             
             # Set secure permissions
-            target_file.chmod(0o644)
+            self.known_orgs_file.chmod(0o644)
             
             print(f"{self.colors.GREEN} Organizations updated successfully{self.colors.NC}")
-            print(f"{self.colors.CYAN} Saved to: {target_file}{self.colors.NC}")
+            print(f"{self.colors.CYAN} Saved to: {self.known_orgs_file}{self.colors.NC}")
             
             # Show available organizations
             print(f"\n{self.colors.YELLOW} Available Organizations:{self.colors.NC}")
