@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from starlette.routing import WebSocketRoute
 
 from backend.nunet_api import security as security_module
 
@@ -349,7 +348,7 @@ def test_registered_routes_cover_expected_prefixes(app):
         for route in routes
         if route.path.startswith("/") and route.path not in {"/", "/health"}
     }
-    expected = {"auth", "dms", "sys", "ensemble", "stream", "proc", "organizations", "payments"}
+    expected = {"auth", "dms", "sys", "ensemble", "organizations", "payments"}
     assert expected.issubset(prefixes)
 
 
@@ -497,6 +496,95 @@ def test_organizations_status_includes_timeline(client, monkeypatch):
     assert any(step["id"] == "pending_authorization" and step["state"] == "active" for step in data["step_states"])
 
 
+def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test"
+    org_entry = {
+        "name": "Test Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    class RecordingOnboardingManager:
+        def __init__(self):
+            self.state = {"step": "init", "logs": []}
+            self.step_history: list[str] = []
+            self.dms_manager = types.SimpleNamespace(
+                get_self_peer_info=lambda: {
+                    "did": "did:peer:test",
+                    "peer_id": "peer-test",
+                    "context": "local",
+                    "public_addrs": [],
+                    "local_addrs": [],
+                }
+            )
+
+        def update_state(self, **kwargs):
+            old_step = self.state.get("step")
+            self.state.update(kwargs)
+            new_step = self.state.get("step")
+            if new_step and new_step != old_step:
+                self.step_history.append(new_step)
+                logs = self.state.setdefault("logs", [])
+                logs.append({"step": new_step, "message": f"step->{new_step}"})
+
+        def append_log(self, step, message, **_):
+            self.state.setdefault("logs", []).append({"step": step, "message": message})
+
+        def get_onboarding_status(self):
+            return dict(self.state)
+
+        def api_submit_join(self, payload):
+            self.last_payload = payload
+            return {"status": "pending", "id": "req-123", "status_token": "token-abc"}
+
+    recording_mgr = RecordingOnboardingManager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(org_router, "get_tokenomics_config", lambda _entry: {"enabled": False, "chain": None})
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+    }
+
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["step"] == "join_data_sent"
+    assert body["api_status"] == "pending"
+
+    # Ensure the server-side step history never reverts to select_org
+    assert "select_org" not in recording_mgr.step_history
+    assert recording_mgr.step_history[0] == "collect_join_data"
+    assert recording_mgr.step_history[-1] == "join_data_sent"
+
+    snapshots = [client.get("/organizations/status").json(), client.get("/organizations/status").json()]
+    for snapshot in snapshots:
+        assert snapshot["current_step"] == "join_data_sent"
+        assert snapshot["current_step"] != "select_org"
+
 def test_ensemble_templates_list_uses_relative_paths(client, tmp_path):
     from backend.nunet_api.routers import ensemble as ensemble_router
 
@@ -526,10 +614,10 @@ def test_ensemble_templates_list_uses_relative_paths(client, tmp_path):
     assert items[0]["relative_path"] == "demo/app.yaml"
 
 
-def test_websocket_routes_registered(app):
+def test_no_websocket_routes_registered(app):
     ws_routes = [
         route
         for route in app.routes
-        if isinstance(route, WebSocketRoute) and route.endpoint.__module__.startswith("backend.nunet_api")
+        if route.__class__.__name__ == "WebSocketRoute" and route.endpoint.__module__.startswith("backend.nunet_api")
     ]
-    assert ws_routes, "Expected at least one WebSocket route to be registered"
+    assert not ws_routes, "WebSocket routes should be removed from backend.nunet_api"

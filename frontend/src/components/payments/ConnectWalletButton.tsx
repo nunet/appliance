@@ -44,7 +44,18 @@ function ethereumLabel(chainId?: number) {
   }
 }
 
-export function ConnectWalletButton() {
+function walletTypeLabel(type?: WalletType | null) {
+  switch (type) {
+    case "cardano":
+      return "Cardano";
+    case "ethereum":
+      return "Ethereum";
+    default:
+      return "Wallet";
+  }
+}
+
+export function ConnectWalletButton({ allowed }: { allowed?: WalletType[] } = {}) {
   const [busy, setBusy] = useState<WalletType | null>(null);
   const [isCardanoReady, setIsCardanoReady] = useState<boolean>(() =>
     typeof window !== "undefined" ? isCardanoWalletAvailable() : false,
@@ -55,14 +66,34 @@ export function ConnectWalletButton() {
   const setConnection = useWalletStore((state) => state.setConnection);
   const activate = useWalletStore((state) => state.activate);
 
-  const activeConnection = activeType ? connections[activeType] : undefined;
+  const allowedSet = allowed?.length ? new Set<WalletType>(allowed) : null;
+
+  let resolvedActiveType = activeType;
+  if (allowedSet) {
+    if (!resolvedActiveType || !allowedSet.has(resolvedActiveType)) {
+      resolvedActiveType =
+        allowed.find((type) => connections[type]) ?? allowed[0] ?? null;
+    }
+  }
+
+  const activeConnection = resolvedActiveType ? connections[resolvedActiveType] : undefined;
+
+  const fallbackLabel = useMemo(() => {
+    if (!allowedSet || !allowed?.length) {
+      return "Connect wallet";
+    }
+    if (allowed.length === 1) {
+      return `Connect ${walletTypeLabel(allowed[0])} wallet`;
+    }
+    return "Connect wallet";
+  }, [allowed, allowedSet]);
 
   const buttonLabel = useMemo(() => {
     if (!activeConnection) {
-      return "Connect wallet";
+      return fallbackLabel;
     }
     return `${activeConnection.provider}: ${middleEllipsis(activeConnection.address, 6, 6)}`;
-  }, [activeConnection]);
+  }, [activeConnection, fallbackLabel]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -291,6 +322,11 @@ export function ConnectWalletButton() {
     },
   ];
 
+  const filteredWalletItems = allowedSet
+    ? walletItems.filter((item) => allowedSet.has(item.type))
+    : walletItems;
+  const itemsToRender = filteredWalletItems.length ? filteredWalletItems : walletItems;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -309,7 +345,7 @@ export function ConnectWalletButton() {
       <DropdownMenuContent align="end" className="w-72 space-y-2">
         <DropdownMenuLabel>Select a wallet</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {walletItems.map((item) => (
+        {itemsToRender.map((item) => (
           <div
             key={item.type}
             className="flex flex-col gap-2 rounded-md border border-border/60 p-3"

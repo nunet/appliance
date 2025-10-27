@@ -32,10 +32,12 @@ VENV="$ROOT/.build-venv"
 python3 -m venv "$VENV"
 # shellcheck disable=SC1090
 source "$VENV/bin/activate"
-python -m pip install -U pip wheel pex
+export PIP_DEFAULT_TIMEOUT="${PIP_DEFAULT_TIMEOUT:-120}"
+export PIP_RETRIES="${PIP_RETRIES:-5}"
+python -m pip install --no-cache-dir --progress-bar off --upgrade pip wheel pex
 
 mkdir -p "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
-pip wheel -r "$ROOT/backend/nunet_api/requirements.txt" -w "$ROOT/release/wheels"
+python -m pip wheel --no-cache-dir --progress-bar off -r "$ROOT/backend/nunet_api/requirements.txt" -w "$ROOT/release/wheels"
 
 (
   cd "$ROOT/backend"
@@ -82,7 +84,7 @@ fi
 cat > "$PKGDIR/etc/nunet-appliance-web/app.env" <<'EOF'
 # Overrides for nunet-appliance-web.service (uncomment to change)
 #PORT=8080
-#WORKERS=2
+#WORKERS=1
 #NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
 #NUNET_DATA_DIR=/usr/share/nunet-appliance-web/data
 EOF
@@ -99,7 +101,7 @@ User=${SERVICE_USER}
 KeyringMode=shared
 WorkingDirectory=/usr/lib/nunet-appliance-web
 Environment=PORT=8080
-Environment=WORKERS=2
+Environment=WORKERS=1
 Environment=NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
 EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/bin/python3 /usr/lib/nunet-appliance-web/nunet-dms.pex \\

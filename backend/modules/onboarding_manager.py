@@ -15,13 +15,13 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import requests
 
 from .dms_manager import DMSManager
 from .dms_utils import get_dms_resource_info, run_dms_command_with_passphrase
-from .org_utils import load_known_organizations
+from .org_utils import load_known_organizations, extract_role_profiles, get_tokens_for_org
 from .path_constants import (
     APPLIANCE_DIR,
     ONBOARDING_LOG_FILE,
@@ -174,6 +174,156 @@ class OnboardingManager:
         return _deep_copy(self.state)
 
     # ------------------------------------------------------------------ #
+    # Role / permission helpers
+    # ------------------------------------------------------------------ #
+
+    def get_selected_role_id(self) -> Optional[str]:
+        """Return the currently selected role identifier, if available."""
+        org_data = self.state.get("org_data") or {}
+        org_did = None
+        if isinstance(org_data, dict):
+            org_did = org_data.get("did")
+            selected = org_data.get("selected_role")
+            if isinstance(selected, str) and selected.strip():
+                return selected.strip()
+
+        form_data = self.state.get("form_data") or {}
+        if isinstance(form_data, dict):
+            roles = form_data.get("roles")
+            if isinstance(roles, (list, tuple, set)):
+                for role in roles:
+                    if role is None:
+                        continue
+                    value = role.strip() if isinstance(role, str) else str(role).strip()
+                    if value:
+                        return value
+            selected = form_data.get("why_join")
+            if isinstance(selected, str) and selected.strip():
+                return selected.strip()
+
+        roles = org_data.get("roles")
+        if isinstance(roles, list):
+            for role in roles:
+                if isinstance(role, str) and role.strip():
+                    return role.strip()
+
+        if isinstance(org_did, str) and org_did.strip():
+            try:
+                from backend.nunet_api import role_metadata
+
+                primary = role_metadata.get_primary_role(org_did)
+                if primary:
+                    return primary
+
+                cached_roles = role_metadata.get_roles(org_did)
+                if cached_roles:
+                    return cached_roles[0]
+            except Exception as exc:  # pragma: no cover - defensive log path
+                logger.debug("Unable to load cached role metadata: %s", exc)
+
+        return None
+
+    def get_role_profiles(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Retrieve cached role profiles for the selected organisation, falling
+        back to the known organisations payload when necessary.
+        """
+        org_data = self.state.get("org_data") or {}
+        profiles = org_data.get("role_profiles")
+        if isinstance(profiles, dict) and profiles:
+            return profiles
+
+        org_did = org_data.get("did")
+        if not isinstance(org_did, str) or not org_did:
+            return {}
+
+        try:
+            known = load_known_organizations() or {}
+            entry = known.get(org_did)
+            profiles = extract_role_profiles(entry)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to load role profiles for %s: %s", org_did, exc)
+            profiles = {}
+
+        if profiles:
+            updated = dict(org_data)
+            updated["role_profiles"] = profiles
+            self.update_state(org_data=updated)
+        return profiles
+
+    def get_active_role_profile(self) -> Dict[str, Any]:
+        """Return the complete role profile for the active role."""
+        role_id = self.get_selected_role_id()
+        if not role_id:
+            return {}
+        profiles = self.get_role_profiles()
+        profile = profiles.get(role_id)
+        if isinstance(profile, dict):
+            return profile
+        return {}
+
+    @staticmethod
+    def _normalize_cap_value(value: str) -> str:
+        """Normalize a capability string for reliable comparisons."""
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized.rstrip("/")
+
+    @classmethod
+    def _extract_caps(cls, require_template: Dict[str, Any] | None) -> List[str]:
+        """Return a normalised list of capability paths from a require template."""
+        if not isinstance(require_template, dict):
+            return []
+        raw_caps = require_template.get("caps")
+        if not isinstance(raw_caps, list):
+            return []
+        caps: List[str] = []
+        for cap in raw_caps:
+            if not isinstance(cap, str):
+                continue
+            normalized = cls._normalize_cap_value(cap)
+            if normalized and normalized not in caps:
+                caps.append(normalized)
+        return caps
+
+    def get_active_caps(self) -> List[str]:
+        """Expose the capability list for the active role profile."""
+        profile = self.get_active_role_profile()
+        require_template = profile.get("require_template") if isinstance(profile, dict) else None
+        return self._extract_caps(require_template)
+
+    @classmethod
+    def _cap_allows(cls, granted: str, required: str) -> bool:
+        """Determine if *granted* capability covers the *required* path."""
+        granted_norm = cls._normalize_cap_value(granted)
+        required_norm = cls._normalize_cap_value(required)
+        if not granted_norm or not required_norm:
+            return False
+        if granted_norm == "/dms":
+            return True
+        if granted_norm == required_norm:
+            return True
+        return required_norm.startswith(f"{granted_norm}/")
+
+    def role_allows(self, permission: str, *, default: bool = False) -> bool:
+        """
+        Check if the active role grants a specific permission.
+        Permissions are derived from the capability set in require_template.
+        """
+        caps = self.get_active_caps()
+        if not caps:
+            return default
+
+        if permission == "deploy":
+            required_cap = "/dms/deployment"
+            return any(self._cap_allows(cap, required_cap) for cap in caps)
+
+        return default
+
+    # ------------------------------------------------------------------ #
     # External metadata helpers
     # ------------------------------------------------------------------ #
 
@@ -266,31 +416,64 @@ class OnboardingManager:
     # Capability and credential handling
     # ------------------------------------------------------------------ #
 
-    def generate_and_apply_require_token(self, org_did: str, *, expiry_days: int = 30) -> bool:
-        """Generate a require token for *org_did* and anchor it into the DMS context."""
+    def generate_and_apply_require_token(
+        self,
+        org_did: str,
+        *,
+        expiry_days: int = 30,
+        role_id: Optional[str] = None,
+    ) -> bool:
+        """Generate a require token for *org_did* using the active role profile."""
+        role_id = role_id or self.get_selected_role_id()
+        profiles = self.get_role_profiles()
+        profile = profiles.get(role_id) if role_id else {}
+        require_template = {}
+        if isinstance(profile, dict):
+            require_template = profile.get("require_template") or {}
+
+        context = require_template.get("context")
+        if not isinstance(context, str) or not context.strip():
+            context = "dms"
+        else:
+            context = context.strip()
+
+        caps = self._extract_caps(require_template)
+        if not caps:
+            label = (profile or {}).get("label") if isinstance(profile, dict) else None
+            role_label = label or role_id or "active role"
+            raise RuntimeError(f"Role '{role_label}' is missing require_template.caps; cannot generate require token.")
+
+        topics_raw = require_template.get("topics") if isinstance(require_template, dict) else None
+        topics: List[str] = []
+        if isinstance(topics_raw, list):
+            for topic in topics_raw:
+                if not isinstance(topic, str):
+                    continue
+                clean_topic = topic.strip()
+                if clean_topic and clean_topic not in topics:
+                    topics.append(clean_topic)
+
         expiry = (datetime.utcnow() + timedelta(days=expiry_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self.append_log("capabilities_applied", f"Generating require token (expires {expiry})")
+        if role_id:
+            self.append_log("capabilities_applied", f"Generating require token for role '{role_id}' (expires {expiry})")
+        else:
+            self.append_log("capabilities_applied", f"Generating require token with default profile (expires {expiry})")
+
+        cmd = [
+            "nunet",
+            "cap",
+            "grant",
+            "--context",
+            context,
+        ]
+        for cap in caps:
+            cmd.extend(["--cap", cap])
+        for topic in topics:
+            cmd.extend(["--topic", topic])
+        cmd.extend(["--expiry", expiry, org_did])
+
         result = run_dms_command_with_passphrase(
-            [
-                "nunet",
-                "cap",
-                "grant",
-                "--context",
-                "dms",
-                "--cap",
-                "/dms/deployment",
-                "--cap",
-                "/dms/tokenomics/contract",
-                "--cap",
-                "/broadcast",
-                "--cap",
-                "/public",
-                "--topic",
-                "/nunet",
-                "--expiry",
-                expiry,
-                org_did,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -302,7 +485,7 @@ class OnboardingManager:
 
         self.append_log("capabilities_applied", "Anchoring require token...")
         run_dms_command_with_passphrase(
-            ["nunet", "cap", "anchor", "-c", "dms", "--require", token],
+            ["nunet", "cap", "anchor", "-c", context, "--require", token],
             capture_output=True,
             text=True,
             check=True,
@@ -400,15 +583,21 @@ class OnboardingManager:
         once the onboarding request has been approved.
         """
         try:
+            role_id = self.get_selected_role_id()
             org_did = payload.get("organization_did")
             if not org_did:
                 org_data = self.state.get("org_data") or {}
                 if isinstance(org_data, dict):
                     org_did = org_data.get("did")
 
+            form_wallet = (self.state.get("form_data") or {}).get("wallet_address")
+            if form_wallet:
+                self.append_log("join_data_received", f"Wallet on record: {form_wallet}")
+
+            require_success = False
             if org_did:
                 try:
-                    self.generate_and_apply_require_token(org_did)
+                    require_success = self.generate_and_apply_require_token(org_did, role_id=role_id)
                 except Exception as exc:
                     logger.warning("Require token generation failed: %s", exc)
                     self.append_log("capabilities_applied", f"Require token generation failed: {exc}")
@@ -417,6 +606,18 @@ class OnboardingManager:
             if provide_token:
                 self.append_log("capabilities_applied", "Anchoring provide token...")
                 self._apply_provide_token(provide_token)
+
+            if org_did:
+                try:
+                    from backend.nunet_api import role_metadata
+
+                    role_metadata.record_role_tokens(
+                        org_did,
+                        provide_token=provide_token,
+                        require_generated=require_success,
+                    )
+                except Exception as exc:
+                    logger.debug("Failed to update role metadata cache: %s", exc)
 
             self._configure_observability(payload)
             self._write_certificates(payload)
@@ -447,6 +648,94 @@ class OnboardingManager:
             logger.exception("Post approval processing failed: %s", exc)
             self.update_state(error=str(exc), processing=False, processed_ok=False)
             return False
+
+    def leave_organization(self, org_did: str) -> Dict[str, int]:
+        """
+        Remove anchored capability tokens for *org_did* and clear local metadata.
+        """
+        org_did = (org_did or "").strip()
+        if not org_did:
+            raise ValueError("Organization DID is required.")
+
+        provide_tokens, require_tokens = get_tokens_for_org(org_did)
+        removed_provide = 0
+        removed_require = 0
+
+        for token in provide_tokens:
+            try:
+                run_dms_command_with_passphrase(
+                    [
+                        "nunet",
+                        "-c",
+                        "dms",
+                        "cap",
+                        "remove",
+                        "--provide",
+                        json.dumps(token, separators=(",", ":")),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                removed_provide += 1
+            except subprocess.CalledProcessError as exc:
+                logger.warning(
+                    "Failed to remove provide token for %s: %s",
+                    org_did,
+                    exc.stderr or exc.stdout or exc,
+                )
+
+        for token in require_tokens:
+            try:
+                run_dms_command_with_passphrase(
+                    [
+                        "nunet",
+                        "-c",
+                        "dms",
+                        "cap",
+                        "remove",
+                        "--require",
+                        json.dumps(token, separators=(",", ":")),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                removed_require += 1
+            except subprocess.CalledProcessError as exc:
+                logger.warning(
+                    "Failed to remove require token for %s: %s",
+                    org_did,
+                    exc.stderr or exc.stdout or exc,
+                )
+
+        try:
+            from backend.nunet_api import role_metadata
+
+            role_metadata.remove_org(org_did)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Unable to clear role metadata for %s: %s", org_did, exc)
+
+        org_data = self.state.get("org_data") or {}
+        if isinstance(org_data, dict) and org_data.get("did") == org_did:
+            self.update_state(
+                org_data=None,
+                form_data={},
+                request_id=None,
+                status_token=None,
+                api_status=None,
+                api_payload=None,
+                processing=False,
+                processed_ok=False,
+                error=None,
+            )
+        else:
+            # still persist metadata removal
+            self._write_state()
+
+        self.copy_capability_tokens_to_dms_user()
+        self.append_log("leave_org", f"Removed {removed_provide} provide and {removed_require} require tokens for {org_did}")
+        return {"provide": removed_provide, "require": removed_require}
 
     # ------------------------------------------------------------------ #
     # Service management

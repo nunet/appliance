@@ -111,7 +111,7 @@
                 {% if status.form_data %}
                 <li class="list-group-item"><strong>Name:</strong> {{ status.form_data.name }}</li>
                 <li class="list-group-item"><strong>Email:</strong> {{ status.form_data.email }}</li>
-                <li class="list-group-item"><strong>Why Join:</strong> {{ status.form_data.why_join|capitalize }}</li>
+                <li class="list-group-item"><strong>Role:</strong> {{ status.form_data.why_join|replace('-', ' ')|title }}</li>
                 {% endif %}
                 
                 <!-- Resource Information Display -->

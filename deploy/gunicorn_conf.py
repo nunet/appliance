@@ -1,8 +1,8 @@
-import os, multiprocessing
+import os
 
 bind = f"0.0.0.0:{os.getenv('PORT', '8080')}"
 worker_class = "uvicorn.workers.UvicornWorker"
-workers = int(os.getenv("WORKERS", max(2, multiprocessing.cpu_count())))
+workers = int(os.getenv("WORKERS", "1"))
 preload_app = True
 
 timeout = 60

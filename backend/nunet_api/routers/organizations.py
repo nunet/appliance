@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import deque
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Literal
 
 from fastapi import APIRouter, HTTPException, Body, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
@@ -15,11 +16,17 @@ from modules.organization_manager import OrganizationManager
 from modules.org_utils import (
     load_known_organizations,
     get_joined_organizations_with_details,
+    refresh_known_organizations,
+    normalize_org_roles,
+    extract_role_profiles,
+    get_tokenomics_config,
+    TOKENOMICS_CHAIN_ALLOWLIST,
 )
 from modules.dms_utils import (
     get_cached_dms_resource_info,
     get_cached_dms_status_info,
 )
+from .. import role_metadata
 
 router = APIRouter()
 
@@ -27,11 +34,32 @@ router = APIRouter()
 # Globals / singletons
 # ---------------------------------------------------------------------------
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
 _onboarding = OnboardingManager()
 _org_mgr = OrganizationManager()
 
 ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
+
+_STATUS_TRACE: deque[str] = deque(maxlen=50)
+
+
+def _record_status_trace(resolved_step: str, state: dict) -> None:
+    """
+    Short-term trace used while diagnosing oscillating onboarding states.
+    Keeps a rolling history and emits a log when the resolved step changes.
+    """
+    previous = _STATUS_TRACE[-1] if _STATUS_TRACE else None
+    if resolved_step != previous:
+        _STATUS_TRACE.append(resolved_step)
+        logger.info(
+            "Onboarding status step -> %s | raw_step=%s api_status=%s progress=%s trace=%s",
+            resolved_step,
+            state.get("step"),
+            state.get("api_status"),
+            state.get("progress"),
+            list(_STATUS_TRACE),
+        )
 
 
 def _ensure_state_file(mgr: OnboardingManager) -> None:
@@ -55,7 +83,7 @@ def _ensure_state_file(mgr: OnboardingManager) -> None:
             mgr.state = initial
     except Exception as e:
         # Non-fatal; operate with in-memory state
-        log.warning("Could not ensure onboarding state file: %s", e)
+        logger.warning("Could not ensure onboarding state file: %s", e)
 
 
 def _mgr() -> OnboardingManager:
@@ -117,15 +145,42 @@ class WormholeResponse(BaseModel):
     output: Optional[str] = None
 
 
+TokenomicsChain = Literal["cardano", "ethereum"]
+
+
 class JoinSubmitRequest(BaseModel):
     # org_did optional if /select was already called
     org_did: Optional[str] = Field(None, description="Organization DID (optional if already selected)")
     name: str
     email: EmailStr
-    why_join: Optional[str] = None  # "provide" | "access" | "both"
+    roles: List[str] = Field(
+        ...,
+        min_length=1,
+        description="One or more role identifiers requested during onboarding",
+    )
+    why_join: Optional[str] = Field(
+        None,
+        description="Optional free-text context for why the user is joining",
+    )
     location: Optional[str] = None
     discord: Optional[str] = None
     wormhole: Optional[str] = Field(None, description="Wormhole code if required by the org")
+    wallet_address: Optional[str] = Field(
+        None,
+        description="Wallet address collected when the organization requires an on-chain identity",
+    )
+    wallet_chain: Optional[TokenomicsChain] = Field(
+        None,
+        description="Wallet chain identifier (cardano | ethereum) associated with wallet_address",
+    )
+    renewal: bool = Field(
+        False,
+        description="Flag indicating this submission renews an existing membership",
+    )
+    renewing_previous: Optional[str] = Field(
+        None,
+        description="Optional onboarding request ID that this submission renews",
+    )
 
 
 class JoinSubmitResponse(BaseModel):
@@ -135,6 +190,10 @@ class JoinSubmitResponse(BaseModel):
     api_status: Optional[str] = None
     step: Optional[str] = None
     state: Dict[str, Any]
+
+
+class RenewStartRequest(BaseModel):
+    org_did: str = Field(..., description="Organization DID to renew")
 
 
 class PollStatusResponse(BaseModel):
@@ -150,6 +209,12 @@ class ProcessResponse(BaseModel):
     step: str
     message: Optional[str] = None
     state: Dict[str, Any]
+
+
+class LeaveOrgResponse(BaseModel):
+    status: str
+    removed_provide: int = 0
+    removed_require: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +391,7 @@ def _enrich_status_for_ui(state: dict) -> dict:
     if progress is None or progress == 0:
         progress = PROGRESS_MAP.get(current_step, 0)
 
+    _record_status_trace(timeline["current_step"], state)
 
     return {
         "current_step": timeline["current_step"],
@@ -350,6 +416,18 @@ def _enrich_status_for_ui(state: dict) -> dict:
 def get_known():
     """Known orgs (name + API + join_fields)."""
     return load_known_organizations()
+
+
+@router.post("/known/update")
+def update_known():
+    """Refresh known organizations from the canonical repository copy."""
+    try:
+        known = refresh_known_organizations()
+    except Exception as e:
+        logger.exception("Failed to refresh known organizations")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh known organizations: {e}")
+
+    return {"status": "success", "count": len(known), "known": known}
 
 
 @router.get("/joined")
@@ -384,9 +462,20 @@ def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
     known = load_known_organizations() or {}
     org_entry = known.get(body.org_did, {})
     org_name = org_entry["name"] if isinstance(org_entry, dict) and "name" in org_entry else body.org_did
+    roles, _ = normalize_org_roles(org_entry)
+    role_profiles = extract_role_profiles(org_entry)
+    selected_role = roles[0] if roles else None
+    tokenomics = get_tokenomics_config(org_entry)
 
     mgr.update_state(
-        org_data={"did": body.org_did, "name": org_name},
+        org_data={
+            "did": body.org_did,
+            "name": org_name,
+            "roles": roles,
+            "role_profiles": role_profiles,
+            "selected_role": selected_role,
+            "tokenomics": tokenomics,
+        },
         step="collect_join_data",
         request_id=None,
         status_token=None,
@@ -395,6 +484,7 @@ def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
         rejection_reason=None,
         processing=False,
         processed_ok=False,
+        renewal=False,
     )
 
     return {
@@ -422,19 +512,157 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     Submit join data. If org_did is included, it also selects the org.
     Moves to join_data_sent with request_id / status_token if submit succeeds.
     """
+    known = load_known_organizations() or {}
+
     # Allow select here for single-call UX
     if body.org_did:
-        known = load_known_organizations() or {}
         entry = known.get(body.org_did)
         if not entry:
             raise HTTPException(status_code=404, detail="Unknown organization DID")
         org_name = entry["name"] if isinstance(entry, dict) and "name" in entry else str(entry)
-        mgr.update_state(step="select_org", org_data={"did": body.org_did, "name": org_name})
+        roles, _ = normalize_org_roles(entry)
+        role_profiles = extract_role_profiles(entry)
+        default_role = roles[0] if roles else None
+        tokenomics = get_tokenomics_config(entry)
+        current_status = mgr.get_onboarding_status()
+        next_step = None
+        if (current_status or {}).get("step") in (None, "init", "select_org"):
+            next_step = "collect_join_data"
+
+        state_kwargs = {
+            "org_data": {
+                "did": body.org_did,
+                "name": org_name,
+                "roles": roles,
+                "role_profiles": role_profiles,
+                "selected_role": default_role,
+                "tokenomics": tokenomics,
+            },
+            "renewal": False,
+        }
+        if next_step:
+            state_kwargs["step"] = next_step
+        mgr.update_state(**state_kwargs)
 
     state = mgr.get_onboarding_status()
     org_data = (state or {}).get("org_data") or {}
     if not org_data.get("did"):
         raise HTTPException(status_code=400, detail="No organization selected. Call /organizations/select or include org_did.")
+
+    org_entry = known.get(org_data.get("did"))
+    tokenomics_cfg = get_tokenomics_config(org_entry)
+    require_wallet = bool(tokenomics_cfg.get("enabled"))
+    required_chain = tokenomics_cfg.get("chain")
+    allowed_roles, _ = normalize_org_roles(org_entry)
+
+    selected_roles: List[str] = []
+    for role in body.roles:
+        if role is None:
+            continue
+        trimmed = role.strip() if isinstance(role, str) else str(role).strip()
+        if trimmed:
+            selected_roles.append(trimmed)
+
+    if not selected_roles:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one role must be selected.",
+        )
+
+    invalid_roles = sorted({role for role in selected_roles if role not in allowed_roles})
+    if invalid_roles:
+        org_label = org_data.get("name") or org_data.get("did") or "the selected organization"
+        allowed_display = ", ".join(allowed_roles) if allowed_roles else "none configured"
+        invalid_display = ", ".join(invalid_roles)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Role selection not supported by {org_label}. Unsupported: {invalid_display}. Allowed: {allowed_display}.",
+        )
+
+    wallet_address = (body.wallet_address or "").strip() if body.wallet_address else None
+    wallet_chain = (body.wallet_chain or "").strip().lower() if body.wallet_chain else None
+
+    if wallet_chain and wallet_chain not in TOKENOMICS_CHAIN_ALLOWLIST:
+        allowed = ", ".join(sorted(TOKENOMICS_CHAIN_ALLOWLIST))
+        raise HTTPException(
+            status_code=400,
+            detail=f"wallet_chain must be one of: {allowed}.",
+        )
+
+    if wallet_chain and not wallet_address:
+        raise HTTPException(
+            status_code=400,
+            detail="wallet_chain provided without wallet_address.",
+        )
+
+    if require_wallet:
+        if not wallet_address:
+            raise HTTPException(
+                status_code=400,
+                detail="This organization requires a connected wallet address.",
+            )
+        if not wallet_chain and required_chain:
+            wallet_chain = required_chain
+        if required_chain and wallet_chain and wallet_chain != required_chain:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This organization requires a {required_chain} wallet.",
+            )
+        if not wallet_chain:
+            raise HTTPException(
+                status_code=400,
+                detail="wallet_chain is required when a wallet is required.",
+            )
+    elif wallet_address and not wallet_chain:
+        raise HTTPException(
+            status_code=400,
+            detail="wallet_chain is required when wallet_address is provided.",
+        )
+
+    role_profiles = extract_role_profiles(org_entry)
+    is_renewal = bool(body.renewal)
+    updated_org_data = dict(org_data)
+    updated_org_data["roles"] = allowed_roles
+    if role_profiles:
+        updated_org_data["role_profiles"] = role_profiles
+    updated_org_data["selected_role"] = selected_roles[0]
+    updated_org_data["tokenomics"] = tokenomics_cfg
+    updated_org_data["renewal"] = is_renewal
+    mgr.update_state(org_data=updated_org_data)
+    org_data = mgr.get_onboarding_status().get("org_data", updated_org_data)
+
+    role_metadata.record_role_selection(
+        org_did=org_data.get("did", ""),
+        org_name=org_data.get("name"),
+        roles=selected_roles,
+        primary_role=selected_roles[0] if selected_roles else None,
+        why_join=body.why_join,
+        email=str(body.email),
+        location=body.location,
+        discord=body.discord,
+        wormhole=body.wormhole,
+        wallet_address=wallet_address,
+        wallet_chain=wallet_chain,
+        renewal=is_renewal,
+    )
+    role_metadata.record_join_payload(
+        org_did=org_data.get("did", ""),
+        payload={
+            "name": body.name,
+            "email": str(body.email),
+            "roles": selected_roles,
+            "why_join": body.why_join,
+            "location": body.location,
+            "discord": body.discord,
+            "wormhole": body.wormhole,
+            "wallet_address": wallet_address,
+            "wallet_chain": wallet_chain,
+        },
+    )
+    role_metadata.record_org_tokenomics(
+        org_did=org_data.get("did", ""),
+        tokenomics=tokenomics_cfg,
+    )
 
     dms_info = get_cached_dms_status_info() or {}
     dms_did = dms_info.get("dms_did")
@@ -451,10 +679,16 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         "peer_id": dms_peer_id,
         "name": body.name,
         "email": str(body.email),
+        "roles": selected_roles,
         "why_join": body.why_join,
         "location": body.location,
         "discord": body.discord,
         "wormhole": body.wormhole,
+        "wallet_address": wallet_address,
+        "wallet_chain": wallet_chain,
+        "tokenomics": tokenomics_cfg,
+        "is_renewal": is_renewal,
+        "renewing_previous": body.renewing_previous,
         # runtime context
         "resources": runtime.get("resources", {}),
         "dms_resources": runtime.get("dms_resources", {}),
@@ -468,6 +702,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         form_data={
             "name": body.name,
             "email": str(body.email),
+            "roles": selected_roles,
             "why_join": body.why_join,
             "location": body.location,
             "discord": body.discord,
@@ -475,7 +710,13 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             "dms_did": dms_did,
             "dms_peer_id": dms_peer_id,
             "resources": runtime.get("resources", {}),
+            "wallet_address": wallet_address,
+            "wallet_chain": wallet_chain,
+            "tokenomics": tokenomics_cfg,
+            "renewal": is_renewal,
+            "renewing_previous": body.renewing_previous,
         },
+        renewal=is_renewal,
     )
 
     # Submit to org onboarding API
@@ -497,6 +738,11 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         processing=False,
         processed_ok=False,
     )
+    if request_id:
+        try:
+            role_metadata.record_last_request_id(org_data.get("did", ""), request_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Unable to persist last_request_id for %s", org_data.get("did"))
 
     return JoinSubmitResponse(
         status="success",
@@ -505,6 +751,101 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         api_status=api_status,
         step="join_data_sent",
         state=mgr.get_onboarding_status(),
+    )
+
+
+@router.post("/renew/start", response_model=JoinSubmitResponse)
+def start_renewal(body: RenewStartRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Initiate a renewal using the cached join payload.
+    """
+    org_did = (body.org_did or "").strip()
+    if not org_did:
+        raise HTTPException(status_code=400, detail="org_did is required")
+
+    known = load_known_organizations() or {}
+    if org_did not in known:
+        raise HTTPException(status_code=404, detail="Unknown organization DID")
+
+    stored_payload = role_metadata.get_join_payload(org_did)
+    state_payload = {}
+    state = mgr.get_onboarding_status() or {}
+    if isinstance(state, dict):
+        form_data = state.get("form_data")
+        if isinstance(form_data, dict):
+            state_payload = form_data
+
+    def _coalesce(*values: Any) -> Optional[str]:
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    # Roles are persisted in metadata and state. Fallback to org default roles.
+    stored_roles = stored_payload.get("roles")
+    state_roles = state_payload.get("roles") if isinstance(state_payload.get("roles"), list) else None
+    roles: List[str] = []
+    if isinstance(stored_roles, list):
+        roles = [role for role in stored_roles if isinstance(role, str) and role.strip()]
+    elif isinstance(state_roles, list):
+        roles = [role for role in state_roles if isinstance(role, str) and role.strip()]
+
+    if not roles:
+        primary = role_metadata.get_primary_role(org_did)
+        if primary:
+            roles = [primary]
+
+    name = _coalesce(stored_payload.get("name"), state_payload.get("name"))
+    email = _coalesce(stored_payload.get("email"), state_payload.get("email"))
+
+    if not name or not email or not roles:
+        raise HTTPException(
+            status_code=400,
+            detail="Renewal requires stored name, email, and roles. Re-run the join flow once to seed renewal data.",
+        )
+
+    wallet_chain_value = _coalesce(
+        stored_payload.get("wallet_chain"),
+        state_payload.get("wallet_chain"),
+    )
+    if wallet_chain_value:
+        wallet_chain_value = wallet_chain_value.lower()
+        if wallet_chain_value not in TOKENOMICS_CHAIN_ALLOWLIST:
+            wallet_chain_value = None
+
+    renewal_payload = JoinSubmitRequest(
+        org_did=org_did,
+        name=name,
+        email=email,
+        roles=roles,
+        why_join=_coalesce(stored_payload.get("why_join"), state_payload.get("why_join")),
+        location=_coalesce(stored_payload.get("location"), state_payload.get("location")),
+        discord=_coalesce(stored_payload.get("discord"), state_payload.get("discord")),
+        wormhole=_coalesce(stored_payload.get("wormhole"), state_payload.get("wormhole")),
+        wallet_address=_coalesce(
+            stored_payload.get("wallet_address"),
+            state_payload.get("wallet_address"),
+        ),
+        wallet_chain=wallet_chain_value,  # type: ignore[arg-type]
+        renewal=True,
+        renewing_previous=role_metadata.get_last_request_id(org_did),
+    )
+    return submit_join(renewal_payload, mgr)
+
+@router.delete("/join/{org_did}", response_model=LeaveOrgResponse)
+def leave_org(org_did: str, mgr: OnboardingManager = Depends(_mgr)):
+    try:
+        result = mgr.leave_organization(org_did)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Failed to leave organization %s: %s", org_did, exc)
+        raise HTTPException(status_code=500, detail="Failed to leave organization.")
+
+    return LeaveOrgResponse(
+        status="success",
+        removed_provide=result.get("provide", 0),
+        removed_require=result.get("require", 0),
     )
 
 

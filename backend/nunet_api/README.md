@@ -26,12 +26,10 @@ Each router defines API endpoints grouped by functional area. The table below li
 | Router file | Prefix | Dependencies (`modules.*`) | Notable endpoints |
 | --- | --- | --- | --- |
 | **`routers/auth.py`** | `/auth` | – | `POST /auth/login`, `GET /auth/status`, `POST /auth/setup` |
-| **`routers/dms.py`** | `/dms` | `dms_manager`, `dms_utils`, `onboarding_manager` | DMS version/install/status/logs, compute onboarding & offboarding, passphrase WS |
+| **`routers/dms.py`** | `/dms` | `dms_manager`, `dms_utils`, `onboarding_manager` | DMS version/install/status/logs, compute onboarding & offboarding actions |
 | **`routers/sysinfo.py`** | `/sys` | `utils` | Local IP, public IP, appliance version, SSH status, docker containers |
 | **`routers/ensemble.py`** | `/ensemble` | `ensemble_manager_v2`, `ensemble_utils`, `dms_manager`, `dms_utils`, `ddns_manager` | Deployment CRUD (list, status, manifest, logs, allocations), template copying, deployment from template |
 | **`routers/ensemble_schema.py`** | `/ensemble` | `ensemble_manager_v2`, `ensemble_utils` | Template upload, schema inference, template retrieval |
-| **`routers/stream.py`** | (no prefix) | `ensemble_manager_v2`, `dms_utils` | WebSocket/SSE streaming of DMS and deployment logs |
-| **`routers/proc.py`** | `/proc` | `dms_manager`, `dms_utils` | Controlled command execution over WebSocket for a small allow-list |
 | **`routers/organizations.py`** | `/organizations` | `onboarding_manager`, `organization_manager`, `org_utils`, `dms_utils`, `caddy_proxy_manager`, `dms_manager` | Wizard endpoints (known orgs, join flow, status polling, processing payloads) |
 | **`routers/payments.py`** | `/payments` | `dms_manager` | List DMS transactions, confirm transactions |
 | **`routers/auth.py`** | `/auth` | – | Setup/login/token refresh |
@@ -48,9 +46,7 @@ Each router defines API endpoints grouped by functional area. The table below li
   * `/auth/setup` allows initial password creation (first boot only)
 * `security.py` centralizes token validation and dependency injection.
   * `require_auth` raises `HTTPException(401)` if the token is invalid or missing.
-* WebSocket endpoints (`/dms/ws/update`, `/proc/ws/{name}`, `/stream/...`) require a valid token.  
-  They are guarded via the same `require_auth`, and some implement extra query/header token checks for SSE/WS ingestion.
-* System commands invoked through `/proc` use a strict whitelist defined in `routers/proc.py`. Each command specifies allowed args, working directories, and environment variables.
+* All application endpoints are HTTP-based. Any previous WebSocket helpers have been removed.
 * Some endpoints rely on local binaries or scripts (`sudo`, `docker`, `nunet`). They catch `FileNotFoundError` to provide API-friendly errors (e.g. Docker not installed).
 
 ---
@@ -93,14 +89,13 @@ uvicorn nunet_api.main:app --host 127.0.0.1 --port 8081 --reload
 
 Several routers execute system commands:
 
-* `/dms` endpoints call `nunet` via `run_dms_command_with_passphrase`.
-* `/proc` exposes a limited set of commands (`configure-dms.sh`, `tail`, `nunet version`, etc.) and requires explicit whitelisting before adding new commands.
-* `/stream` and `/dms/ws/update` spawn subprocesses for log tailing and Docker operations.
+* `/dms` endpoints call `nunet` via `run_dms_command_with_passphrase` and may invoke shell scripts through `subprocess.run`.
+* Template and status helpers may spawn subprocesses for log tailing or Docker introspection; review each call site before expanding functionality.
 
 When introducing new shell-dependent endpoints:
 
 1. Prefer to implement helpers in `backend/modules` and import them.
-2. Ensure commands are either whitelisted (when exposed via `/proc`) or executed with controlled arguments (no direct string concatenation).
+2. Ensure any shell commands validate and sanitize inputs (no direct string concatenation).
 3. Consider privilege requirements – many commands leverage `sudo -n`. Update deployment sudoers if necessary, and document the requirement.
 
 ---
@@ -149,7 +144,7 @@ When adding a new endpoint:
 ## 10. Logging & Observability
 
 * FastAPI uses the standard logging configuration; structured logging from managers is done via Python’s `logging` module.
-* DMS log retrieval routes (`/dms/logs`, `/stream/dms`) use `journalctl` or file tailing. The SSE/WS routes surface raw log lines.
+* DMS log retrieval routes (e.g., `/dms/logs`, `/dms/logs/structured`) use `journalctl` or file tailing under the hood.
 * Add new log streams carefully: follow the existing patterns to avoid leaking credentials or flooding the client.
 
 ---
@@ -180,10 +175,8 @@ When deploying to a new environment, verify sudo rules listed in the comments of
 
 ### DMS
 * `GET /dms/version`, `/install`, `/status`, `/status/full`, `/status/combined`
-* `POST /dms/restart`, `/onboard`, `/offboard`
+* `POST /dms/restart`, `/onboard`, `/offboard`, `/init`, `/update`
 * `GET /dms/logs`, `/logs/structured`, `/peers/connected`
-* `POST /dms/onboard`, `/offboard`
-* `WebSocket /dms/ws/update`
 
 ### System Info
 * `GET /sys/local-ip`, `/public-ip`, `/appliance-version`, `/ssh-status`, `/docker/containers`
@@ -195,11 +188,6 @@ When deploying to a new environment, verify sudo rules listed in the comments of
 * Template management: `GET /ensemble/templates`, `POST /ensemble/templates/copy`, `/upload`, `/forms`, `/schema`
 * `POST /ensemble/deploy/from-template`
 
-### Streaming
-* `WebSocket /stream/ws/dms/logs`
-* `GET /stream/dms/logs` (SSE)
-* `GET /stream/ensemble/deployments/{id}/logs` (SSE)
-
 ### Organizations / Onboarding
 * `GET /organizations/known`, `/joined`, `/steps`, `/status`
 * `POST /organizations/select`, `/wormhole`, `/join/submit`, `/join/process`
@@ -209,10 +197,6 @@ When deploying to a new environment, verify sudo rules listed in the comments of
 ### Payments
 * `GET /payments/config`, `/payments/list_payments`
 * `POST /payments/report_to_dms`
-
-### Proc
-* `WebSocket /proc/ws/{name}` (interactive command runner)
-* `POST /proc/run/{name}` (batch execution)
 
 ---
 

@@ -19,13 +19,15 @@ APPLIANCE_PUBLIC_IP_CACHE = APPLIANCE_DIR / "public_ip_cache.json"
 APPLIANCE_VERSION_FILE = APPLIANCE_DIR / "appliance_version.txt"
 ONBOARDING_STATE_FILE = APPLIANCE_DIR / "onboarding_state.json"
 ONBOARDING_LOG_FILE = APPLIANCE_DIR / "onboarding.log"
-KNOWN_ORGS_FILE = APPLIANCE_DIR / "known_orgs" / "known_organizations.json"
+KNOWN_ORGS_FILE = REPO_ROOT / "known_orgs" / "known_organizations.json"
+ROLE_METADATA_FILE = APPLIANCE_DIR / "role_metadata.json"
 
 # DMS artefacts
 LOCAL_DEPLOYMENTS_DIR = HOME_DIR / "nunet" / "deployments"
 DMS_DEPLOYMENTS_LOGS = Path("/home/nunet/nunet/deployments")
 DMS_DEPLOYMENTS_DIR = Path("/home/nunet/nunet/deployments")
 DMS_LOG_PATH = Path("/home/nunet/logs/nunet-dms.log")
+DMS_CAP_FILE = Path("/home/ubuntu/.nunet/cap/dms.cap")
 
 # Credentials
 ADMIN_CREDENTIALS_PATH = REPO_ROOT / "deploy" / "admin_credentials.json"
@@ -44,8 +46,10 @@ __all__ = [
     "ONBOARDING_STATE_FILE",
     "ONBOARDING_LOG_FILE",
     "KNOWN_ORGS_FILE",
+    "ROLE_METADATA_FILE",
     "LOCAL_DEPLOYMENTS_DIR",
     "DMS_DEPLOYMENTS_DIR",
     "DMS_LOG_PATH",
+    "DMS_CAP_FILE",
     "ADMIN_CREDENTIALS_PATH",
 ]
