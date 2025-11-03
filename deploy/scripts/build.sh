@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -exuo pipefail
 
 # Build script for NuNet Appliance packages
 # Builds for the native architecture of the current machine
 
-PKGVERSION="${1:-1.0.0}"
-ARCH="$(dpkg --print-architecture)"
-
 # Resolve repository root from deploy/scripts
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty)
+
+PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
+ARCH="$(dpkg --print-architecture)"
+
+# check if current state is dirty
+IS_DIRTY=$(git describe --tags --dirty 2>/dev/null | grep dirty || true)
+if [[ -n "$IS_DIRTY" ]]; then
+    PKGVERSION="${PKGVERSION}-dirty"
+fi
 
 echo "Building NuNet Appliance packages v${PKGVERSION} for ${ARCH}"
 
@@ -31,6 +39,9 @@ sudo apt-get install -y \
     fakeroot \
     debhelper \
     devscripts
+
+# delete package-lock.json files to avoid npm warnings
+find "$ROOT" -name "package-lock.json" -type f -delete
 
 # Install Node.js 20+ from NodeSource
 echo "Installing Node.js 20+ from NodeSource..."

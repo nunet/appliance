@@ -1,6 +1,20 @@
 stages:
+  - version
   - build
   - deploy
+
+version:
+  stage: .pre
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update && apt-get install -y git
+  script:
+    - bash deploy/scripts/version.sh
+  only:
+    - main
+    - release
+    - /^release\/.+$/
+    - /^release-.+$/
 
 default:
   tags:
@@ -11,8 +25,7 @@ default:
   stage: build
   image: ubuntu:24.04
   before_script:
-    - apt-get update && apt-get install -y sudo
-    - rm **/package-lock.json
+    - apt-get update && apt-get install -y sudo git
   script:
     - bash deploy/scripts/build.sh
   artifacts:
