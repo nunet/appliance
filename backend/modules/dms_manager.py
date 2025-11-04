@@ -34,6 +34,9 @@ DEFAULT_SCRIPTS_DIR = DEFAULT_MENU_DIR / "scripts"
 POLL_ATTEMPTS = 30
 POLL_DELAY_SEC = 1.0
 
+SUPPORTED_BLOCKCHAINS = {"ETHEREUM", "CARDANO"}
+DEFAULT_BLOCKCHAIN = "ETHEREUM"
+
 
 class DMSManager:
     """Helpers for interacting with the DMS via the nunet CLI and systemd."""
@@ -501,12 +504,30 @@ class DMSManager:
                     return value.strip()
         return None
 
-    def confirm_transaction(self, unique_id: str, tx_hash: str) -> Dict[str, Any]:
+    @staticmethod
+    def _normalize_blockchain(blockchain: Optional[str]) -> str:
+        if not blockchain:
+            return DEFAULT_BLOCKCHAIN
+        normalized = blockchain.strip().upper()
+        if normalized in SUPPORTED_BLOCKCHAINS:
+            return normalized
+        raise ValueError(
+            f"Unsupported blockchain '{blockchain}'. Expected one of: {', '.join(sorted(SUPPORTED_BLOCKCHAINS))}"
+        )
+
+    def confirm_transaction(self, unique_id: str, tx_hash: str, blockchain: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            normalized_blockchain = self._normalize_blockchain(blockchain)
+        except ValueError as exc:
+            logger.error("Invalid blockchain for confirm_transaction: %s", exc)
+            return {"status": "error", "message": str(exc)}
+
         argv = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/transactions/confirm",
             "--unique-id", unique_id,
             "--tx-hash", tx_hash,
+            "--blockchain", normalized_blockchain,
         ]
         last_error: Optional[str] = None
         for attempt in range(1, 4):
@@ -526,11 +547,18 @@ class DMSManager:
                 time.sleep(2)
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
 
-    def list_transactions(self) -> Dict[str, Any]:
+    def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            normalized_blockchain = self._normalize_blockchain(blockchain)
+        except ValueError as exc:
+            logger.error("Invalid blockchain for list_transactions: %s", exc)
+            return {"status": "error", "message": str(exc)}
+
         cp = run_dms_command_with_passphrase(
             [
                 "nunet", "actor", "cmd", "--context", "dms",
                 "/dms/tokenomics/contract/transactions/list",
+                "--blockchain", normalized_blockchain,
             ],
             capture_output=True,
             text=True,
