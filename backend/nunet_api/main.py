@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 
 from .security import require_auth
-from .routers import auth, dms, sysinfo, ensemble, organizations, payments, ensemble_schema
+from .routers import auth, contracts, dms, ensemble, ensemble_schema, organizations, payments, sysinfo
 
 
 class SPAStaticFiles(StaticFiles):
@@ -43,6 +43,8 @@ app.include_router(ensemble.router, prefix="/ensemble", tags=["ensemble"], depen
 app.include_router(organizations.router, prefix="/organizations", tags=["organizations"], dependencies=protected)
 app.include_router(payments.router, prefix="/payments", tags=["payments"], dependencies=protected)
 app.include_router(ensemble_schema.router, prefix="/ensemble", tags=["ensemble"], dependencies=protected)
+app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"], dependencies=protected)
+app.include_router(contracts.router, prefix="/contracts", tags=["contracts"], dependencies=protected)
 
 
 @app.get("/health")
@@ -69,4 +71,3 @@ if not static_path.exists():
     )
 
 app.mount("/", SPAStaticFiles(directory=str(static_path), html=True), name="spa")
-

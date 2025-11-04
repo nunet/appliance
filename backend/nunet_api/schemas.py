@@ -1,5 +1,7 @@
 # nunet_api/app/schemas.py
 from dataclasses import Field
+from datetime import datetime
+from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field as PydField
 from typing import Any, Dict, Literal, Optional, List
 
@@ -36,7 +38,19 @@ __all__ = [
     "SchemaFieldOverride", "SchemaHints",
     "UploadNeedsInputDetail", "UploadConfirmOverwriteDetail",
     "UploadTemplateResponse",
-
+    "ContractState",
+    "ContractPaymentType",
+    "ContractBlockchain",
+    "ContractMetadata",
+    "ContractListResponse",
+    "ContractCreateRequest",
+    "ContractApproveRequest",
+    "ContractTerminateRequest",
+    "ContractActionResponse",
+    "ContractStateResponse",
+    "ContractTemplateSummary",
+    "ContractTemplateDetail",
+    "ContractTemplateListResponse",
 ]
 
 class TokenConfig(BaseModel):
@@ -126,6 +140,230 @@ class ResourcesInfo(BaseModel):
     free_resources: str
     allocated_resources: str
     onboarded_resources: str
+
+
+class ContractState(str, Enum):
+    UNKNOWN = "UNKNOWN"
+    ACCEPTED = "ACCEPTED"
+    APPROVED = "APPROVED"
+    SIGNED = "SIGNED"
+    COMPLETED = "COMPLETED"
+    SETTLED = "SETTLED"
+    TERMINATED = "TERMINATED"
+    EXPIRED = "EXPIRED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ContractState":
+        if isinstance(value, str):
+            normalized = value.upper()
+            for member in cls:
+                if member.value == normalized:
+                    return member
+        return cls.UNKNOWN
+
+
+class ContractPaymentType(str, Enum):
+    UNKNOWN = "unknown"
+    BLOCKCHAIN = "blockchain"
+    FIAT = "fiat"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ContractPaymentType":
+        if isinstance(value, str):
+            normalized = value.lower()
+            for member in cls:
+                if member.value == normalized:
+                    return member
+        return cls.UNKNOWN
+
+
+class ContractBlockchain(str, Enum):
+    UNKNOWN = "UNKNOWN"
+    ETHEREUM = "ETHEREUM"
+    POLYGON = "POLYGON"
+    BSC = "BSC"
+    CARDANO = "CARDANO"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "ContractBlockchain":
+        if isinstance(value, str):
+            normalized = value.upper()
+            for member in cls:
+                if member.value == normalized:
+                    return member
+        return cls.UNKNOWN
+
+
+class ContractDIDRef(BaseModel):
+    uri: str
+
+
+class ContractResourceCPU(BaseModel):
+    cores: Optional[int] = None
+    clock_speed: Optional[int] = None
+
+
+class ContractResourceMemory(BaseModel):
+    size: Optional[int] = None
+
+
+class ContractResourceDisk(BaseModel):
+    size: Optional[int] = None
+
+
+class ContractResourceConfiguration(BaseModel):
+    cpu: Optional[ContractResourceCPU] = None
+    ram: Optional[ContractResourceMemory] = None
+    disk: Optional[ContractResourceDisk] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ContractTerminationOption(BaseModel):
+    allowed: Optional[bool] = None
+    notice_period: Optional[int] = None
+
+
+class ContractPenalty(BaseModel):
+    condition: Optional[str] = None
+    penalty: Optional[float] = None
+
+
+class ContractParticipants(BaseModel):
+    provider: Optional[ContractDIDRef] = None
+    requestor: Optional[ContractDIDRef] = None
+
+
+class ContractPaymentDetails(BaseModel):
+    payment_type: ContractPaymentType = ContractPaymentType.UNKNOWN
+    requester_addr: Optional[str] = None
+    provider_addr: Optional[str] = None
+    currency: Optional[str] = None
+    fees_per_allocation: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    blockchain: Optional[ContractBlockchain] = None
+
+    model_config = ConfigDict(extra="allow")
+
+
+class ContractDuration(BaseModel):
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+
+class ContractMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    contract_did: str
+    current_state: ContractState = ContractState.UNKNOWN
+    solution_enabler_did: Optional[ContractDIDRef] = None
+    payment_validator_did: Optional[ContractDIDRef] = None
+    resource_configuration: Optional[ContractResourceConfiguration] = None
+    termination_option: Optional[ContractTerminationOption] = None
+    penalties: List[ContractPenalty] = PydField(default_factory=list)
+    duration: Optional[ContractDuration] = None
+    participants: Optional[ContractParticipants] = None
+    payment_details: Optional[ContractPaymentDetails] = None
+    paid: Optional[bool] = None
+    settled: Optional[bool] = None
+    signatures: Optional[Any] = None
+    verification: Optional[Dict[str, Any]] = None
+    contract_proof: Optional[Any] = None
+    contract_terms: Optional[str] = None
+    termination_started: Optional[datetime] = None
+    transitions: List[Dict[str, Any]] = PydField(default_factory=list)
+
+
+class ContractListResponse(BaseModel):
+    status: Literal["success", "error"]
+    message: Optional[str] = None
+    contracts: List[ContractMetadata] = PydField(default_factory=list)
+    filter: Optional[str] = None
+    total_count: Optional[int] = None
+    filtered_count: Optional[int] = None
+    raw: Optional[Dict[str, Any]] = None
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    returncode: Optional[int] = None
+    command: Optional[str] = None
+
+
+class ContractStateResponse(BaseModel):
+    status: Literal["success", "error"]
+    message: Optional[str] = None
+    contract: Optional[ContractMetadata] = None
+    raw: Optional[Dict[str, Any]] = None
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    returncode: Optional[int] = None
+    command: Optional[str] = None
+
+
+class ContractCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract: Dict[str, Any]
+    destination: Optional[str] = None
+    template_id: Optional[str] = None
+    organization_did: Optional[str] = None
+    extra_args: Optional[List[str]] = None
+
+
+class ContractApproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_did: str
+    extra_args: Optional[List[str]] = None
+
+
+class ContractTerminateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_did: str
+    contract_host_did: Optional[str] = None
+    extra_args: Optional[List[str]] = None
+
+
+class ContractActionResponse(BaseModel):
+    status: Literal["success", "error"]
+    message: Optional[str] = None
+    contract_did: Optional[str] = None
+    contract_file: Optional[str] = None
+    destination: Optional[str] = None
+    template_id: Optional[str] = None
+    source: Optional[Literal["local", "remote"]] = None
+    organization_did: Optional[str] = None
+    contract_host_did: Optional[str] = None
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+    returncode: Optional[int] = None
+    command: Optional[str] = None
+
+
+class ContractTemplateSummary(BaseModel):
+    template_id: str
+    name: str
+    description: Optional[str] = None
+    source: Literal["local", "remote"]
+    origin: Optional[str] = None
+    organization_did: Optional[str] = None
+    organizations: List[str] = PydField(default_factory=list)
+    tags: List[str] = PydField(default_factory=list)
+    categories: List[str] = PydField(default_factory=list)
+    default_destination: Optional[str] = None
+
+
+class ContractTemplateDetail(ContractTemplateSummary):
+    contract: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class ContractTemplateListResponse(BaseModel):
+    status: Literal["success", "error"]
+    templates: List[ContractTemplateSummary] = PydField(default_factory=list)
+    message: Optional[str] = None
 
 class SshStatus(BaseModel):
     running: bool

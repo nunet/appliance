@@ -10,7 +10,7 @@ import subprocess
 import threading
 from copy import deepcopy
 from time import monotonic
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,20 @@ _DMS_PEERS_LOCK = threading.Lock()
 
 _ANSI_RE = re.compile(r"\u001b\[[0-9;]*m")
 _PRIVATE_IPV4 = re.compile(r"/ip4/(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)")
+_LOG_OUTPUT_MAX = 4000
+
+
+class DmsCommandResult(TypedDict, total=False):
+    """Standard shape for results returned by DMS CLI helpers."""
+
+    success: bool
+    endpoint: str
+    argv: List[str]
+    returncode: int
+    stdout: str
+    stderr: str
+    data: Any
+    error: str
 
 def _read_cache(cache: Dict[str, Any], lock: threading.Lock, ttl: float) -> Any:
     now = monotonic()
@@ -164,6 +178,170 @@ def _run_actor_command(endpoint: str, *, timeout: int = 30) -> subprocess.Comple
         capture_output=True,
         timeout=timeout,
         check=False,
+    )
+
+
+def _run_contract_command(
+    endpoint: str,
+    *,
+    extra_args: Optional[Sequence[str]] = None,
+    timeout: int = 30,
+) -> Tuple[List[str], subprocess.CompletedProcess]:
+    argv: List[str] = ["nunet", "actor", "cmd", "--context", "dms", endpoint]
+    if extra_args:
+        argv.extend([str(arg) for arg in extra_args])
+    cp = run_dms_command_with_passphrase(
+        argv,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return argv, cp
+
+
+def _build_contract_result(
+    endpoint: str,
+    argv: List[str],
+    cp: subprocess.CompletedProcess,
+    *,
+    expect_json: bool = False,
+) -> DmsCommandResult:
+    stdout = (cp.stdout or "").strip()
+    stderr = (cp.stderr or "").strip()
+    result: DmsCommandResult = {
+        "success": cp.returncode == 0,
+        "endpoint": endpoint,
+        "argv": argv,
+        "returncode": cp.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+    if cp.returncode != 0:
+        result["error"] = stderr or stdout or f"{endpoint} failed with rc={cp.returncode}"
+    elif expect_json:
+        if not stdout:
+            result["success"] = False
+            result["error"] = f"{endpoint} returned empty output"
+        else:
+            try:
+                result["data"] = json.loads(stdout)
+            except json.JSONDecodeError as exc:
+                logger.warning("Invalid JSON from %s: %s", endpoint, exc)
+                result["success"] = False
+                result["error"] = f"Invalid JSON output from {endpoint}"
+    log_level = logging.INFO if result.get("success") else logging.ERROR
+    logger.log(
+        log_level,
+        "DMS contract command %s rc=%s stdout=%s stderr=%s",
+        endpoint,
+        result.get("returncode"),
+        _log_snippet(stdout or "<empty>"),
+        _log_snippet(stderr or "<empty>"),
+    )
+    return result
+
+
+def contract_list_incoming(*, timeout: int = 30) -> DmsCommandResult:
+    argv, cp = _run_contract_command("/dms/tokenomics/contract/list_incoming", timeout=timeout)
+    return _build_contract_result(
+        "/dms/tokenomics/contract/list_incoming",
+        argv,
+        cp,
+        expect_json=True,
+    )
+
+
+def contract_state(
+    contract_did: str,
+    *,
+    contract_host_did: Optional[str] = None,
+    timeout: int = 30,
+) -> DmsCommandResult:
+    args = ["--contract-did", contract_did]
+    if contract_host_did:
+        args.extend(["--contract-host-did", contract_host_did])
+    argv, cp = _run_contract_command(
+        "/dms/tokenomics/contract/state",
+        extra_args=args,
+        timeout=timeout,
+    )
+    return _build_contract_result(
+        "/dms/tokenomics/contract/state",
+        argv,
+        cp,
+        expect_json=True,
+    )
+
+
+def contract_create(
+    contract_file: str,
+    *,
+    dest: Optional[str] = None,
+    extra_args: Optional[Sequence[str]] = None,
+    timeout: int = 60,
+) -> DmsCommandResult:
+    args: List[str] = ["--contract-file", contract_file]
+    if dest:
+        args.extend(["--dest", dest])
+    if extra_args:
+        args.extend([str(arg) for arg in extra_args])
+    argv, cp = _run_contract_command(
+        "/dms/tokenomics/contract/create",
+        extra_args=args,
+        timeout=timeout,
+    )
+    return _build_contract_result(
+        "/dms/tokenomics/contract/create",
+        argv,
+        cp,
+        expect_json=False,
+    )
+
+
+def contract_approve_local(
+    contract_did: str,
+    *,
+    extra_args: Optional[Sequence[str]] = None,
+    timeout: int = 30,
+) -> DmsCommandResult:
+    args: List[str] = ["--contract-did", contract_did]
+    if extra_args:
+        args.extend([str(arg) for arg in extra_args])
+    argv, cp = _run_contract_command(
+        "/dms/tokenomics/contract/approve_local",
+        extra_args=args,
+        timeout=timeout,
+    )
+    return _build_contract_result(
+        "/dms/tokenomics/contract/approve_local",
+        argv,
+        cp,
+        expect_json=False,
+    )
+
+
+def contract_terminate(
+    contract_did: str,
+    *,
+    contract_host_did: Optional[str] = None,
+    extra_args: Optional[Sequence[str]] = None,
+    timeout: int = 30,
+) -> DmsCommandResult:
+    args: List[str] = ["--contract-did", contract_did]
+    if contract_host_did:
+        args.extend(["--contract-host-did", contract_host_did])
+    if extra_args:
+        args.extend([str(arg) for arg in extra_args])
+    argv, cp = _run_contract_command(
+        "/dms/tokenomics/contract/terminate",
+        extra_args=args,
+        timeout=timeout,
+    )
+    return _build_contract_result(
+        "/dms/tokenomics/contract/terminate",
+        argv,
+        cp,
+        expect_json=False,
     )
 
 def _call_actor_json(endpoint: str, *, timeout: int = 30) -> Optional[Any]:
@@ -413,3 +591,7 @@ def get_cached_dms_peer_raw(
 ) -> str:
     snapshot = _get_cached_peer_snapshot(ttl, force_refresh=force_refresh)
     return snapshot.get("raw", "")
+def _log_snippet(value: str) -> str:
+    if len(value) <= _LOG_OUTPUT_MAX:
+        return value
+    return f"{value[:_LOG_OUTPUT_MAX]}... [truncated {len(value) - _LOG_OUTPUT_MAX} chars]"

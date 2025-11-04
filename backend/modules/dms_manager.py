@@ -9,11 +9,17 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .dms_utils import (
     run_dms_command_with_passphrase,
     categorize_listen_addresses,
+    DmsCommandResult,
+    contract_approve_local,
+    contract_create,
+    contract_list_incoming,
+    contract_terminate,
+    contract_state,
 )
 from .path_constants import DMS_DEPLOYMENTS_LOGS
 
@@ -32,6 +38,10 @@ POLL_DELAY_SEC = 1.0
 class DMSManager:
     """Helpers for interacting with the DMS via the nunet CLI and systemd."""
 
+    _INCOMING_STATES = {"DRAFT", "PENDING", "INCOMING"}
+    _ACTIVE_STATES = {"ACCEPTED", "APPROVED", "SIGNED"}
+    _SIGNED_STATES = set(_ACTIVE_STATES) | {"COMPLETED", "SETTLED", "TERMINATED"}
+
     def __init__(self, menu_dir: Optional[Path] = None, scripts_dir: Optional[Path] = None) -> None:
         self.menu_dir = menu_dir or DEFAULT_MENU_DIR
         candidate_scripts_dir = scripts_dir or (self.menu_dir / "scripts")
@@ -46,6 +56,34 @@ class DMSManager:
 
         self.scripts_dir = candidate_scripts_dir
         logger.debug("Using scripts directory: %s", self.scripts_dir)
+
+    @staticmethod
+    def _contract_command_metadata(result: DmsCommandResult) -> Dict[str, Any]:
+        command = None
+        if result.get("argv"):
+            command = " ".join(result["argv"])  # type: ignore[index]
+        return {
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+            "returncode": result.get("returncode"),
+            "command": command,
+        }
+
+    @classmethod
+    def _contract_error(cls, result: DmsCommandResult, fallback: str) -> Dict[str, Any]:
+        message = result.get("error") or fallback
+        endpoint = result.get("endpoint", "contract command")
+        logger.error("%s failed: %s", endpoint, message)
+        response = {"status": "error", "message": message}
+        response.update(cls._contract_command_metadata(result))
+        return response
+
+    @classmethod
+    def _contract_success(cls, result: DmsCommandResult, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = {"status": "success"}
+        response.update(payload)
+        response.update(cls._contract_command_metadata(result))
+        return response
 
     @staticmethod
     def _run(
@@ -301,6 +339,141 @@ class DMSManager:
         message = install.stderr or install.stdout or "Installation failed"
         logger.error("Failed to install DMS package: %s", message)
         return {"status": "error", "message": f"Installation failed: {message}"}
+
+    @staticmethod
+    def _normalize_contract_list_payload(result: DmsCommandResult) -> Dict[str, Any]:
+        data = result.get("data")
+        if not isinstance(data, dict):
+            logger.debug("Unexpected payload for %s: %s", result.get("endpoint"), data)
+            return {"contracts": [], "raw": data}
+        contracts = data.get("contracts")
+        if isinstance(contracts, list):
+            return {"contracts": contracts, "raw": data}
+        logger.debug("Missing 'contracts' key in %s payload: %s", result.get("endpoint"), data)
+        return {"contracts": [], "raw": data}
+
+    @staticmethod
+    def _filter_contracts_by_view(contracts: Sequence[Dict[str, Any]], view: str) -> List[Dict[str, Any]]:
+        normalized = (view or "all").lower()
+        if normalized == "incoming":
+            allowed = DMSManager._INCOMING_STATES
+        elif normalized == "active":
+            allowed = DMSManager._ACTIVE_STATES
+        else:
+            return list(contracts)
+        filtered: List[Dict[str, Any]] = []
+        for entry in contracts:
+            state = str(entry.get("current_state", "")).upper()
+            if state in allowed:
+                filtered.append(entry)
+        return filtered
+
+    def list_contracts(self, view: str = "all", *, timeout: int = 30) -> Dict[str, Any]:
+        result = contract_list_incoming(timeout=timeout)
+        if not result.get("success"):
+            return self._contract_error(result, "Failed to list contracts")
+        payload = self._normalize_contract_list_payload(result)
+        contracts = payload.get("contracts", [])
+        normalized_view = (view or "all").lower()
+        filtered = self._filter_contracts_by_view(contracts, normalized_view)
+        payload["contracts"] = filtered
+        payload["filter"] = normalized_view
+        payload["total_count"] = len(contracts)
+        payload["filtered_count"] = len(filtered)
+        return self._contract_success(result, payload)
+
+    def list_incoming_contracts(self, *, timeout: int = 30) -> Dict[str, Any]:
+        return self.list_contracts("incoming", timeout=timeout)
+
+    def list_signed_contracts(self, *, timeout: int = 30) -> Dict[str, Any]:
+        return self.list_contracts("active", timeout=timeout)
+
+    def get_contract_state(
+        self,
+        contract_did: str,
+        *,
+        contract_host_did: Optional[str] = None,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        result = contract_state(contract_did, contract_host_did=contract_host_did, timeout=timeout)
+        if not result.get("success"):
+            return self._contract_error(
+                result,
+                f"Failed to fetch contract state for {contract_did}",
+            )
+        payload = {"contract": result.get("data")}
+        return self._contract_success(result, payload)
+
+    def create_contract(
+        self,
+        contract_file: str,
+        *,
+        dest: Optional[str] = None,
+        extra_args: Optional[Sequence[str]] = None,
+        template_id: Optional[str] = None,
+        timeout: int = 60,
+    ) -> Dict[str, Any]:
+        result = contract_create(
+            contract_file,
+            dest=dest,
+            extra_args=extra_args,
+            timeout=timeout,
+        )
+        if not result.get("success"):
+            return self._contract_error(result, "Failed to create contract")
+        message = (result.get("stdout") or "").strip() or "Contract create command dispatched"
+        payload: Dict[str, Any] = {"message": message, "contract_file": contract_file}
+        if dest:
+            payload["destination"] = dest
+        if template_id:
+            payload["template_id"] = template_id
+        return self._contract_success(result, payload)
+
+    def approve_contract(
+        self,
+        contract_did: str,
+        *,
+        extra_args: Optional[Sequence[str]] = None,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        result = contract_approve_local(
+            contract_did,
+            extra_args=extra_args,
+            timeout=timeout,
+        )
+        if not result.get("success"):
+            return self._contract_error(
+                result,
+                f"Failed to approve contract {contract_did}",
+            )
+        message = (result.get("stdout") or "").strip() or "Contract approval command dispatched"
+        payload = {"message": message, "contract_did": contract_did}
+        return self._contract_success(result, payload)
+
+    def terminate_contract(
+        self,
+        contract_did: str,
+        *,
+        contract_host_did: Optional[str] = None,
+        extra_args: Optional[Sequence[str]] = None,
+        timeout: int = 30,
+    ) -> Dict[str, Any]:
+        result = contract_terminate(
+            contract_did,
+            contract_host_did=contract_host_did,
+            extra_args=extra_args,
+            timeout=timeout,
+        )
+        if not result.get("success"):
+            return self._contract_error(
+                result,
+                f"Failed to terminate contract {contract_did}",
+            )
+        message = (result.get("stdout") or "").strip() or "Contract termination command dispatched"
+        payload: Dict[str, Any] = {"message": message, "contract_did": contract_did}
+        if contract_host_did:
+            payload["contract_host_did"] = contract_host_did
+        return self._contract_success(result, payload)
 
     @staticmethod
     def _extract_error(stdout: str, stderr: str) -> Optional[str]:

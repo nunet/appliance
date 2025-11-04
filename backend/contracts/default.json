@@ -1,0 +1,66 @@
+{
+  "name": "Default Contract",
+  "description": "Baseline compute contract template matching the reference contract structure.",
+  "tags": [
+    "default",
+    "compute"
+  ],
+  "default_destination": "",
+  "organizations": [],
+  "contract": {
+    "solution_enabler_did": {
+        "uri": ""
+    },
+    "payment_validator_did": {
+        "uri": ""
+    },
+    "resource_configuration": {
+        "cpu": {
+            "clock_speed": 0,
+            "cores": 1
+        },
+        "ram": {
+            "size": 1024
+        },
+        "disk": {
+            "size": 1024
+        }
+    },
+    "termination_option": {
+        "allowed": true,
+        "notice_period": 86400000000000
+    },
+    "penalties": [
+        {
+            "condition": "late",
+            "penalty": 100
+        }
+    ],
+    "payment_details": {
+        "addresses": [
+            {
+                "requester_addr": "",
+                "provider_addr": "",
+                "currency": "NTX",
+                "blockchain": "ETHEREUM"
+            }
+        ],
+        "fees_per_allocation": "500",
+        "timestamp": "0001-01-01T00:00:00Z",
+        "payment_type": "blockchain"
+    },
+    "contract_terms": "Standard contract terms",
+    "contract_participants": {
+        "provider": {
+            "uri": ""
+        },
+        "requestor": {
+            "uri": ""
+        }
+    },
+    "duration": {
+        "start_date": "2024-07-12T18:14:06.993552133+03:00",
+        "end_date": "2028-07-12T18:14:06.99355218+03:00"
+    }
+}
+}
