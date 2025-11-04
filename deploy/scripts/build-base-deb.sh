@@ -4,6 +4,7 @@ set -euo pipefail
 PKGNAME="nunet-appliance-base"
 PKGVERSION="${1:-1.0.0}"
 ARCH="${2:-arm64}"
+DEB_VERSION=$(echo "${PKGVERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
 # Resolve repository root from deploy/scripts
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -293,7 +294,7 @@ chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.
 # --- DEBIAN metadata ---
 cat > "$ROOT/DEBIAN/control" <<EOF
 Package: nunet-appliance-base
-Version: $PKGVERSION
+Version: $DEB_VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
