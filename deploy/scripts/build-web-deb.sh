@@ -3,6 +3,7 @@ set -euo pipefail
 
 # -------- settings you may tweak ----------
 VERSION="${1:-1.0.0}"                 # deb version; pass as 1st arg to override
+DEB_VERSION=$(echo "${VERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 SERVICE_USER="${SERVICE_USER:-ubuntu}" # run the service as this user
 # ------------------------------------------
 
@@ -132,7 +133,7 @@ EOF
 # DEBIAN metadata
 cat > "$PKGDIR/DEBIAN/control" <<EOF
 Package: nunet-appliance-web
-Version: ${VERSION}
+Version: ${DEB_VERSION}
 Section: web
 Priority: optional
 Architecture: ${ARCH}

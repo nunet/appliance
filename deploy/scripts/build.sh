@@ -9,8 +9,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty)
-
 PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
+
 ARCH="$(dpkg --print-architecture)"
 
 # check if current state is dirty
@@ -19,7 +19,7 @@ if [[ -n "$IS_DIRTY" ]]; then
     PKGVERSION="${PKGVERSION}-dirty"
 fi
 
-echo "Building NuNet Appliance packages v${PKGVERSION} for ${ARCH}"
+echo "Building NuNet Appliance packages ${PKGVERSION} for ${ARCH}"
 
 # Install system dependencies
 echo "Installing system dependencies..."
