@@ -25,15 +25,15 @@ Each router defines API endpoints grouped by functional area. The table below li
 
 | Router file | Prefix | Dependencies (`modules.*`) | Notable endpoints |
 | --- | --- | --- | --- |
-| **`routers/auth.py`** | `/auth` | – | `POST /auth/login`, `GET /auth/status`, `POST /auth/setup` |
+| **`routers/auth.py`** | `/auth` | - | `POST /auth/login`, `GET /auth/status`, `POST /auth/setup` |
 | **`routers/dms.py`** | `/dms` | `dms_manager`, `dms_utils`, `onboarding_manager` | DMS version/install/status/logs, compute onboarding & offboarding actions |
 | **`routers/sysinfo.py`** | `/sys` | `utils` | Local IP, public IP, appliance version, SSH status, docker containers |
 | **`routers/ensemble.py`** | `/ensemble` | `ensemble_manager_v2`, `ensemble_utils`, `dms_manager`, `dms_utils`, `ddns_manager` | Deployment CRUD (list, status, manifest, logs, allocations), template copying, deployment from template |
 | **`routers/ensemble_schema.py`** | `/ensemble` | `ensemble_manager_v2`, `ensemble_utils` | Template upload, schema inference, template retrieval |
 | **`routers/organizations.py`** | `/organizations` | `onboarding_manager`, `organization_manager`, `org_utils`, `dms_utils`, `caddy_proxy_manager`, `dms_manager` | Wizard endpoints (known orgs, join flow, status polling, processing payloads) |
 | **`routers/payments.py`** | `/payments` | `dms_manager` | List DMS transactions, confirm transactions |
-| **`routers/auth.py`** | `/auth` | – | Setup/login/token refresh |
-
+| **`routers/contracts.py`** | `/contracts` | `dms_manager` | Incoming/signed contract listings, contract state, create/approve actions |
+| **`routers/auth.py`** | `/auth` | - | Setup/login/token refresh |
 > NOTE: The `/ensemble` prefix is shared by both `ensemble.py` and `ensemble_schema.py`. The former handles runtime operations, the latter focuses on template creation and upload.
 
 ---
@@ -193,6 +193,12 @@ When deploying to a new environment, verify sudo rules listed in the comments of
 * `POST /organizations/select`, `/wormhole`, `/join/submit`, `/join/process`
 * `POST /organizations/process` (handles post-approval payload)
 * `POST /organizations/reset`
+
+### Contracts
+* `GET /contracts/incoming`, `/contracts/signed`
+* `GET /contracts/state/{contract_did}`
+* `POST /contracts/create`
+* `POST /contracts/approve`
 
 ### Payments
 * `GET /payments/config`, `/payments/list_payments`

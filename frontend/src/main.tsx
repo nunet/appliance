@@ -25,6 +25,8 @@ import Wizzard from "./pages/Wizzard";
 import { useAppMode } from "./hooks/useAppMode";
 import NotFound from "./pages/NotFound";
 import Organizations from "./pages/Organizations";
+import Contracts from "./pages/Contracts";
+import NewContractPage from "./pages/Contracts/New";
 import PaymentsPage from "@/components/payments/PaymentsPage";
 import LoginPage from "./pages/Login";
 import SetupAdmin from "./pages/SetupAdmin";
@@ -145,6 +147,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="/ensembles" element={<Ensembles />} />
                   <Route path="/appliance/dms" element={<DMS />} />
                   <Route path="/payments" element={<PaymentsPage />} />
+                  <Route path="/contracts" element={<Contracts />} />
+                  <Route path="/contracts/new" element={<NewContractPage />} />
+                  <Route path="/contracts/new" element={<Contracts.NewContractPage />} />
                 </Route>
               </Route>
             </Routes>

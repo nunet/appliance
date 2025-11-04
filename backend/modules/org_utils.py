@@ -6,53 +6,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
-import requests
+try:
+    import requests
+except ImportError:  # pragma: no cover - optional dependency
+    requests = None  # type: ignore[assignment]
 
 from .path_constants import KNOWN_ORGS_FILE, DMS_CAP_FILE
 
-# Use JSON for known organizations for extensibility
 
-TRUSTED_ORGS = [
-    {
-        "did": "did:key:z6MkkXnNzxFryuL9aeH7K8o8jxhtc5pGs8YKrUqipvK943bJ",
-        "name": "NuNet Compute Testnet",
-    },
-]
-
-# Remove or comment out ensure_known_orgs_file and .txt logic
-# def ensure_known_orgs_file():
-#     """
-#     Ensure the known_orgs.txt file exists.
-#     If not, create it with the default trusted orgs and set secure permissions.
-#     """
-#     if KNOWN_ORGS_FILE.exists():
-#         return
-#
-#     # Ensure directory exists
-#     KNOWN_ORGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-#
-#     # Write the file
-#     with open(KNOWN_ORGS_FILE, 'w') as f:
-#         f.write("# Known Organizations\n")
-#         for org in TRUSTED_ORGS:
-#             f.write(f"{org['did']}:{org['name']}\n")
-#
-#     # Set ownership and permissions
-#     try:
-#         os.chown(KNOWN_ORGS_FILE, 0, 0)  # root:root
-#     except PermissionError:
-#         pass  # Skip if not running as root
-#
-#     os.chmod(KNOWN_ORGS_FILE, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)  # Read-only for all
-#
-#     # Optional: Make immutable using chattr (Linux only). This keeps failing because of the platform. Fix later
-#     # import sys
-#     # if sys.platform == "linux":
-#     #     try:
-#     #         import subprocess
-#     #         subprocess.run(["chattr", "+i", str(KNOWN_ORGS_FILE)], check=True)
-#     #     except (FileNotFoundError, subprocess.CalledProcessError):
-#     #         print("[*] chattr not available or failed. Skipping immutability.")
 
 KNOWN_ORGS_SOURCE_URL = (
     "https://gitlab.com/nunet/appliance/-/raw/main/known_orgs/known_organizations.json"
@@ -359,6 +320,8 @@ def refresh_known_organizations(timeout: int = 10) -> Dict[str, Dict[str, object
         ValueError: If the payload is not valid JSON/dict.
         OSError: If writing the file fails.
     """
+    if requests is None:
+        raise RuntimeError("requests library is required to refresh known organizations")
     response = requests.get(KNOWN_ORGS_SOURCE_URL, timeout=timeout)
     response.raise_for_status()
 

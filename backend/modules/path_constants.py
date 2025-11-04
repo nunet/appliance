@@ -20,6 +20,7 @@ APPLIANCE_VERSION_FILE = APPLIANCE_DIR / "appliance_version.txt"
 ONBOARDING_STATE_FILE = APPLIANCE_DIR / "onboarding_state.json"
 ONBOARDING_LOG_FILE = APPLIANCE_DIR / "onboarding.log"
 KNOWN_ORGS_FILE = REPO_ROOT / "known_orgs" / "known_organizations.json"
+CONTRACTS_DIR = HOME_DIR / "contracts"
 ROLE_METADATA_FILE = APPLIANCE_DIR / "role_metadata.json"
 
 # DMS artefacts
@@ -46,6 +47,7 @@ __all__ = [
     "ONBOARDING_STATE_FILE",
     "ONBOARDING_LOG_FILE",
     "KNOWN_ORGS_FILE",
+    "CONTRACTS_DIR",
     "ROLE_METADATA_FILE",
     "LOCAL_DEPLOYMENTS_DIR",
     "DMS_DEPLOYMENTS_DIR",

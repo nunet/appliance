@@ -62,6 +62,7 @@ mkdir -p "$PKGDIR/DEBIAN"
 mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles"
+mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/contracts"
 mkdir -p "$PKGDIR/lib/systemd/system"
 mkdir -p "$PKGDIR/etc/nunet-appliance-web"
 
@@ -75,11 +76,11 @@ if [ -d "$ROOT/backend/ensembles" ]; then
   cp -a "$ROOT/backend/ensembles/." "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles/" || true
 fi
 
-# (Optional) Data files you want on disk at runtime:
-# mkdir -p "$PKGDIR/usr/share/nunet-dms/data"
-# cp -a "$ROOT/backend/ensembles" "$PKGDIR/usr/share/nunet-dms/data/" 2>/dev/null || true
-# cp -a "$ROOT/backend/plugins"   "$PKGDIR/usr/share/nunet-dms/data/" 2>/dev/null || true
-# cp -a "$ROOT/backend/web-assets" "$PKGDIR/usr/share/nunet-dms/data/" 2>/dev/null || true
+
+# Include default contracts (if present in repo)
+if [ -d "$ROOT/backend/contracts" ]; then
+  cp -a "$ROOT/backend/contracts/." "$PKGDIR/usr/share/nunet-appliance-web/data/contracts/" || true
+fi
 
 # default env overrides (editable after install)
 cat > "$PKGDIR/etc/nunet-appliance-web/app.env" <<'EOF'
@@ -156,15 +157,26 @@ if [ -z "$(ls -A /home/ubuntu/ensembles 2>/dev/null)" ]; then
   fi
 fi
 
+mkdir -p /home/ubuntu/contracts
+if [ -z "$(ls -A /home/ubuntu/contracts 2>/dev/null)" ]; then
+  if [ -d /usr/share/nunet-appliance-web/data/contracts ]; then
+    cp -a /usr/share/nunet-appliance-web/data/contracts/. /home/ubuntu/contracts/
+  fi
+fi
+
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/known_orgs
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/deployments
 chown -R ubuntu:ubuntu /home/ubuntu/ensembles || true
+chown -R ubuntu:ubuntu /home/ubuntu/contracts || true
+
 
 chmod 755 /home/ubuntu/nunet/appliance
 chmod 755 /home/ubuntu/nunet/appliance/known_orgs
 chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/ensembles || true
+chmod 755 /home/ubuntu/contracts || true
+
 
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
