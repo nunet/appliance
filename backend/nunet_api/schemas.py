@@ -77,12 +77,14 @@ class PaymentReportIn(BaseModel):
     to_address: str
     amount: str
     payment_provider: str  # maps to DMS unique_id
+    blockchain: str = "ETHEREUM"
 
 class PaymentReportOut(BaseModel):
     tx_hash: str
     to_address: str
     amount: str
     payment_provider: str
+    blockchain: str
 
 class DmsTransaction(BaseModel):
     unique_id: str

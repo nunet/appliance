@@ -85,8 +85,8 @@ def stub_external_modules(tmp_path_factory):
             result["message"] = json.dumps({"peers": []})
             return result
 
-        def list_transactions(self) -> dict[str, Any]:
-            return {"transactions": []}
+        def list_transactions(self, blockchain: str | None = None) -> dict[str, Any]:
+            return {"status": "success", "transactions": []}
 
         def get_structured_logs(self, alloc_dir=None, lines: int = 200) -> dict[str, Any]:
             return {
@@ -438,8 +438,9 @@ def test_payments_list_payments_normalizes_transactions(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
-        def list_transactions(self):
+        def list_transactions(self, blockchain=None):
             return {
+                "status": "success",
                 "transactions": [
                     {
                         "unique_id": "2",

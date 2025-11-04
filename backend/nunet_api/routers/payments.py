@@ -19,6 +19,8 @@ PAY_TOKEN_DECIMALS = 6
 PAY_TOKEN_SYMBOL = "TSTNTX"
 PAY_EXPLORER_BASE = "https://sepolia.etherscan.io/"
 PAY_NETWORK_NAME = "Ethereum Sepolia"
+PAY_BLOCKCHAIN = "ETHEREUM"
+ALLOWED_BLOCKCHAINS = {"ETHEREUM", "CARDANO"}
 # --------------------------------------------------------------
 
 def get_mgr():
@@ -90,7 +92,9 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
     Fetch all transactions from DMS, normalize, validate lightly,
     sort by status (paid first, then unpaid), and return counts.
     """
-    out = mgr.list_transactions()
+    out = mgr.list_transactions(blockchain=PAY_BLOCKCHAIN)
+    if out.get("status") == "error":
+        raise HTTPException(status_code=502, detail=out.get("message", "DMS list transactions failed"))
     raw = out.get("transactions", []) or []
     # Normalize each row (skip non-dicts safely)
     normed: List[Dict[str, Any]] = []
@@ -142,7 +146,15 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
         pass
     print(body)
     # Call DMS confirm; payment_provider maps to unique_id
-    dms_res = mgr.confirm_transaction(unique_id=body.payment_provider, tx_hash=body.tx_hash)
+    blockchain = (body.blockchain or PAY_BLOCKCHAIN).strip().upper()
+    if blockchain not in ALLOWED_BLOCKCHAINS:
+        raise HTTPException(status_code=400, detail="Unsupported blockchain")
+
+    dms_res = mgr.confirm_transaction(
+        unique_id=body.payment_provider,
+        tx_hash=body.tx_hash,
+        blockchain=blockchain,
+    )
     if dms_res.get("status") != "success":
         raise HTTPException(status_code=502, detail=dms_res.get("message", "DMS confirm failed"))
 
@@ -151,4 +163,5 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
         to_address=addr,
         amount=body.amount,
         payment_provider=body.payment_provider,
+        blockchain=blockchain,
     )
