@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import {
   Card,
   CardContent,
@@ -9,21 +10,80 @@ import {
   CardHeader,
   CardTitle,
 } from "../ui/card";
-import { allInfo, allSysInfo, getDockerContainer } from "../../api/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../ui/dialog";
+import {
+  allInfo,
+  allSysInfo,
+  getDockerContainer,
+  offboardCompute,
+  onboardCompute,
+} from "../../api/api";
 import {
   CircleMinusIcon,
   CirclePlusIcon,
   DownloadCloudIcon,
+  Loader2,
   LoaderPinwheelIcon,
   XIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { Separator } from "../ui/separator";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SectionCardsSkeleton } from "./DashboardSkeleton";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
-import { useEffect } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
+
+type ResourcePair = { label: string; value: string };
+
+const parseResourcePairs = (input?: string): ResourcePair[] => {
+  if (!input) return [];
+  return input
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => {
+      const [rawLabel, ...rest] = segment.split(":");
+      const label = (rawLabel ?? "").trim();
+      const value = rest.join(":").trim();
+      return {
+        label,
+        value: value || "N/A",
+      };
+    })
+    .filter((pair) => pair.label.length > 0);
+};
+
+const renderResourceGroup = (
+  pairs: ResourcePair[],
+  Icon: LucideIcon,
+  prefix: string,
+  colorClass: string
+) =>
+  pairs.map((pair, idx) => (
+    <Fragment key={`${prefix}-${pair.label}-${idx}`}>
+      <CardDescription
+        className={`${colorClass} flex items-center gap-1 py-1`}
+      >
+        <Icon className="size-4" />
+        {prefix} {pair.label}
+      </CardDescription>
+      <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
+        {pair.value}
+      </CardTitle>
+      {idx < pairs.length - 1 && <Separator />}
+    </Fragment>
+  ));
 
 export function SectionCards() {
   const {
@@ -55,6 +115,98 @@ export function SectionCards() {
   });
 
   const queryClient = useQueryClient();
+  const [confirmOffboardOpen, setConfirmOffboardOpen] = useState(false);
+
+  const cleanedOnboardingStatus = useMemo(() => {
+    const raw = info?.onboarding_status ?? "";
+    return raw.replace(/\x1b\[[0-9;]*m/g, "");
+  }, [info?.onboarding_status]);
+
+  const normalizedOnboardingStatus = cleanedOnboardingStatus.trim().toUpperCase();
+  const isExplicitlyNotOnboarded = normalizedOnboardingStatus.includes("NOT ONBOARD");
+  const isOnboarded =
+    normalizedOnboardingStatus.includes("ONBOARDED") && !isExplicitlyNotOnboarded;
+  const displayOnboardingStatus =
+    cleanedOnboardingStatus || info?.onboarding_status || "Unknown";
+  const onboardingStatusTone = useMemo(() => {
+    if (!normalizedOnboardingStatus) {
+      return "text-yellow-500";
+    }
+    if (
+      normalizedOnboardingStatus.includes("FAIL") ||
+      normalizedOnboardingStatus.includes("ERROR")
+    ) {
+      return "text-red-500";
+    }
+    if (normalizedOnboardingStatus.includes("NOT")) {
+      return "text-yellow-500";
+    }
+    return "text-green-500";
+  }, [normalizedOnboardingStatus]);
+
+  const freeResourcePairs = useMemo(
+    () => parseResourcePairs(info?.free_resources),
+    [info?.free_resources]
+  );
+  const allocatedResourcePairs = useMemo(
+    () => parseResourcePairs(info?.allocated_resources),
+    [info?.allocated_resources]
+  );
+  const onboardedResourcePairs = useMemo(
+    () => parseResourcePairs(info?.onboarded_resources),
+    [info?.onboarded_resources]
+  );
+
+  const extractErrorMessage = (error: any, fallback: string) =>
+    error?.response?.data?.message ??
+    error?.response?.data?.detail ??
+    error?.message ??
+    fallback;
+
+  const {
+    mutateAsync: triggerOnboard,
+    isPending: isOnboarding,
+  } = useMutation({
+    mutationFn: onboardCompute,
+    onSuccess: async (res) => {
+      toast.success(res?.message || "Compute onboarding started");
+      await Promise.allSettled([refetchInfo(), refetchSys()]);
+    },
+    onError: (error) => {
+      toast.error(extractErrorMessage(error, "Failed to start onboarding"));
+    },
+  });
+
+  const {
+    mutateAsync: triggerOffboard,
+    isPending: isOffboarding,
+  } = useMutation({
+    mutationFn: offboardCompute,
+    onSuccess: async (res) => {
+      toast.success(res?.message || "Compute offboarding started");
+      setConfirmOffboardOpen(false);
+      await Promise.allSettled([refetchInfo(), refetchSys()]);
+    },
+    onError: (error) => {
+      toast.error(extractErrorMessage(error, "Failed to start offboarding"));
+    },
+  });
+
+  const handleOnboardClick = async () => {
+    try {
+      await triggerOnboard();
+    } catch {
+      // Error handled via onError toast
+    }
+  };
+
+  const handleOffboardConfirm = async () => {
+    try {
+      await triggerOffboard();
+    } catch {
+      // Error handled via onError toast
+    }
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -66,6 +218,12 @@ export function SectionCards() {
 
     return () => clearTimeout(timer);
   }, [queryClient]);
+
+  useEffect(() => {
+    if (!isOnboarded && confirmOffboardOpen) {
+      setConfirmOffboardOpen(false);
+    }
+  }, [isOnboarded, confirmOffboardOpen]);
 
   const {
     data: docker,
@@ -88,7 +246,7 @@ export function SectionCards() {
     <>
       <div className="grid grid-cols-1 gap-4 px-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
-          <CardHeader className="flex items-center justify-between">
+          <CardHeader className="flex items-center justify-between gap-2">
             <div>
               <CardDescription>Peer ID:</CardDescription>
               <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl text-wrap break-words">
@@ -99,12 +257,88 @@ export function SectionCards() {
                 />
               </CardTitle>
             </div>
-            {/* Refresh sysInfo button */}
-            <RefreshButton
-              onClick={() => refetchSys()}
-              isLoading={isRefetchingSys}
-              tooltip="Refresh System Info"
-            />
+            <div className="flex items-center gap-2">
+              {isOnboarded ? (
+                <Dialog
+                  open={confirmOffboardOpen}
+                  onOpenChange={(open) => {
+                    if (isOffboarding) return;
+                    setConfirmOffboardOpen(open);
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      className="bg-red-600 hover:bg-red-700 text-white"
+                      disabled={isOffboarding || isOnboarding}
+                    >
+                      {isOffboarding ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          Offboarding...
+                        </>
+                      ) : (
+                        "Offboard"
+                      )}
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent showCloseButton={!isOffboarding}>
+                    <DialogHeader>
+                      <DialogTitle>Confirm offboarding</DialogTitle>
+                      <DialogDescription>
+                        This will release all onboarded resources for this node.
+                        Active workloads may be interrupted. Continue?
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setConfirmOffboardOpen(false)}
+                        disabled={isOffboarding}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                        onClick={handleOffboardConfirm}
+                        disabled={isOffboarding}
+                      >
+                        {isOffboarding ? (
+                          <>
+                            <Loader2 className="size-4 animate-spin" />
+                            Offboarding...
+                          </>
+                        ) : (
+                          "Yes, offboard"
+                        )}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              ) : (
+                <Button
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                  disabled={isOnboarding || isOffboarding}
+                  onClick={handleOnboardClick}
+                >
+                  {isOnboarding ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Onboarding...
+                    </>
+                  ) : (
+                    "Onboard"
+                  )}
+                </Button>
+              )}
+              {/* Refresh sysInfo button */}
+              <RefreshButton
+                onClick={() => refetchSys()}
+                isLoading={isRefetchingSys}
+                tooltip="Refresh System Info"
+              />
+            </div>
           </CardHeader>
           <CardFooter className="flex-col items-start gap-1.5 text-sm">
             <div className="text-muted-foreground w-full">
@@ -163,16 +397,8 @@ export function SectionCards() {
                   )}
                   <span>{info?.dms_running ? "Running" : "Not Running"}</span>
                 </div>
-                <div
-                  className={cn(
-                    "main_board_info",
-                    info?.onboarding_status.includes("not") ||
-                      info?.onboarding_status.includes("NOT")
-                      ? "text-yellow-500"
-                      : "text-green-500"
-                  )}
-                >
-                  {info?.onboarding_status.replace(/\x1b\[[0-9;]*m/g, "")}
+                <div className={cn("main_board_info", onboardingStatusTone)}>
+                  {displayOnboardingStatus}
                 </div>
                 <div
                   className={cn(
@@ -232,93 +458,38 @@ export function SectionCards() {
         </Card>
       </div>
 
-      {!info?.free_resources.includes("not") && (
+      {!((info?.free_resources ?? "").toLowerCase().includes("not")) && (
         <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2 xl:grid-cols-3 lg:px-6">
           <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
             <CardHeader>
-              <CardDescription className="text-green-500 flex items-center gap-1 py-1">
-                <CirclePlusIcon className="size-4" /> Free{" "}
-                {info?.free_resources.split(",")[0].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.free_resources.split(",")[0].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-green-500 flex items-center gap-1 py-1">
-                <CirclePlusIcon className="size-4" />
-                Free {info?.free_resources.split(",")[1].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.free_resources.split(",")[1].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-green-500 flex items-center gap-1 py-1">
-                <CirclePlusIcon className="size-4" />
-                Free {info?.free_resources.split(",")[2].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.free_resources.split(",")[2].split(":")[1]}
-              </CardTitle>
+              {renderResourceGroup(
+                freeResourcePairs,
+                CirclePlusIcon,
+                "Free",
+                "text-green-500"
+              )}
             </CardHeader>
           </Card>
 
           <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
             <CardHeader>
-              <CardDescription className="text-red-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" /> Allocated{" "}
-                {info?.allocated_resources.split(",")[0].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.allocated_resources.split(",")[0].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-red-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" />
-                Allocated{" "}
-                {info?.allocated_resources.split(",")[1].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.allocated_resources.split(",")[1].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-red-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" />
-                Allocated{" "}
-                {info?.allocated_resources.split(",")[2].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.allocated_resources.split(",")[2].split(":")[1]}
-              </CardTitle>
+              {renderResourceGroup(
+                allocatedResourcePairs,
+                CircleMinusIcon,
+                "Allocated",
+                "text-red-500"
+              )}
             </CardHeader>
           </Card>
 
           <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
             <CardHeader>
-              <CardDescription className="text-blue-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" /> Onboarded{" "}
-                {info?.onboarded_resources.split(",")[0].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.onboarded_resources.split(",")[0].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-blue-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" />
-                Onboarded{" "}
-                {info?.onboarded_resources.split(",")[1].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.onboarded_resources.split(",")[1].split(":")[1]}
-              </CardTitle>
-              <Separator />
-              <CardDescription className="text-blue-500 flex items-center gap-1 py-1">
-                <CircleMinusIcon className="size-4" />
-                Onboarded{" "}
-                {info?.onboarded_resources.split(",")[2].split(":")[0]}
-              </CardDescription>
-              <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-                {info?.onboarded_resources.split(",")[2].split(":")[1]}
-              </CardTitle>
+              {renderResourceGroup(
+                onboardedResourcePairs,
+                CircleMinusIcon,
+                "Onboarded",
+                "text-blue-500"
+              )}
             </CardHeader>
           </Card>
         </div>
