@@ -24,6 +24,7 @@ from .dms_utils import get_dms_resource_info, run_dms_command_with_passphrase
 from .org_utils import load_known_organizations, extract_role_profiles, get_tokens_for_org
 from .path_constants import (
     APPLIANCE_DIR,
+    KNOWN_ORGS_FILE,
     ONBOARDING_LOG_FILE,
     ONBOARDING_STATE_FILE,
 )
@@ -289,6 +290,84 @@ class OnboardingManager:
                 caps.append(normalized)
         return caps
 
+    @staticmethod
+    def _extract_topics(require_template: Dict[str, Any] | None) -> List[str]:
+        """Return a de-duplicated list of topic strings from a require template."""
+        if not isinstance(require_template, dict):
+            return []
+        raw_topics = require_template.get("topics")
+        if not isinstance(raw_topics, list):
+            return []
+        topics: List[str] = []
+        for topic in raw_topics:
+            if not isinstance(topic, str):
+                continue
+            clean_topic = topic.strip()
+            if clean_topic and clean_topic not in topics:
+                topics.append(clean_topic)
+        return topics
+
+    def _cache_role_profile(self, org_did: str, role_id: str, profile: Dict[str, Any]) -> None:
+        """Persist an updated role profile in the onboarding state."""
+        if not org_did or not role_id or not isinstance(profile, dict):
+            return
+        org_data = self.state.get("org_data")
+        if not isinstance(org_data, dict) or org_data.get("did") != org_did:
+            return
+        updated_org_data = dict(org_data)
+        existing_profiles = updated_org_data.get("role_profiles")
+        if isinstance(existing_profiles, dict):
+            merged_profiles = dict(existing_profiles)
+        else:
+            merged_profiles = {}
+        merged_profiles[role_id] = dict(profile)
+        updated_org_data["role_profiles"] = merged_profiles
+        self.update_state(org_data=updated_org_data)
+
+    @staticmethod
+    def _known_orgs_candidates() -> List[Path]:
+        primary = KNOWN_ORGS_FILE
+        legacy = Path.home() / "nunet" / "appliance" / "known_orgs" / "known_organizations.json"
+        if legacy == primary:
+            return [primary]
+        return [primary, legacy]
+
+    @classmethod
+    def _active_known_orgs_path(cls) -> Optional[Path]:
+        for candidate in cls._known_orgs_candidates():
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _load_role_profile_from_known(self, org_did: str, role_id: Optional[str]) -> Dict[str, Any]:
+        """Refresh the role profile for *role_id* from the known organizations data."""
+        if not org_did or not role_id:
+            return {}
+        try:
+            known = load_known_organizations() or {}
+            entry = known.get(org_did)
+            if not entry:
+                return {}
+            source_path = self._active_known_orgs_path()
+            logger.info(
+                "Loaded known organizations for org=%s from %s",
+                org_did,
+                source_path or "<not found>",
+            )
+            profiles = extract_role_profiles(entry)
+            profile = profiles.get(role_id)
+            if isinstance(profile, dict):
+                logger.info(
+                    "Refreshed role profile for org=%s role=%s from known organizations.",
+                    org_did,
+                    role_id,
+                )
+                self._cache_role_profile(org_did, role_id, profile)
+                return dict(profile)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Unable to refresh role profile for %s/%s: %s", org_did, role_id, exc)
+        return {}
+
     def get_active_caps(self) -> List[str]:
         """Expose the capability list for the active role profile."""
         profile = self.get_active_role_profile()
@@ -364,6 +443,13 @@ class OnboardingManager:
         self.append_log("submit_data", "Compute onboarding completed successfully.")
         return get_dms_resource_info()
 
+    def ensure_pre_onboarding(self) -> Dict[str, Any]:
+        """
+        Public wrapper to guarantee compute resources are onboarded and return
+        the latest snapshot used when preparing join payloads.
+        """
+        return self._ensure_pre_onboarding()
+
     def api_submit_join(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Submit onboarding data to the selected organisation."""
         if self.use_mock_api:
@@ -378,14 +464,26 @@ class OnboardingManager:
         onboarded = "ONBOARDED" in onboarding_status_raw.upper()
         onboarded_resources = _ANSI_RE.sub("", str(resource_info.get("onboarded_resources", "Unknown")))
 
-        payload.setdefault(
-            "resources",
-            {
-                "onboarding_status": onboarded,
-                "onboarded_resources": onboarded_resources,
-            },
-        )
-        payload.setdefault("dms_resources", resource_info.get("dms_resources", {}))
+        payload["resources"] = {
+            "onboarding_status": onboarded,
+            "onboarded_resources": onboarded_resources,
+        }
+        base_dms_resources = resource_info.get("dms_resources")
+        if isinstance(base_dms_resources, dict):
+            dms_resources = dict(base_dms_resources)
+        else:
+            dms_resources = {}
+
+        if "onboarded_resources" not in dms_resources:
+            dms_resources["onboarded_resources"] = onboarded_resources
+        dms_resources.setdefault("onboarding_status", resource_info.get("onboarding_status"))
+        # Preserve plain-string aggregates for consumers that only expect text blobs.
+        if "free_resources" not in dms_resources and resource_info.get("free_resources") is not None:
+            dms_resources["free_resources"] = resource_info.get("free_resources")
+        if "allocated_resources" not in dms_resources and resource_info.get("allocated_resources") is not None:
+            dms_resources["allocated_resources"] = resource_info.get("allocated_resources")
+
+        payload["dms_resources"] = dms_resources
 
         api_url = self.get_onboarding_api_url()
         if not api_url:
@@ -427,9 +525,26 @@ class OnboardingManager:
         role_id = role_id or self.get_selected_role_id()
         profiles = self.get_role_profiles()
         profile = profiles.get(role_id) if role_id else {}
-        require_template = {}
+        require_template: Dict[str, Any] = {}
         if isinstance(profile, dict):
             require_template = profile.get("require_template") or {}
+
+        topics = self._extract_topics(require_template)
+        if role_id and (not require_template or not topics):
+            reason = "template missing" if not require_template else "topics missing"
+            logger.info(
+                "Role profile for org=%s role=%s has %s; reloading from known organizations.",
+                org_did,
+                role_id,
+                reason,
+            )
+            refreshed_profile = self._load_role_profile_from_known(org_did, role_id)
+            if refreshed_profile:
+                profile = refreshed_profile
+                require_template = profile.get("require_template") or {}
+                topics = self._extract_topics(require_template)
+                if isinstance(profiles, dict):
+                    profiles[role_id] = profile
 
         context = require_template.get("context")
         if not isinstance(context, str) or not context.strip():
@@ -443,15 +558,37 @@ class OnboardingManager:
             role_label = label or role_id or "active role"
             raise RuntimeError(f"Role '{role_label}' is missing require_template.caps; cannot generate require token.")
 
-        topics_raw = require_template.get("topics") if isinstance(require_template, dict) else None
-        topics: List[str] = []
-        if isinstance(topics_raw, list):
-            for topic in topics_raw:
-                if not isinstance(topic, str):
-                    continue
-                clean_topic = topic.strip()
-                if clean_topic and clean_topic not in topics:
-                    topics.append(clean_topic)
+        source_path = self._active_known_orgs_path()
+        logger.info(
+            "Known orgs path for org=%s role=%s resolved to %s",
+            org_did,
+            role_id or "<default>",
+            source_path or "<not found>",
+        )
+        logger.debug(
+            "Role require_template for org=%s role=%s -> %s",
+            org_did,
+            role_id or "<default>",
+            require_template,
+        )
+        topic_log_target = topics if topics else ["<none>"]
+        logger.info(
+            "Preparing require token org=%s role=%s caps=%s topics=%s",
+            org_did,
+            role_id or "<default>",
+            caps,
+            topic_log_target,
+        )
+        if topics:
+            self.append_log(
+                "capabilities_applied",
+                f"Require token topics for role '{role_id or 'default'}': {', '.join(topics)}",
+            )
+        else:
+            self.append_log(
+                "capabilities_applied",
+                f"No topics configured for role '{role_id or 'default'}'; continuing without --topic flags.",
+            )
 
         expiry = (datetime.utcnow() + timedelta(days=expiry_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         if role_id:

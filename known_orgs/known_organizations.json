@@ -34,6 +34,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       }
@@ -78,6 +81,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       }
@@ -108,7 +114,7 @@
     ],
     "roles": [
       {
-        "id": "compute-provider",
+        "id": "compute_provider",
         "label": "Compute Provider",
         "description": "bid",
         "require_template": {
@@ -118,6 +124,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       },
@@ -132,6 +141,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       },
@@ -145,6 +157,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       },
@@ -158,6 +173,9 @@
             "/dms/tokenomics/contract",
             "/broadcast",
             "/public"
+          ],
+          "topics": [
+            "/nunet"
           ]
         }
       }

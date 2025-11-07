@@ -230,7 +230,7 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
     """
     runtime: Dict[str, Any] = {}
 
-    dms_info = get_cached_dms_status_info() or {}
+    dms_info = get_cached_dms_status_info(force_refresh=True) or {}
     runtime["dms_status"] = dms_info
 
     try:
@@ -246,7 +246,8 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
         runtime["peer_info"] = {}
 
     try:
-        res_info = get_cached_dms_resource_info() or {}
+        ensure_fn = getattr(mgr, "ensure_pre_onboarding", None)
+        res_info = ensure_fn() if callable(ensure_fn) else mgr._ensure_pre_onboarding()
         onboarding_status = res_info.get("onboarding_status", "Unknown")
         onboarded_resources = res_info.get("onboarded_resources", "Unknown")
         if isinstance(onboarded_resources, str):
@@ -255,7 +256,20 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
             "onboarding_status": ("ONBOARDED" in str(onboarding_status)),
             "onboarded_resources": onboarded_resources,
         }
-        runtime["dms_resources"] = res_info.get("dms_resources", {})
+        dms_resources = res_info.get("dms_resources")
+        if not dms_resources:
+            cached_snapshot = get_cached_dms_resource_info(force_refresh=True) or {}
+            dms_resources = cached_snapshot.get("dms_resources", {})
+        merged_resources: Dict[str, Any] = {}
+        if isinstance(dms_resources, dict):
+            merged_resources.update(dms_resources)
+        merged_resources.setdefault("onboarded_resources", onboarded_resources)
+        merged_resources.setdefault("onboarding_status", onboarding_status)
+        if "free_resources" not in merged_resources and res_info.get("free_resources") is not None:
+            merged_resources["free_resources"] = res_info.get("free_resources")
+        if "allocated_resources" not in merged_resources and res_info.get("allocated_resources") is not None:
+            merged_resources["allocated_resources"] = res_info.get("allocated_resources")
+        runtime["dms_resources"] = merged_resources
     except Exception:
         runtime["resources"] = {
             "onboarding_status": False,
@@ -664,13 +678,12 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         tokenomics=tokenomics_cfg,
     )
 
-    dms_info = get_cached_dms_status_info() or {}
+    runtime = _collect_runtime_info(mgr)
+    dms_info = runtime.get("dms_status", {}) or {}
     dms_did = dms_info.get("dms_did")
     dms_peer_id = dms_info.get("dms_peer_id")
     if not dms_did or not dms_peer_id:
         raise HTTPException(status_code=400, detail="DMS not ready (missing DID or Peer ID). Start DMS first.")
-
-    runtime = _collect_runtime_info(mgr)
 
     payload: Dict[str, Any] = {
         "organization_name": org_data.get("name"),

@@ -26,6 +26,8 @@ import RestartDmsButton from "./RestartDMSButton";
 import { RenewalModal } from "./RenewalModal";
 import { toast } from "sonner";
 
+const COMPLETE_STATUS_MESSAGE = "Onboarding complete! Restart DMS to apply the new configuration.";
+
 export function OnboardingFlow({
   status,
   knownOrgs,
@@ -120,9 +122,27 @@ export function OnboardingFlow({
   const currentIndex = status?.current_index ?? 0;
   const currentStep = status?.current_step ?? "init";
   const apiStatus = status?.api_status ?? null;
+  const processedOk = Boolean(status?.raw?.processed_ok) || Boolean(status?.raw?.completed);
+  const completeIndex = useMemo(() => stepStates.findIndex((s) => s.id === "complete"), [stepStates]);
+  const displayStepStates = useMemo(() => {
+    if (!processedOk || completeIndex === -1) {
+      return stepStates;
+    }
+    return stepStates.map((step, idx) => {
+      if (idx < completeIndex) {
+        return step.state === "done" ? step : { ...step, state: "done" };
+      }
+      if (idx === completeIndex) {
+        return step.state === "active" ? step : { ...step, state: "active" };
+      }
+      return step.state === "todo" ? step : { ...step, state: "todo" };
+    });
+  }, [processedOk, stepStates, completeIndex]);
+  const displayIndex = processedOk && completeIndex >= 0 ? completeIndex : currentIndex;
+  const displayStep = processedOk ? "complete" : currentStep;
   const isApproved = apiStatus === "ready" || apiStatus === "approved";
-  const isRejected = currentStep === "rejected";
-  const isComplete = currentStep === "complete";
+  const isRejected = displayStep === "rejected";
+  const isComplete = displayStep === "complete";
 
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -214,21 +234,39 @@ export function OnboardingFlow({
   // --- UI flags ---
   const showSelect =
     forceOrgSelect ||
-    currentStep === "init" ||
-    currentStep === "select_org";
+    displayStep === "init" ||
+    displayStep === "select_org";
   const showForm =
     !forceOrgSelect &&
     !isRenewalModalOpen &&
-    (currentStep === "collect_join_data" || currentStep === "submit_data");
+    (displayStep === "collect_join_data" || displayStep === "submit_data");
 
   const showComplete = !forceOrgSelect && isComplete;
-  const canCancel = !forceOrgSelect && currentStep !== "init" && !isComplete && !isRenewalModalOpen;
+  const canCancel = !forceOrgSelect && displayStep !== "init" && !isComplete && !isRenewalModalOpen;
   const activeOrgDid = status?.raw?.org_data?.did;
   const backendRenewalFlag =
     Boolean(status?.raw?.org_data?.renewal) || Boolean(status?.raw?.form_data?.renewal) || Boolean(status?.raw?.renewal);
   const isRenewingActive =
     Boolean(activeOrgDid) &&
     (backendRenewalFlag || (renewingOrgDid !== null && renewingOrgDid === activeOrgDid));
+
+  const statusForBanner = useMemo(() => {
+    if (!status) {
+      return status;
+    }
+    if (!processedOk || status.current_step === "complete") {
+      return status;
+    }
+    return {
+      ...status,
+      current_step: "complete",
+      current_index: displayIndex,
+      step_states: displayStepStates,
+      progress: status.progress && status.progress > 0 ? status.progress : 100,
+      ui_state: status.ui_state ?? "complete",
+      ui_message: status.ui_message || COMPLETE_STATUS_MESSAGE,
+    };
+  }, [status, processedOk, displayIndex, displayStepStates]);
 
   useEffect(() => {
     if (!status) {
@@ -237,6 +275,7 @@ export function OnboardingFlow({
     const payload = {
       prevStep: previousStepRef.current,
       currentStep,
+      displayStep,
       apiStatus,
       progress: status.progress,
       forceOrgSelect,
@@ -251,6 +290,7 @@ export function OnboardingFlow({
   }, [
     status,
     currentStep,
+    displayStep,
     apiStatus,
     forceOrgSelect,
     showSelect,
@@ -315,8 +355,8 @@ export function OnboardingFlow({
         </>
       )}
       {!forceOrgSelect &&
-        currentStep !== "init" &&
-        currentStep !== "select_org" && (
+        displayStep !== "init" &&
+        displayStep !== "select_org" && (
         <>
           <div className="text-muted-foreground text-sm mb-2">
             Joining {status?.raw?.org_data?.name ?? "organization"}
@@ -324,13 +364,13 @@ export function OnboardingFlow({
           <Card>
             <CardContent className="py-4">
               <Stepper
-                steps={stepStates}
-                currentIndex={currentIndex}
-                currentStep={currentStep}
+                steps={displayStepStates}
+                currentIndex={displayIndex}
+                currentStep={displayStep}
               />
             </CardContent>
           </Card>
-          <StatusBanner status={status} />
+          <StatusBanner status={statusForBanner ?? status} />
         </>
       )}
 
