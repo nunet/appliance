@@ -71,6 +71,12 @@ install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-w
 install -m 0644 "$ROOT/release/gunicorn_conf.py" "$PKGDIR/usr/lib/nunet-appliance-web/gunicorn_conf.py"
 cp -a "$ROOT/release/frontend-dist/." "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist/"
 
+# Include known organizations metadata for backend defaults.
+if [ -d "$ROOT/known_orgs" ]; then
+  mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/known_orgs"
+  cp -a "$ROOT/known_orgs/." "$PKGDIR/usr/lib/nunet-appliance-web/known_orgs/" || true
+fi
+
 # Include default ensembles (if present in repo)
 if [ -d "$ROOT/backend/ensembles" ]; then
   cp -a "$ROOT/backend/ensembles/." "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles/" || true
@@ -149,6 +155,15 @@ cat > "$PKGDIR/DEBIAN/postinst" <<'EOF'
 # Create appliance directory with proper permissions
 mkdir -p /home/ubuntu/nunet/appliance/known_orgs
 mkdir -p /home/ubuntu/nunet/appliance/deployments
+# Refresh known organizations defaults from packaged data
+if [ -f /usr/lib/nunet-appliance-web/known_orgs/known_organizations.json ]; then
+  backup_target="/home/ubuntu/nunet/appliance/known_orgs/known_organizations.json"
+  if [ -f "$backup_target" ]; then
+    cp "$backup_target" "${backup_target}.bak" || true
+  fi
+  install -m 0644 -T /usr/lib/nunet-appliance-web/known_orgs/known_organizations.json "$backup_target"
+  chown ubuntu:ubuntu "$backup_target" || true
+fi
 # Create ensembles directory and populate defaults if missing/empty
 mkdir -p /home/ubuntu/ensembles
 if [ -z "$(ls -A /home/ubuntu/ensembles 2>/dev/null)" ]; then

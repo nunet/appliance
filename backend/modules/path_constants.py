@@ -19,7 +19,7 @@ APPLIANCE_PUBLIC_IP_CACHE = APPLIANCE_DIR / "public_ip_cache.json"
 APPLIANCE_VERSION_FILE = APPLIANCE_DIR / "appliance_version.txt"
 ONBOARDING_STATE_FILE = APPLIANCE_DIR / "onboarding_state.json"
 ONBOARDING_LOG_FILE = APPLIANCE_DIR / "onboarding.log"
-KNOWN_ORGS_FILE = REPO_ROOT / "known_orgs" / "known_organizations.json"
+KNOWN_ORGS_FILE = APPLIANCE_DIR / "known_orgs" / "known_organizations.json"
 CONTRACTS_DIR = HOME_DIR / "contracts"
 ROLE_METADATA_FILE = APPLIANCE_DIR / "role_metadata.json"
 

@@ -522,18 +522,20 @@ class DMSManager:
             logger.error("Invalid blockchain for confirm_transaction: %s", exc)
             return {"status": "error", "message": str(exc)}
 
-        argv = [
+        base_argv = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/transactions/confirm",
             "--unique-id", unique_id,
             "--tx-hash", tx_hash,
-            "--blockchain", normalized_blockchain,
         ]
+        argv = base_argv + ["--blockchain", normalized_blockchain]
+        supports_blockchain_flag = True
         last_error: Optional[str] = None
         for attempt in range(1, 4):
             cp = run_dms_command_with_passphrase(argv, capture_output=True, text=True, check=False)
             stdout = (cp.stdout or "").strip()
             stderr = (cp.stderr or "").strip()
+            error_text_lower = f"{stderr}\n{stdout}".lower()
             if cp.returncode == 0:
                 error_message = self._extract_error(stdout, stderr)
                 if not error_message:
@@ -541,6 +543,12 @@ class DMSManager:
                 last_error = error_message
                 logger.debug("Confirm transaction returned error payload (attempt %s): %s", attempt, error_message)
             else:
+                if supports_blockchain_flag and "unknown flag: --blockchain" in error_text_lower:
+                    logger.warning("confirm_transaction: CLI does not support --blockchain flag, retrying without it")
+                    supports_blockchain_flag = False
+                    argv = list(base_argv)
+                    if attempt < 4:
+                        continue
                 last_error = stderr or stdout or f"Command failed with return code {cp.returncode}"
                 logger.debug("Confirm transaction failed (attempt %s): %s", attempt, last_error)
             if attempt < 3:
@@ -554,22 +562,36 @@ class DMSManager:
             logger.error("Invalid blockchain for list_transactions: %s", exc)
             return {"status": "error", "message": str(exc)}
 
+        base_cmd = [
+            "nunet", "actor", "cmd", "--context", "dms",
+            "/dms/tokenomics/contract/transactions/list",
+        ]
+        cmd = base_cmd + ["--blockchain", normalized_blockchain]
         cp = run_dms_command_with_passphrase(
-            [
-                "nunet", "actor", "cmd", "--context", "dms",
-                "/dms/tokenomics/contract/transactions/list",
-                "--blockchain", normalized_blockchain,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             check=False,
         )
+        stdout = cp.stdout or ""
+        stderr = cp.stderr or ""
+        error_text_lower = f"{stderr}\n{stdout}".lower()
+        if cp.returncode != 0 and "unknown flag: --blockchain" in error_text_lower:
+            logger.warning("list_transactions: CLI does not support --blockchain flag, retrying without it")
+            cp = run_dms_command_with_passphrase(
+                base_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            stdout = cp.stdout or ""
+            stderr = cp.stderr or ""
         if cp.returncode != 0:
-            message = cp.stderr or cp.stdout or f"Command failed with return code {cp.returncode}"
+            message = stderr or stdout or f"Command failed with return code {cp.returncode}"
             logger.error("Failed to list transactions: %s", message)
             return {"status": "error", "message": message}
         try:
-            data = json.loads(cp.stdout or "{}")
+            data = json.loads(stdout or "{}")
         except json.JSONDecodeError:
             logger.error("Invalid JSON from transactions list command")
             return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import threading
 from copy import deepcopy
@@ -122,12 +123,64 @@ def _merge_env(user_env: Optional[Dict[str, str]]) -> Dict[str, str]:
         env["DMS_PASSPHRASE"] = passphrase
     return env
 
+def _format_cmd_for_log(cmd: Sequence[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in cmd)
+
+
+def _log_command_result(
+    cmd: Sequence[str],
+    cp: subprocess.CompletedProcess,
+    *,
+    level: int,
+) -> None:
+    stdout = "<not captured>"
+    stderr = "<not captured>"
+    if isinstance(cp.stdout, str):
+        stdout = _log_snippet(cp.stdout.strip() or "<empty>")
+    elif cp.stdout is not None:
+        stdout = "<binary>"
+
+    if isinstance(cp.stderr, str):
+        stderr = _log_snippet(cp.stderr.strip() or "<empty>")
+    elif cp.stderr is not None:
+        stderr = "<binary>"
+
+    logger.log(
+        level,
+        "DMS command finished rc=%s cmd=%s stdout=%s stderr=%s",
+        cp.returncode,
+        _format_cmd_for_log(cmd),
+        stdout,
+        stderr,
+    )
+
+
 def run_dms_command_with_passphrase(cmd: List[str], **kwargs) -> subprocess.CompletedProcess:
     """Run a command ensuring the DMS passphrase is available in the environment."""
     env = _merge_env(kwargs.pop("env", None))
     kwargs.setdefault("text", True)
-    logger.debug("Running DMS command: %s", " ".join(cmd))
-    return subprocess.run(cmd, env=env, **kwargs)
+    check_requested = kwargs.pop("check", False)
+    cmd_display = _format_cmd_for_log(cmd)
+    logger.info("Executing DMS command: %s", cmd_display)
+
+    try:
+        cp = subprocess.run(cmd, env=env, check=False, **kwargs)
+    except Exception:
+        logger.exception("Failed to execute DMS command: %s", cmd_display)
+        raise
+
+    log_level = logging.INFO if cp.returncode == 0 else logging.WARNING
+    _log_command_result(cmd, cp, level=log_level)
+
+    if check_requested and cp.returncode != 0:
+        raise subprocess.CalledProcessError(
+            cp.returncode,
+            cmd,
+            output=cp.stdout,
+            stderr=cp.stderr,
+        )
+
+    return cp
 
 def _normalize_listen_addrs(value: Iterable[str] | str | None) -> List[str]:
     if value is None:
@@ -463,14 +516,29 @@ def _fmt_resources(resources_json: Dict[str, Any]) -> str:
 
     return f"Cores: {cores_display}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
 
-def get_dms_resource_info() -> Dict[str, str]:
+def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
+    """
+    Normalize resource payloads returned by /dms/node/resources/* into a
+    consistent dict with cpu/ram/disk/gpus/etc where available.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    resources = payload.get("Resources")
+    if isinstance(resources, dict):
+        return resources
+    return payload
+
+
+def get_dms_resource_info() -> Dict[str, Any]:
     """Return onboarding and resource allocation information."""
-    info: Dict[str, str] = {
+    info: Dict[str, Any] = {
         "onboarding_status": "Unknown",
         "free_resources": "Unknown",
         "allocated_resources": "Unknown",
         "onboarded_resources": "Unknown",
+        "dms_resources": {},
     }
+    raw_snapshots: Dict[str, Any] = {}
 
     onboarding = _call_actor_json("/dms/node/onboarding/status")
     onboarded = False
@@ -487,19 +555,31 @@ def get_dms_resource_info() -> Dict[str, str]:
         info["onboarded_resources"] = placeholder
         return info
 
-    def _load_resource(endpoint: str) -> str:
+    def _load_resource(endpoint: str, label: str) -> str:
         payload = _call_actor_json(endpoint)
         if payload is None:
             return "Unknown"
+        raw_snapshots[label] = payload
         try:
             return _fmt_resources(payload)
         except Exception as exc:  # defensive: malformed payloads
             logger.debug("Unable to format %s payload: %s", endpoint, exc)
             return "Unknown"
 
-    info["free_resources"] = _load_resource("/dms/node/resources/free")
-    info["allocated_resources"] = _load_resource("/dms/node/resources/allocated")
-    info["onboarded_resources"] = _load_resource("/dms/node/resources/onboarded")
+    info["free_resources"] = _load_resource("/dms/node/resources/free", "free")
+    info["allocated_resources"] = _load_resource("/dms/node/resources/allocated", "allocated")
+    info["onboarded_resources"] = _load_resource("/dms/node/resources/onboarded", "onboarded")
+
+    # Prefer the onboarded snapshot for detailed hardware information, fall back
+    # to allocated/free if onboarded is missing.
+    detail_snapshot = (
+        raw_snapshots.get("onboarded")
+        or raw_snapshots.get("allocated")
+        or raw_snapshots.get("free")
+        or {}
+    )
+    info["dms_resources"] = _extract_resource_snapshot(detail_snapshot)
+
     return info
 
 def get_cached_dms_status_info(
@@ -519,7 +599,7 @@ def get_cached_dms_resource_info(
     ttl: float = _CACHE_TTL_DEFAULT,
     *,
     force_refresh: bool = False,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     if not force_refresh:
         cached = _read_cache(_DMS_RESOURCES_CACHE, _DMS_RESOURCES_LOCK, ttl)
         if cached is not None:
