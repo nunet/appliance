@@ -32,10 +32,63 @@ def get_mgr() -> DMSManager:
     return DMSManager()
 
 
+def _coerce_mapping(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return dict(value)
+    for attr in ("model_dump", "dict"):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                candidate = method()
+            except TypeError:
+                try:
+                    candidate = method(exclude_none=False)
+                except TypeError:
+                    continue
+            if isinstance(candidate, dict):
+                return dict(candidate)
+    return None
+
+
+def _normalize_payment_details_value(value: Any) -> Optional[Dict[str, Any]]:
+    details = _coerce_mapping(value)
+    if details is None:
+        return None
+
+    normalized = dict(details)
+    addresses_candidate = (
+        normalized.get("addresses")
+        or normalized.get("payment_addresses")
+        or normalized.get("paymentAddresses")
+    )
+    normalized_addresses: list[Dict[str, Any]] = []
+    if isinstance(addresses_candidate, list):
+        for entry in addresses_candidate:
+            entry_mapping = _coerce_mapping(entry)
+            if entry_mapping:
+                normalized_addresses.append(entry_mapping)
+    elif isinstance(addresses_candidate, dict):
+        entry_mapping = _coerce_mapping(addresses_candidate)
+        if entry_mapping:
+            normalized_addresses.append(entry_mapping)
+    if not normalized_addresses:
+        return None
+    normalized["addresses"] = normalized_addresses
+    return normalized
+
+
 def _normalize_contract_entry(entry: Any) -> Optional[ContractMetadata]:
     if not isinstance(entry, dict):
         return None
     data = dict(entry)
+    contract_request: Optional[Dict[str, Any]] = None
+    for key in ("contract_request", "contractRequest"):
+        nested = entry.get(key)
+        if isinstance(nested, dict):
+            contract_request = nested
+            break
     if "contract_did" not in data or not data.get("contract_did"):
         for key in ("ContractDID", "contractDid", "contract_id", "ContractID"):
             value = entry.get(key)
@@ -48,8 +101,21 @@ def _normalize_contract_entry(entry: Any) -> Optional[ContractMetadata]:
             if value:
                 data["current_state"] = value
                 break
-    if "participants" not in data and entry.get("contract_participants"):
-        data["participants"] = entry["contract_participants"]
+    if "participants" not in data:
+        participants = entry.get("contract_participants")
+        if not participants and contract_request:
+            participants = contract_request.get("contract_participants")
+        if participants:
+            data["participants"] = participants
+    payment_details_payload = data.get("payment_details")
+    if payment_details_payload is None and contract_request:
+        payment_details_payload = (
+            contract_request.get("payment_details") or contract_request.get("paymentDetails")
+        )
+    if payment_details_payload is not None:
+        normalized_payment = _normalize_payment_details_value(payment_details_payload)
+        if normalized_payment is not None:
+            data["payment_details"] = normalized_payment
     try:
         return ContractMetadata.model_validate(data)
     except ValidationError as exc:

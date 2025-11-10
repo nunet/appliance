@@ -64,6 +64,14 @@ export interface ContractParticipants {
   [key: string]: unknown;
 }
 
+export interface ContractPaymentAddress {
+  requester_addr?: string | null;
+  provider_addr?: string | null;
+  currency?: string | null;
+  blockchain?: ContractBlockchain | null;
+  [key: string]: unknown;
+}
+
 export interface ContractPaymentDetails {
   payment_type: ContractPaymentType;
   requester_addr?: string | null;
@@ -72,6 +80,7 @@ export interface ContractPaymentDetails {
   fees_per_allocation?: string | null;
   timestamp?: string | null;
   blockchain?: ContractBlockchain | null;
+  addresses?: ContractPaymentAddress[] | null;
   [key: string]: unknown;
 }
 
