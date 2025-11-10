@@ -227,6 +227,13 @@ function formatDurationRange(start?: string | null, end?: string | null): string
   return range || null;
 }
 
+type PaymentAddressView = {
+  requester_addr?: string | null;
+  provider_addr?: string | null;
+  currency?: string | null;
+  blockchain?: string | null;
+};
+
 type PaymentDetailsView = {
   payment_type?: string | null;
   requester_addr?: string | null;
@@ -235,6 +242,7 @@ type PaymentDetailsView = {
   fees_per_allocation?: string | null;
   blockchain?: string | null;
   timestamp?: string | number | Date | bigint | null;
+  addresses?: PaymentAddressView[];
 };
 
 function normalizeDisplayValue(value: unknown): string | null {
@@ -267,108 +275,18 @@ function pickFirstValue(details: Record<string, unknown>, ...keys: string[]): un
   return undefined;
 }
 
-function extractPaymentDetailsFromSource(source: unknown): PaymentDetailsView | null {
-  if (!source || typeof source !== "object") {
-    return null;
-  }
-
-  const record = source as Record<string, unknown>;
-  const rawDetails = record.payment_details ?? record.paymentDetails;
-  if (!rawDetails || typeof rawDetails !== "object") {
-    return null;
-  }
-
-  const details = rawDetails as Record<string, unknown>;
-  const paymentType = pickFirstValue(details, "payment_type", "paymentType");
-  const requesterAddr = pickFirstValue(details, "requester_addr", "requesterAddress", "requestor_addr", "requestorAddress");
-  const providerAddr = pickFirstValue(details, "provider_addr", "providerAddress");
-  const currency = pickFirstValue(details, "currency");
-  const feesPerAllocation = pickFirstValue(details, "fees_per_allocation", "fee_per_allocation", "feesPerAllocation");
-  const blockchain = pickFirstValue(details, "blockchain", "chain");
-  const timestamp = pickFirstValue(details, "timestamp", "payment_timestamp", "time");
-
-  if (
-    paymentType == null &&
-    requesterAddr == null &&
-    providerAddr == null &&
-    currency == null &&
-    feesPerAllocation == null &&
-    blockchain == null &&
-    timestamp == null
-  ) {
-    return null;
-  }
-
-  return {
-    payment_type: normalizeDisplayValue(paymentType),
-    requester_addr: normalizeDisplayValue(requesterAddr),
-    provider_addr: normalizeDisplayValue(providerAddr),
-    currency: normalizeDisplayValue(currency),
-    fees_per_allocation: normalizeDisplayValue(feesPerAllocation),
-    blockchain: normalizeDisplayValue(blockchain),
-    timestamp,
-  };
-}
-
 function extractPaymentDetails(
   contract: ContractMetadata | null | undefined,
   rawState: unknown
 ): PaymentDetailsView | null {
-  const contractDetails = contract?.payment_details;
-  if (contractDetails) {
-    const details: PaymentDetailsView = {
-      payment_type: normalizeDisplayValue(contractDetails.payment_type),
-      requester_addr: normalizeDisplayValue(contractDetails.requester_addr),
-      provider_addr: normalizeDisplayValue(contractDetails.provider_addr),
-      currency: normalizeDisplayValue(contractDetails.currency),
-      fees_per_allocation: normalizeDisplayValue(contractDetails.fees_per_allocation),
-      blockchain: normalizeDisplayValue(contractDetails.blockchain),
-      timestamp: contractDetails.timestamp,
-    };
-    const hasValue = Object.entries(details).some(([key, value]) => {
-      if (key === "timestamp") {
-        return value !== null && value !== undefined;
-      }
-      if (value == null) return false;
-      if (typeof value === "string") return value.trim().length > 0;
-      return true;
-    });
-    if (hasValue) {
-      return details;
-    }
-  }
-
-  const fallbackFromContract = extractPaymentDetailsFromSource(contract);
-  if (fallbackFromContract) {
-    return fallbackFromContract;
-  }
-
-  const fromRaw = extractPaymentDetailsFromSource(rawState);
-  if (fromRaw) {
-    return fromRaw;
-  }
-
-  if (rawState && typeof rawState === "object") {
-    const nested = (rawState as Record<string, unknown>).contract;
-    const nestedDetails = extractPaymentDetailsFromSource(nested);
-    if (nestedDetails) {
-      return nestedDetails;
-    }
-  }
-
-  if (contractDetails) {
-    return {
-      payment_type: normalizeDisplayValue(contractDetails.payment_type),
-      requester_addr: normalizeDisplayValue(contractDetails.requester_addr),
-      provider_addr: normalizeDisplayValue(contractDetails.provider_addr),
-      currency: normalizeDisplayValue(contractDetails.currency),
-      fees_per_allocation: normalizeDisplayValue(contractDetails.fees_per_allocation),
-      blockchain: normalizeDisplayValue(contractDetails.blockchain),
-      timestamp: contractDetails.timestamp,
-    };
-  }
-
-  return null;
+  return (
+    extractPaymentDetailsFromSource(contract?.payment_details) ??
+    extractPaymentDetailsFromSource(contract) ??
+    extractPaymentDetailsFromSource(rawState) ??
+    (rawState && typeof rawState === "object"
+      ? extractPaymentDetailsFromSource((rawState as Record<string, unknown>).contract)
+      : null)
+  );
 }
 
 function isTerminationAllowed(contract?: ContractMetadata | null): boolean {
@@ -415,6 +333,91 @@ function getTransitionInitiator(transition: Record<string, unknown>): string | n
     if (uri.length > 0) {
       return uri;
     }
+  }
+  return null;
+}
+
+function normalizePaymentAddress(entry: unknown): PaymentAddressView | null {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+  const record = entry as Record<string, unknown>;
+  const requester = pickFirstValue(record, "requester_addr", "requesterAddress", "requestor_addr", "requestorAddress");
+  const provider = pickFirstValue(record, "provider_addr", "providerAddress");
+  const currency = pickFirstValue(record, "currency", "token");
+  const blockchain = pickFirstValue(record, "blockchain", "chain");
+  if (requester == null && provider == null && currency == null && blockchain == null) {
+    return null;
+  }
+  return {
+    requester_addr: normalizeDisplayValue(requester),
+    provider_addr: normalizeDisplayValue(provider),
+    currency: normalizeDisplayValue(currency),
+    blockchain: normalizeDisplayValue(blockchain),
+  };
+}
+
+function extractPaymentAddresses(details: Record<string, unknown>): PaymentAddressView[] {
+  const candidate = pickFirstValue(details, "addresses", "payment_addresses", "paymentAddresses");
+  const addresses: PaymentAddressView[] = [];
+  if (Array.isArray(candidate)) {
+    for (const entry of candidate) {
+      const normalized = normalizePaymentAddress(entry);
+      if (normalized) {
+        addresses.push(normalized);
+      }
+    }
+  } else {
+    const normalized = normalizePaymentAddress(candidate);
+    if (normalized) {
+      addresses.push(normalized);
+    }
+  }
+  return addresses;
+}
+
+function toPaymentDetailsView(detailsSource: unknown): PaymentDetailsView | null {
+  if (!detailsSource || typeof detailsSource !== "object") {
+    return null;
+  }
+  const details = detailsSource as Record<string, unknown>;
+  const addresses = extractPaymentAddresses(details);
+  if (addresses.length === 0) {
+    return null;
+  }
+  const primary = addresses[0];
+  const paymentType = pickFirstValue(details, "payment_type", "paymentType");
+  const feesPerAllocation = pickFirstValue(details, "fees_per_allocation", "fee_per_allocation", "feesPerAllocation");
+  const timestamp = pickFirstValue(details, "timestamp", "payment_timestamp", "time");
+  return {
+    payment_type: normalizeDisplayValue(paymentType),
+    requester_addr: primary?.requester_addr ?? null,
+    provider_addr: primary?.provider_addr ?? null,
+    currency: primary?.currency ?? null,
+    fees_per_allocation: normalizeDisplayValue(feesPerAllocation),
+    blockchain: primary?.blockchain ?? null,
+    timestamp,
+    addresses,
+  };
+}
+
+function extractPaymentDetailsFromSource(source: unknown): PaymentDetailsView | null {
+  if (!source || typeof source !== "object") {
+    return null;
+  }
+  const record = source as Record<string, unknown>;
+  const fromSelf = toPaymentDetailsView(record);
+  if (fromSelf) {
+    return fromSelf;
+  }
+  const rawDetails = pickFirstValue(record, "payment_details", "paymentDetails");
+  const fromDetails = toPaymentDetailsView(rawDetails);
+  if (fromDetails) {
+    return fromDetails;
+  }
+  const contractRequest = pickFirstValue(record, "contract_request", "contractRequest");
+  if (contractRequest) {
+    return extractPaymentDetailsFromSource(contractRequest);
   }
   return null;
 }
