@@ -221,7 +221,10 @@ class LeaveOrgResponse(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
+def _collect_runtime_info(
+    mgr: OnboardingManager,
+    resource_snapshot: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Collect runtime metadata similar to the old UI:
     - dms_status (DID/Peer ID etc.)
@@ -246,14 +249,21 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
         runtime["peer_info"] = {}
 
     try:
-        ensure_fn = getattr(mgr, "ensure_pre_onboarding", None)
-        res_info = ensure_fn() if callable(ensure_fn) else mgr._ensure_pre_onboarding()
+        res_info = dict(resource_snapshot or {})
+    except Exception:
+        res_info = None
+
+    if not res_info:
+        res_info = get_cached_dms_resource_info(force_refresh=True) or {}
+
+    try:
         onboarding_status = res_info.get("onboarding_status", "Unknown")
         onboarded_resources = res_info.get("onboarded_resources", "Unknown")
         if isinstance(onboarded_resources, str):
             onboarded_resources = ANSI_RE.sub("", onboarded_resources)
+        onboarded_flag = mgr._is_onboarded_status(onboarding_status)
         runtime["resources"] = {
-            "onboarding_status": ("ONBOARDED" in str(onboarding_status)),
+            "onboarding_status": onboarded_flag,
             "onboarded_resources": onboarded_resources,
         }
         dms_resources = res_info.get("dms_resources")
@@ -278,6 +288,27 @@ def _collect_runtime_info(mgr: OnboardingManager) -> Dict[str, Any]:
         runtime["dms_resources"] = {}
 
     return runtime
+
+
+def _slim_resource_snapshot(resource_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(resource_info, dict):
+        return {}
+
+    snapshot: Dict[str, Any] = {}
+    for key in ("onboarding_status", "onboarded_resources", "free_resources", "allocated_resources"):
+        value = resource_info.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            snapshot[key] = ANSI_RE.sub("", value)
+        else:
+            snapshot[key] = value
+
+    dms_resources = resource_info.get("dms_resources")
+    if isinstance(dms_resources, dict):
+        snapshot["dms_resources"] = dms_resources
+
+    return snapshot
 
 
 def _resolve_current_step_from_state(state: dict) -> str:
@@ -678,7 +709,15 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         tokenomics=tokenomics_cfg,
     )
 
-    runtime = _collect_runtime_info(mgr)
+    try:
+        resource_snapshot = mgr.ensure_pre_onboarding()
+    except Exception as exc:
+        logger.exception("Failed to refresh compute onboarding before submitting join request")
+        raise HTTPException(status_code=502, detail=f"Failed to capture compute resources: {exc}")
+
+    mgr.update_state(last_resource_snapshot=_slim_resource_snapshot(resource_snapshot))
+
+    runtime = _collect_runtime_info(mgr, resource_snapshot=resource_snapshot)
     dms_info = runtime.get("dms_status", {}) or {}
     dms_did = dms_info.get("dms_did")
     dms_peer_id = dms_info.get("dms_peer_id")
@@ -734,7 +773,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
 
     # Submit to org onboarding API
     try:
-        api_res = mgr.api_submit_join(payload)
+        api_res = mgr.api_submit_join(payload, resource_snapshot)
     except Exception as e:
         mgr.update_state(step="rejected", rejection_reason=str(e), last_step="submit_data")
         raise HTTPException(status_code=502, detail=f"onboarding submit failed: {e}")

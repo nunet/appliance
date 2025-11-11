@@ -511,6 +511,13 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypa
         def __init__(self):
             self.state = {"step": "init", "logs": []}
             self.step_history: list[str] = []
+            self._resource_snapshot = {
+                "onboarding_status": "ONBOARDED",
+                "onboarded_resources": "Cores: 2, RAM: 4 GB, Disk: 50 GB",
+                "free_resources": "demo",
+                "allocated_resources": "demo",
+                "dms_resources": {"cpu": {"cores": 2}, "ram": {"size": 4096}},
+            }
             self.dms_manager = types.SimpleNamespace(
                 get_self_peer_info=lambda: {
                     "did": "did:peer:test",
@@ -536,7 +543,10 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypa
         def get_onboarding_status(self):
             return dict(self.state)
 
-        def api_submit_join(self, payload):
+        def ensure_pre_onboarding(self):
+            return dict(self._resource_snapshot)
+
+        def api_submit_join(self, payload, resource_info=None):
             self.last_payload = payload
             return {"status": "pending", "id": "req-123", "status_token": "token-abc"}
 
@@ -581,11 +591,27 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypa
     assert recording_mgr.step_history[0] == "collect_join_data"
     assert recording_mgr.step_history[-1] == "join_data_sent"
 
+    payload_resources = recording_mgr.last_payload["dms_resources"]
+    assert payload_resources["onboarded_resources"] == "Cores: 2, RAM: 4 GB, Disk: 50 GB"
+
+    snapshot = recording_mgr.state.get("last_resource_snapshot", {})
+    assert snapshot.get("onboarded_resources") == "Cores: 2, RAM: 4 GB, Disk: 50 GB"
+
     snapshots = [client.get("/organizations/status").json(), client.get("/organizations/status").json()]
     for snapshot in snapshots:
         assert snapshot["current_step"] == "join_data_sent"
         assert snapshot["current_step"] != "select_org"
 
+
+def test_onboarding_manager_onboarded_status_detection():
+    from modules.onboarding_manager import OnboardingManager
+
+    assert OnboardingManager._is_onboarded_status("ONBOARDED") is True
+    assert OnboardingManager._is_onboarded_status("  \x1b[0mOnboarded  ") is True
+    assert OnboardingManager._is_onboarded_status("NOT ONBOARDED") is False
+    assert OnboardingManager._is_onboarded_status("pending") is False
+    assert OnboardingManager._is_onboarded_status(True) is True
+    assert OnboardingManager._is_onboarded_status(False) is False
 def test_ensemble_templates_list_uses_relative_paths(client, tmp_path):
     from backend.nunet_api.routers import ensemble as ensemble_router
 
