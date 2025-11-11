@@ -108,9 +108,11 @@ Wants=network-online.target
 User=${SERVICE_USER}
 KeyringMode=shared
 WorkingDirectory=/usr/lib/nunet-appliance-web
-Environment=PORT=8080
+Environment=PORT=8443
 Environment=WORKERS=1
 Environment=NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
+Environment=SSL_CERTFILE=/etc/nunet-appliance-web/ssl/cert.pem
+Environment=SSL_KEYFILE=/etc/nunet-appliance-web/ssl/key.pem
 EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/bin/python3 /usr/lib/nunet-appliance-web/nunet-dms.pex \\
           -k uvicorn.workers.UvicornWorker \\
@@ -144,7 +146,7 @@ Version: ${DEB_VERSION}
 Section: web
 Priority: optional
 Architecture: ${ARCH}
-Depends: python3 (>= 3.10), systemd
+Depends: python3 (>= 3.10), systemd, openssl, iproute2
 Maintainer: NuNet <maintainer@example.com>
 Description: NuNet Appliance Web — FastAPI + React served by Gunicorn/Uvicorn
  Prebuilt PEX + static assets. Installs a systemd service 'nunet-appliance-web'.
@@ -192,6 +194,50 @@ chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/ensembles || true
 chmod 755 /home/ubuntu/contracts || true
 
+
+# --- TLS: generate self-signed cert on first install (idempotent) ---
+SSL_DIR="/etc/nunet-appliance-web/ssl"
+SSL_CERT="$SSL_DIR/cert.pem"
+SSL_KEY="$SSL_DIR/key.pem"
+
+mkdir -p "$SSL_DIR"
+chown ubuntu:ubuntu "$SSL_DIR" || true
+chmod 0750 "$SSL_DIR" || true
+
+if [ ! -f "$SSL_CERT" ] || [ ! -f "$SSL_KEY" ]; then
+  HOST="$(hostnamectl --static 2>/dev/null || hostname)"
+  # Build SAN list: DNS:HOST, DNS:HOST.local plus all non-loopback IPs
+  SAN_ENTRIES="DNS:${HOST},DNS:${HOST}.local"
+  IPS="$(ip -o addr show scope global | awk '{print $4}' | cut -d/ -f1)"
+  for IP in $IPS; do
+    SAN_ENTRIES="${SAN_ENTRIES},IP:${IP}"
+  done
+
+  OPENSSL_CNF="$(mktemp)"
+  cat > "$OPENSSL_CNF" <<OCNF
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+req_extensions = req_ext
+distinguished_name = dn
+
+[dn]
+CN = ${HOST}
+
+[req_ext]
+subjectAltName = ${SAN_ENTRIES}
+OCNF
+
+  umask 077
+  openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+    -keyout "$SSL_KEY" -out "$SSL_CERT" -config "$OPENSSL_CNF" >/dev/null 2>&1 || true
+  rm -f "$OPENSSL_CNF"
+
+  chown ubuntu:ubuntu "$SSL_KEY" "$SSL_CERT" || true
+  chmod 0600 "$SSL_KEY" || true
+  chmod 0640 "$SSL_CERT" || true
+fi
 
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
