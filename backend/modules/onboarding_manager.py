@@ -82,6 +82,34 @@ class OnboardingManager:
             "completed": False,
         }
 
+    @staticmethod
+    def _is_onboarded_status(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            cleaned = _ANSI_RE.sub("", value).strip().upper()
+            return cleaned == "ONBOARDED"
+        return False
+
+    def _wait_for_onboarded(self, attempts: int = 6, delay: float = 5.0) -> Dict[str, Any]:
+        """
+        After running the onboarding script, poll the DMS until the node reports
+        itself as ONBOARDED (or we give up). Returns the latest snapshot.
+        """
+        latest: Dict[str, Any] = {}
+        for attempt in range(1, attempts + 1):
+            if attempt > 1:
+                time.sleep(delay)
+            latest = get_dms_resource_info()
+            if self._is_onboarded_status(latest.get("onboarding_status")):
+                if attempt > 1:
+                    self.append_log(
+                        "submit_data",
+                        f"Compute onboarding reported ONBOARDED after {attempt} checks.",
+                    )
+                return latest
+        return latest
+
     # ------------------------------------------------------------------ #
     # State helpers
     # ------------------------------------------------------------------ #
@@ -431,8 +459,8 @@ class OnboardingManager:
         Returns the latest DMS resource snapshot.
         """
         info = get_dms_resource_info()
-        status_raw = str(info.get("onboarding_status", ""))
-        if "ONBOARDED" in status_raw.upper():
+        status_raw = info.get("onboarding_status")
+        if self._is_onboarded_status(status_raw):
             return info
 
         self.append_log("submit_data", "Running onboard-max.sh to refresh compute resources...")
@@ -440,8 +468,17 @@ class OnboardingManager:
         if result.get("status") != "success":
             message = result.get("message", "Compute onboarding failed")
             raise RuntimeError(message)
+        self.append_log("submit_data", "Compute onboarding script finished. Waiting for DMS to report ONBOARDED...")
+
+        refreshed = self._wait_for_onboarded()
+        if not self._is_onboarded_status(refreshed.get("onboarding_status")):
+            status_display = refreshed.get("onboarding_status", "Unknown")
+            message = f"Compute onboarding did not complete (status={status_display})."
+            self.append_log("submit_data", message)
+            raise RuntimeError(message)
+
         self.append_log("submit_data", "Compute onboarding completed successfully.")
-        return get_dms_resource_info()
+        return refreshed
 
     def ensure_pre_onboarding(self) -> Dict[str, Any]:
         """
@@ -450,7 +487,46 @@ class OnboardingManager:
         """
         return self._ensure_pre_onboarding()
 
-    def api_submit_join(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _log_resource_snapshot(self, info: Dict[str, Any]) -> None:
+        if not isinstance(info, dict):
+            return
+
+        summary: Dict[str, Any] = {}
+        for key in ("onboarding_status", "onboarded_resources", "free_resources", "allocated_resources"):
+            value = info.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                summary[key] = _ANSI_RE.sub("", value)
+            else:
+                summary[key] = value
+
+        dms_resources = info.get("dms_resources")
+        if isinstance(dms_resources, dict):
+            slim: Dict[str, Any] = {}
+            for hw_key in ("cpu", "ram", "disk", "gpus"):
+                if hw_key in dms_resources:
+                    slim[hw_key] = dms_resources[hw_key]
+            if slim:
+                summary["dms_resources"] = slim
+
+        if not summary:
+            return
+
+        parts = []
+        status = summary.get("onboarding_status")
+        if status is not None:
+            parts.append(f"status={status}")
+        onboarded = summary.get("onboarded_resources")
+        if onboarded:
+            parts.append(f"onboarded={onboarded}")
+        if parts:
+            self.append_log("submit_data", f"Hardware snapshot for submission: {' | '.join(parts)}")
+
+        meta = {"timestamp": _timestamp(), "summary": summary}
+        self.update_state(last_submit_payload_meta=meta)
+
+    def api_submit_join(self, data: Dict[str, Any], resource_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Submit onboarding data to the selected organisation."""
         if self.use_mock_api:
             mock = {"status": "success", "request_id": "mock-request", "status_token": "mock-token"}
@@ -458,17 +534,24 @@ class OnboardingManager:
             return mock
 
         payload = dict(data or {})
-        resource_info = self._ensure_pre_onboarding()
+        info: Dict[str, Any]
+        try:
+            info = dict(resource_info or {})
+        except Exception:
+            info = {}
+        if not info:
+            info = self._ensure_pre_onboarding()
 
-        onboarding_status_raw = str(resource_info.get("onboarding_status", ""))
-        onboarded = "ONBOARDED" in onboarding_status_raw.upper()
-        onboarded_resources = _ANSI_RE.sub("", str(resource_info.get("onboarded_resources", "Unknown")))
+        onboarding_status_raw = info.get("onboarding_status")
+        onboarded = self._is_onboarded_status(onboarding_status_raw)
+        onboarding_status_display = _ANSI_RE.sub("", str(onboarding_status_raw or "Unknown"))
+        onboarded_resources = _ANSI_RE.sub("", str(info.get("onboarded_resources", "Unknown")))
 
         payload["resources"] = {
             "onboarding_status": onboarded,
             "onboarded_resources": onboarded_resources,
         }
-        base_dms_resources = resource_info.get("dms_resources")
+        base_dms_resources = info.get("dms_resources")
         if isinstance(base_dms_resources, dict):
             dms_resources = dict(base_dms_resources)
         else:
@@ -476,14 +559,15 @@ class OnboardingManager:
 
         if "onboarded_resources" not in dms_resources:
             dms_resources["onboarded_resources"] = onboarded_resources
-        dms_resources.setdefault("onboarding_status", resource_info.get("onboarding_status"))
+        dms_resources.setdefault("onboarding_status", onboarding_status_display)
         # Preserve plain-string aggregates for consumers that only expect text blobs.
-        if "free_resources" not in dms_resources and resource_info.get("free_resources") is not None:
-            dms_resources["free_resources"] = resource_info.get("free_resources")
-        if "allocated_resources" not in dms_resources and resource_info.get("allocated_resources") is not None:
-            dms_resources["allocated_resources"] = resource_info.get("allocated_resources")
+        if "free_resources" not in dms_resources and info.get("free_resources") is not None:
+            dms_resources["free_resources"] = info.get("free_resources")
+        if "allocated_resources" not in dms_resources and info.get("allocated_resources") is not None:
+            dms_resources["allocated_resources"] = info.get("allocated_resources")
 
         payload["dms_resources"] = dms_resources
+        self._log_resource_snapshot(info)
 
         api_url = self.get_onboarding_api_url()
         if not api_url:
