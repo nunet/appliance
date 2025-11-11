@@ -222,7 +222,17 @@ class NuNetBootSplash:
         local_ip = self.get_local_ip()
         public_ip = self.get_public_ip()
         password_status, password_color = self.get_admin_password_status()
-        url = f"http://{local_ip}:8080"
+        # Prefer mDNS hostname for local access
+        try:
+            hostname = socket.gethostname()
+        except Exception:
+            hostname = "nunet-appliance"
+        local_host_label = f"{hostname}.local"
+        local_url = f"https://{local_host_label}:8443"
+        ip_url = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url
+        public_url = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url
+        # Selected URL defaults to local mDNS
+        selected_url = local_url
         
         # Check service status
         web_service_running = self.check_web_manager_service()
@@ -232,7 +242,7 @@ class NuNetBootSplash:
         
         # Generate QR code
         try:
-            qr_matrix = self.generate_qr_code(url)
+            qr_matrix = self.generate_qr_code(selected_url)
             qr_lines = [''.join('██' if cell else '  ' for cell in row) for row in qr_matrix]
         except ImportError:
             qr_lines = [
@@ -248,7 +258,11 @@ class NuNetBootSplash:
         text_lines = [
             f"{self.colors.GREEN}Scan QR Code{self.colors.NC}",
             "",
-            f"{self.colors.CYAN}URL: {url}{self.colors.NC}",
+            f"{self.colors.CYAN}Selected URL: {selected_url}{self.colors.NC}",
+            f"mDNS URL:  {local_url}",
+            f"Local IP:  {ip_url}",
+            f"Local URL:  {local_url}",
+            f"Public URL: {public_url}",
             f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
             "",
             f"{self.colors.YELLOW}Host: {system_info.get('hostname', 'Unknown')} | {local_ip}{self.colors.NC}",
@@ -264,6 +278,8 @@ class NuNetBootSplash:
             f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access",
             f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
             "",
+            f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
+            "",
             f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
             f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"
         ]
@@ -273,6 +289,67 @@ class NuNetBootSplash:
         # Handle user input
         try:
             choice = input().strip()
+            # Lightweight re-render for URL toggle without leaving splash
+            if choice.lower() in ("m", "i", "p"):
+                # Recompute to avoid stale IPs/hostname
+                local_ip = self.get_local_ip()
+                public_ip = self.get_public_ip()
+                try:
+                    hostname = socket.gethostname()
+                except Exception:
+                    hostname = "nunet-appliance"
+                local_host_label = f"{hostname}.local"
+                local_url = f"https://{local_host_label}:8443"
+                ip_url = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url
+                public_url = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url
+                if choice.lower() == "m":
+                    selected_url = local_url
+                elif choice.lower() == "i":
+                    selected_url = ip_url
+                else:
+                    selected_url = public_url
+                try:
+                    qr_matrix = self.generate_qr_code(selected_url)
+                    qr_lines = [''.join('██' if cell else '  ' for cell in row) for row in qr_matrix]
+                except Exception as e:
+                    qr_lines = [f"QR Code Error: {str(e)}"]
+                # Recompose and redraw
+                self.clear_screen()
+                print(f"{self.colors.CYAN}{self.get_nunet_ascii_art()}{self.colors.NC}\n")
+                print(f"{self.colors.YELLOW}{self.colors.BOLD}NUNET APPLIANCE - WEB MANAGEMENT ACCESS{self.colors.NC}\n")
+                system_info = self.get_system_info()
+                web_service_running = self.check_web_manager_service()
+                text_lines = [
+                    f"{self.colors.GREEN}Scan QR Code{self.colors.NC}",
+                    "",
+                    f"{self.colors.CYAN}Selected URL: {selected_url}{self.colors.NC}",
+                    f"mDNS URL:  {local_url}",
+                    f"Local IP:  {ip_url}",
+                    f"Local URL:  {local_url}",
+                    f"Public URL: {public_url}",
+                    f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
+                    "",
+                    f"{self.colors.YELLOW}Host: {system_info.get('hostname', 'Unknown')} | {local_ip}{self.colors.NC}",
+                    f"Public IP: {public_ip}",
+                    f"DMS: {system_info.get('dms_status', 'Unknown')} | Web: {'OK' if web_service_running else 'Down'}",
+                    f"Uptime: {system_info.get('uptime', 'Unknown')}",
+                    f"Memory: {system_info.get('memory', 'Unknown')}",
+                    f"Disk: {system_info.get('disk', 'Unknown')}",
+                    "",
+                    f"{self.colors.BLUE}Quick Actions:{self.colors.NC}",
+                    f"{self.colors.WHITE}1{self.colors.NC} Update Organizations",
+                    f"{self.colors.WHITE}2{self.colors.NC} Reset Admin Password",
+                    f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access",
+                    f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
+                    "",
+                    f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
+                    "",
+                    f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
+                    f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"
+                ]
+                self.display_side_by_side(qr_lines, text_lines)
+                # After showing, fall back to normal input handling
+                choice = input().strip()
             self.handle_user_choice(choice, web_service_running)
         except KeyboardInterrupt:
             print(f"\n{self.colors.YELLOW}Exiting...{self.colors.NC}")

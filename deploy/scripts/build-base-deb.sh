@@ -298,7 +298,7 @@ Version: $DEB_VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: systemd, snapd
+Depends: systemd, snapd, avahi-daemon
 Maintainer: NuNet <ops@nunet.io>
 Description: NuNet Appliance Base System
  Base system setup for NuNet appliances including:
@@ -356,6 +356,55 @@ fi
 if [ -f /usr/local/bin/install-snaps.sh ]; then
     /usr/local/bin/install-snaps.sh
 fi
+
+# --- Derive and set unique hostname (nunet-<6hex>) ---
+derive_suffix() {
+    if [ -f /etc/machine-id ]; then
+        head -c 6 /etc/machine-id | tr '[:upper:]' '[:lower:]'
+        return 0
+    fi
+    # fallback: MAC suffix
+    ip link show | awk '/link\/ether/ {print $2}' | head -n1 | tr -d ':' | tail -c 6
+}
+
+current_host="$(hostnamectl --static 2>/dev/null || hostname)"
+# Check if hostname already matches nunet-<6hex> pattern
+if echo "$current_host" | grep -qE '^nunet-[0-9a-f]{6}$'; then
+    # Already has unique format, keep it
+    echo "Hostname already in unique format: $current_host"
+else
+    # Set to unique format
+    suf="$(derive_suffix)"
+    if [ -n "$suf" ]; then
+        new_host="nunet-${suf}"
+        hostnamectl set-hostname "$new_host" || true
+        echo "Set hostname to unique format: $new_host"
+    fi
+fi
+
+# --- Configure Avahi (mDNS) to advertise HTTPS on 8443 ---
+systemctl enable avahi-daemon.service >/dev/null 2>&1 || true
+systemctl start avahi-daemon.service || true
+
+AVAHI_SVC_DIR="/etc/avahi/services"
+mkdir -p "$AVAHI_SVC_DIR"
+AVAHI_SVC_FILE="$AVAHI_SVC_DIR/nunet-appliance-https.service"
+HOSTNAME_NOW="$(hostnamectl --static 2>/dev/null || hostname)"
+cat > "$AVAHI_SVC_FILE" <<AVEOF
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">NuNet Appliance Web on %h</name>
+  <service>
+    <type>_https._tcp</type>
+    <port>8443</port>
+    <txt-record>path=/</txt-record>
+    <txt-record>hostname=${HOSTNAME_NOW}.local</txt-record>
+  </service>
+</service-group>
+AVEOF
+
+systemctl restart avahi-daemon.service || true
 
 # Reload systemd
 systemctl daemon-reload
