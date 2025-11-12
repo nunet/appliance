@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-const isAdvancedModeEnabled = false;
+const isAdvancedModeEnabled = true;
 const isAdvancedModeDisabled = !isAdvancedModeEnabled;
 
 export function AdvancedModeToggle() {

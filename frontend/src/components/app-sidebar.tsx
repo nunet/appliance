@@ -76,6 +76,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         icon: IconServer,
         items: [
           { title: "DMS", url: "/appliance/dms", icon: IconServer },
+          { title: "UPnP Port Forwarding", url: "/appliance/upnp", icon: IconNetwork },
           { title: "Proxy", url: "/appliance/proxy", icon: IconNetwork },
           { title: "DDNS", url: "/appliance/ddns", icon: IconNetwork },
           {

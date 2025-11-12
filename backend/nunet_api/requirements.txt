@@ -16,6 +16,7 @@ requests>=2.31,<3.0       # HTTP client
 qrcode[pil]>=8.0,<9.0     # QR generation (+ Pillow for PNGs)
 bcrypt>=4.0,<5.0
 PyJWT>=2.8,<3.0
+miniupnpc>=2.2,<3.0       # UPnP client for router discovery and port forwarding
 
 # ---- Testing ----
 pytest>=7.4,<8.0
