@@ -20,6 +20,7 @@ The table below lists the modules in this package, what they do, and which route
 | `onboarding_manager.py` | Persist onboarding state, talk to the upstream onboarding API, manage capability tokens, restart services. | `get_onboarding_status()`, `api_submit_join()`, `api_check_status()`, `process_post_approval_payload()` | `organizations.py` |
 | `organization_manager.py` | Thin wrapper around organization joining scripts. | `join_organization()`, `get_organization_status()` | `organizations.py` |
 | `org_utils.py` | Parse organization capability files and related metadata. | `load_known_organizations()`, `get_joined_organizations_with_names()` | `organizations.py`, `onboarding_manager.py` |
+| `upnp_manager.py` | UPnP router discovery and automatic port forwarding for appliance external accessibility. | `discover_gateway()`, `list_port_mappings()`, `add_port_mapping()`, `configure_appliance_port_forwarding()`, `get_appliance_status()` | `upnp.py` |
 | `utils.py` | System information helpers: IP detection, appliance version, SSH status. | `get_local_ip()`, `get_public_ip()`, `get_appliance_version()`, `get_ssh_status()` | `sysinfo.py`, `dms.py`, `stream.py` |
 
 ---
@@ -67,6 +68,7 @@ This matrix links each router to the modules it imports from `backend/modules`.
 | `payments.py` | `dms_manager`, `dms_utils` |
 | `contracts.py` | `dms_manager`, `dms_utils` |
 | `proc.py` | `dms_manager`, `dms_utils` |
+| `upnp.py` | `upnp_manager` |
 
 ---
 

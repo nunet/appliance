@@ -146,7 +146,7 @@ Version: ${DEB_VERSION}
 Section: web
 Priority: optional
 Architecture: ${ARCH}
-Depends: python3 (>= 3.10), systemd, openssl, iproute2
+Depends: python3 (>= 3.10), systemd, openssl, iproute2, libminiupnpc-dev
 Maintainer: NuNet <maintainer@example.com>
 Description: NuNet Appliance Web — FastAPI + React served by Gunicorn/Uvicorn
  Prebuilt PEX + static assets. Installs a systemd service 'nunet-appliance-web'.

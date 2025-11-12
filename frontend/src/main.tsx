@@ -30,6 +30,7 @@ import NewContractPage from "./pages/Contracts/New";
 import PaymentsPage from "@/components/payments/PaymentsPage";
 import LoginPage from "./pages/Login";
 import SetupAdmin from "./pages/SetupAdmin";
+import UPnPPage from "./pages/UPnP";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { queryClient } from "./query-client";
 
@@ -146,6 +147,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="/organizations" element={<Organizations />} />
                   <Route path="/ensembles" element={<Ensembles />} />
                   <Route path="/appliance/dms" element={<DMS />} />
+                  <Route path="/appliance/upnp" element={<UPnPPage />} />
                   <Route path="/payments" element={<PaymentsPage />} />
                   <Route path="/contracts" element={<Contracts />} />
                   <Route path="/contracts/new" element={<NewContractPage />} />
