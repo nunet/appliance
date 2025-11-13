@@ -7,6 +7,7 @@ import {
   ContractTemplateSummary,
   contractsApi,
 } from "@/api/contracts";
+import { getDmsStatus } from "@/api/api";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,8 +25,6 @@ import { toast } from "sonner";
 type ContractWizardStep = "select" | "configure" | "review";
 
 interface ContractFormState {
-  destination: string;
-  organizationDid: string;
   solutionEnablerDid: string;
   paymentValidatorDid: string;
   providerDid: string;
@@ -130,8 +129,6 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
   const duration = (contract.duration as Record<string, any>) || {};
 
   return {
-    destination: detail.default_destination ?? "",
-    organizationDid: detail.organization_did ?? "",
     solutionEnablerDid: contract.solution_enabler_did?.uri ?? "",
     paymentValidatorDid: contract.payment_validator_did?.uri ?? "",
     providerDid: participants.provider?.uri ?? "",
@@ -270,16 +267,6 @@ function buildCreatePayload(detail: ContractTemplateDetail, form: ContractFormSt
     template_id: detail.template_id,
   };
 
-  const destination = form.destination.trim();
-  if (destination.length) {
-    payload.destination = destination;
-  }
-
-  const organizationDid = form.organizationDid.trim();
-  if (organizationDid.length) {
-    payload.organization_did = organizationDid;
-  }
-
   const extraArgs = parseExtraArgs(form.extraArgs);
   if (extraArgs?.length) {
     payload.extra_args = extraArgs;
@@ -295,6 +282,16 @@ export default function NewContractPage(): JSX.Element {
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(null);
   const [formState, setFormState] = React.useState<ContractFormState | null>(null);
   const [reviewPayload, setReviewPayload] = React.useState<ContractCreatePayload | null>(null);
+  const shouldPrefillRequestor = React.useRef(true);
+
+  const dmsStatusQuery = useQuery({
+    queryKey: ["dms", "status", "contracts", "new"],
+    queryFn: getDmsStatus,
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: false,
+  });
+  const cachedDashboardInfo = queryClient.getQueryData<{ dms_did?: string }>(["apiData"]);
+  const machineDid = dmsStatusQuery.data?.dms_did ?? cachedDashboardInfo?.dms_did ?? "";
 
   const templatesQuery = useQuery({
     queryKey: ["contracts", "templates"],
@@ -325,9 +322,33 @@ export default function NewContractPage(): JSX.Element {
 
   React.useEffect(() => {
     if (templateDetailQuery.data) {
+      shouldPrefillRequestor.current = true;
       setFormState(extractFormState(templateDetailQuery.data));
     }
   }, [templateDetailQuery.data]);
+
+  React.useEffect(() => {
+    if (!formState) {
+      return;
+    }
+    if (!machineDid) {
+      return;
+    }
+    if (!shouldPrefillRequestor.current) {
+      return;
+    }
+    if (formState.requestorDid?.trim()) {
+      shouldPrefillRequestor.current = false;
+      return;
+    }
+    shouldPrefillRequestor.current = false;
+    setFormState((prev) => {
+      if (!prev || prev.requestorDid?.trim()) {
+        return prev;
+      }
+      return { ...prev, requestorDid: machineDid };
+    });
+  }, [formState, machineDid]);
 
   const templates = templatesQuery.data?.templates ?? [];
   const templatesError = templatesQuery.error ? extractErrorMessage(templatesQuery.error) : null;
@@ -338,6 +359,9 @@ export default function NewContractPage(): JSX.Element {
   }, []);
 
   const handleFormChange = React.useCallback((update: Partial<ContractFormState>) => {
+    if (Object.prototype.hasOwnProperty.call(update, "requestorDid")) {
+      shouldPrefillRequestor.current = false;
+    }
     setFormState((prev) => (prev ? { ...prev, ...update } : prev));
   }, []);
 
@@ -346,6 +370,7 @@ export default function NewContractPage(): JSX.Element {
     setSelectedTemplateId(null);
     setFormState(null);
     setReviewPayload(null);
+    shouldPrefillRequestor.current = true;
   }, []);
 
   const handleGenerateReview = React.useCallback(() => {
@@ -541,38 +566,6 @@ function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue
 
   return (
     <div className="space-y-6">
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Destination</h3>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="destination-did">Destination DID</Label>
-            <Input
-              id="destination-did"
-              value={formState.destination}
-              onChange={(event) => onChange({ destination: event.target.value })}
-              placeholder={detail.default_destination ?? "did:key:..."}
-            />
-            <p className="text-xs text-muted-foreground">
-              Override the default destination DID from the template if necessary.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="organization-did">Organization DID</Label>
-            <Input
-              id="organization-did"
-              value={formState.organizationDid}
-              onChange={(event) => onChange({ organizationDid: event.target.value })}
-              placeholder={detail.organization_did ?? "did:org:..."}
-            />
-            <p className="text-xs text-muted-foreground">
-              Provide the organization DID this contract applies to, when applicable.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <Separator />
-
       <section className="space-y-4">
         <h3 className="text-sm font-semibold">Participants</h3>
         <div className="grid gap-3 md:grid-cols-2">
@@ -815,8 +808,6 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
 
       <section className="space-y-2">
         <h4 className="text-sm font-semibold">Destination & Scope</h4>
-        <InfoRow label="Destination DID" value={payload.destination ?? formState.destination} />
-        <InfoRow label="Organization DID" value={payload.organization_did ?? formState.organizationDid} />
       </section>
 
       <section className="space-y-2">
