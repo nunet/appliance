@@ -10,11 +10,14 @@ import sys
 import json
 import socket
 import subprocess
+import re
+import secrets
 import qrcode
 import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple
+from urllib.parse import urlencode
 
 class Colors:
     """ANSI color codes for terminal output"""
@@ -34,12 +37,143 @@ class NuNetBootSplash:
     
     def __init__(self):
         self.colors = Colors()
-        self.repo_root = Path(__file__).resolve().parents[2]
-        self.credentials_file = self.repo_root / "deploy" / "admin_credentials.json"
+        # Use standard locations that work in both dev and prod
+        self.credentials_file = Path.home() / ".secrets" / "admin_credentials.json"
+        self.reset_token_file = Path.home() / ".secrets" / "reset_token"
         self.onboarding_state = Path.home() / "nunet" / "appliance" / "onboarding_state.json"
-        self.known_orgs_dir = self.repo_root / "known_orgs"
+        self.known_orgs_dir = Path.home() / "nunet" / "appliance" / "known_orgs"
         self.known_orgs_file = self.known_orgs_dir / "known_organizations.json"
+        self.bashrc_file = Path.home() / ".bashrc"
+        # Ensure aliases are set up
+        self.ensure_bashrc_aliases()
+        # Ensure reset token exists
+        self.ensure_reset_token()
         
+    def ensure_bashrc_aliases(self):
+        """Ensure required aliases are in .bashrc"""
+        if not self.bashrc_file.exists():
+            return
+        
+        try:
+            with open(self.bashrc_file, 'r') as f:
+                content = f.read()
+            
+            script_path = str(Path(__file__).resolve())
+            menu_alias = f'alias menu="python3 {script_path}"'
+            nnn_function = 'nnn() { if [ "${1#-}" != "$1" ]; then nunet -c dms actor cmd "$@"; else local cmd="$1"; shift; nunet -c dms actor cmd "/dms/node/$cmd" "$@"; fi; }'
+            setpp_alias = 'alias setpp="export DMS_PASSPHRASE=$(cat ~/.secrets/dms_passphrase)"'
+            
+            needs_update = False
+            new_content = content
+            
+            # Check if menu alias exists and is correct
+            menu_pattern = r'alias menu=.*'
+            if not re.search(menu_pattern, content) or menu_alias not in content:
+                # Remove old menu alias if it exists
+                new_content = re.sub(menu_pattern + r'\n?', '', new_content)
+                # Find a good place to add it (after the devctl alias or at the end)
+                if 'alias devctl=' in new_content:
+                    # Find the devctl line and add after it
+                    devctl_match = re.search(r'alias devctl=.*\n', new_content)
+                    if devctl_match:
+                        pos = devctl_match.end()
+                        new_content = new_content[:pos] + menu_alias + '\n' + new_content[pos:]
+                    else:
+                        new_content += f'\n# NuNet Appliance Aliases\n{menu_alias}\n'
+                else:
+                    new_content += f'\n# NuNet Appliance Aliases\n{menu_alias}\n'
+                needs_update = True
+            
+            # Check if nnn function exists and is correct
+            # Also check for old alias format and remove it
+            nnn_alias_pattern = r'alias nnn=.*'
+            if re.search(nnn_alias_pattern, content):
+                # Remove old alias format
+                new_content = re.sub(nnn_alias_pattern + r'\n?', '', new_content)
+                needs_update = True
+            
+            # Check if function exists (look for function definition)
+            if 'nnn() {' not in content or nnn_function not in content:
+                # Add nnn function after menu alias if it exists, otherwise at the end
+                if menu_alias in new_content:
+                    new_content = new_content.replace(menu_alias, f'{menu_alias}\n{nnn_function}')
+                else:
+                    if '# NuNet Appliance Aliases' in new_content:
+                        new_content = new_content.replace('# NuNet Appliance Aliases', 
+                                                         f'# NuNet Appliance Aliases\n{nnn_function}')
+                    else:
+                        new_content += f'\n{nnn_function}\n'
+                needs_update = True
+            
+            # Check if setpp alias exists
+            setpp_pattern = r'alias setpp=.*'
+            if not re.search(setpp_pattern, content) or setpp_alias not in content:
+                # Remove old setpp alias if it exists
+                new_content = re.sub(setpp_pattern + r'\n?', '', new_content)
+                # Add setpp alias after nnn function if it exists, otherwise after menu alias
+                if nnn_function in new_content:
+                    new_content = new_content.replace(nnn_function, f'{nnn_function}\n{setpp_alias}')
+                elif menu_alias in new_content:
+                    new_content = new_content.replace(menu_alias, f'{menu_alias}\n{setpp_alias}')
+                else:
+                    new_content += f'\n{setpp_alias}\n'
+                needs_update = True
+            
+            if needs_update:
+                with open(self.bashrc_file, 'w') as f:
+                    f.write(new_content)
+        except Exception as e:
+            # Silently fail - don't break the splash screen if we can't update .bashrc
+            pass
+    
+    def ensure_reset_token(self):
+        """Ensure reset token exists, generate if not
+        
+        Note: Token is rotated after each password reset for security.
+        If token doesn't exist or is too long (old format), a new one is generated.
+        """
+        secrets_dir = self.reset_token_file.parent
+        if not secrets_dir.exists():
+            secrets_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                secrets_dir.chmod(0o700)
+            except Exception:
+                pass
+        
+        # Check if token exists and is the right length (should be ~16 chars for 12-byte token)
+        needs_regeneration = False
+        if self.reset_token_file.exists():
+            try:
+                with open(self.reset_token_file, 'r') as f:
+                    existing_token = f.read().strip()
+                # If token is longer than 20 chars, it's the old format - regenerate
+                if len(existing_token) > 20:
+                    needs_regeneration = True
+            except Exception:
+                needs_regeneration = True
+        
+        if not self.reset_token_file.exists() or needs_regeneration:
+            # Generate a secure random token (12 bytes = ~16 URL-safe chars)
+            # Shorter token is sufficient since it's one-time use and rotated after each reset
+            token = secrets.token_urlsafe(12)
+            try:
+                with open(self.reset_token_file, 'w') as f:
+                    f.write(token)
+                self.reset_token_file.chmod(0o600)
+            except Exception as e:
+                # If we can't write, we'll handle it gracefully
+                pass
+    
+    def get_reset_token(self) -> Optional[str]:
+        """Get the reset token if it exists"""
+        try:
+            if self.reset_token_file.exists():
+                with open(self.reset_token_file, 'r') as f:
+                    return f.read().strip()
+        except Exception:
+            pass
+        return None
+    
     def clear_screen(self):
         """Clear the terminal screen"""
         os.system('clear')
@@ -228,11 +362,39 @@ class NuNetBootSplash:
         except Exception:
             hostname = "nunet-appliance"
         local_host_label = f"{hostname}.local"
-        local_url = f"https://{local_host_label}:8443"
-        ip_url = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url
-        public_url = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url
-        # Selected URL defaults to local mDNS
-        selected_url = local_url
+        # Get reset token for URL - only include if credentials need reset
+        reset_token = None
+        needs_reset = False
+        if self.credentials_file.exists():
+            try:
+                with open(self.credentials_file, 'r', encoding='utf-8') as f:
+                    creds_data = json.load(f)
+                    needs_reset = creds_data.get('needs_reset', False)
+            except Exception:
+                pass
+        
+        # Only include reset token in URLs if password needs reset
+        if needs_reset:
+            reset_token = self.get_reset_token()
+        
+        # Build base URLs
+        local_url_base = f"https://{local_host_label}:8443"
+        ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
+        public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
+        
+        # Add reset token to URLs only if password needs reset
+        if reset_token and needs_reset:
+            params = urlencode({"reset_token": reset_token})
+            local_url = f"{local_url_base}?{params}"
+            ip_url = f"{ip_url_base}?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+            public_url = f"{public_url_base}?{params}" if public_ip not in ("Unknown", "") else ip_url
+        else:
+            local_url = local_url_base
+            ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
+            public_url = public_url_base if public_ip not in ("Unknown", "") else ip_url
+        
+        # Selected URL defaults to local IP
+        selected_url = ip_url
         
         # Check service status
         web_service_running = self.check_web_manager_service()
@@ -275,7 +437,7 @@ class NuNetBootSplash:
             f"{self.colors.BLUE}Quick Actions:{self.colors.NC}",
             f"{self.colors.WHITE}1{self.colors.NC} Update Organizations",
             f"{self.colors.WHITE}2{self.colors.NC} Reset Admin Password",
-            f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access",
+            f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access {self.colors.YELLOW}(Coming Soon){self.colors.NC}",
             f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
             "",
             f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
@@ -299,9 +461,38 @@ class NuNetBootSplash:
                 except Exception:
                     hostname = "nunet-appliance"
                 local_host_label = f"{hostname}.local"
-                local_url = f"https://{local_host_label}:8443"
-                ip_url = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url
-                public_url = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url
+                
+                # Check if password needs reset
+                needs_reset = False
+                if self.credentials_file.exists():
+                    try:
+                        with open(self.credentials_file, 'r', encoding='utf-8') as f:
+                            creds_data = json.load(f)
+                            needs_reset = creds_data.get('needs_reset', False)
+                    except Exception:
+                        pass
+                
+                # Only get token if password needs reset
+                reset_token = None
+                if needs_reset:
+                    reset_token = self.get_reset_token()
+                
+                # Build base URLs
+                local_url_base = f"https://{local_host_label}:8443"
+                ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
+                public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
+                
+                # Add reset token to URLs only if password needs reset
+                if reset_token and needs_reset:
+                    params = urlencode({"reset_token": reset_token})
+                    local_url = f"{local_url_base}?{params}"
+                    ip_url = f"{ip_url_base}?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+                    public_url = f"{public_url_base}?{params}" if public_ip not in ("Unknown", "") else ip_url
+                else:
+                    local_url = local_url_base
+                    ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
+                    public_url = public_url_base if public_ip not in ("Unknown", "") else ip_url
+                
                 if choice.lower() == "m":
                     selected_url = local_url
                 elif choice.lower() == "i":
@@ -339,7 +530,7 @@ class NuNetBootSplash:
                     f"{self.colors.BLUE}Quick Actions:{self.colors.NC}",
                     f"{self.colors.WHITE}1{self.colors.NC} Update Organizations",
                     f"{self.colors.WHITE}2{self.colors.NC} Reset Admin Password",
-                    f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access",
+                    f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access {self.colors.YELLOW}(Coming Soon){self.colors.NC}",
                     f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
                     "",
                     f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
@@ -353,7 +544,7 @@ class NuNetBootSplash:
             self.handle_user_choice(choice, web_service_running)
         except KeyboardInterrupt:
             print(f"\n{self.colors.YELLOW}Exiting...{self.colors.NC}")
-            return
+            self.quit_to_terminal()
     
     def handle_user_choice(self, choice: str, web_service_running: bool):
         """Handle user menu choices"""
@@ -362,16 +553,18 @@ class NuNetBootSplash:
         elif choice == "2":
             self.reset_password()
         elif choice == "3":
-            self.enable_ssh()
+            print(f"{self.colors.YELLOW}This feature is coming soon.{self.colors.NC}")
+            input(f"\n{self.colors.BLUE}Press Enter to return to splash screen...{self.colors.NC}")
+            self.show_boot_splash()
         elif choice == "4":
-            print(f"{self.colors.YELLOW}Quitting to terminal...{self.colors.NC}")
-            return
+            self.quit_to_terminal()
         elif choice == "":
-            print(f"{self.colors.BLUE}Continuing to shell...{self.colors.NC}")
-            return
+            # Empty input - continue to shell
+            self.quit_to_terminal()
         else:
-            print(f"{self.colors.RED}Invalid choice. Continuing to shell...{self.colors.NC}")
-            return
+            print(f"{self.colors.RED}Invalid choice.{self.colors.NC}")
+            input(f"\n{self.colors.BLUE}Press Enter to return to splash screen...{self.colors.NC}")
+            self.show_boot_splash()
     
     def update_organizations_ensembles(self):
         """Update organizations"""
@@ -422,8 +615,9 @@ class NuNetBootSplash:
         self.show_boot_splash()
     
     def reset_password(self):
-        """Reset web manager password"""
-        print(f"\n{self.colors.YELLOW}Resetting Web Manager Password...{self.colors.NC}")
+        """Mark credentials for reset - actual reset happens in web UI"""
+        print(f"\n{self.colors.YELLOW}Marking credentials for reset...{self.colors.NC}")
+        
         try:
             now = datetime.now().isoformat()
             data = {
@@ -444,20 +638,41 @@ class NuNetBootSplash:
             data['password_hash'] = ''
             data['needs_reset'] = True
             data['updated_at'] = now
+            
+            # Ensure .secrets directory exists
             self.credentials_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self.credentials_file.parent.chmod(0o700)
+            except Exception:
+                pass
+            
             with open(self.credentials_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
             try:
                 self.credentials_file.chmod(0o600)
             except Exception:
                 pass
+            
             print(f"{self.colors.GREEN}Credentials marked for reset{self.colors.NC}")
             print(f"{self.colors.CYAN}Next web login will prompt for a new admin password.{self.colors.NC}")
+            
+            # Generate a new reset token for the reset URL
+            # Delete old token first, then generate new one
+            try:
+                if self.reset_token_file.exists():
+                    self.reset_token_file.unlink()
+            except Exception:
+                pass
+            
+            # Generate new token immediately
+            self.ensure_reset_token()
+            print(f"{self.colors.CYAN}New reset token generated. URLs updated.{self.colors.NC}")
+            
         except Exception as e:
             print(f"{self.colors.RED}Error resetting password: {e}{self.colors.NC}")
         
         input(f"\n{self.colors.BLUE}Press Enter to return to splash screen...{self.colors.NC}")
-        # Return to splash screen
+        # Return to splash screen (URLs will now show the new token)
         self.show_boot_splash()
     def enable_ssh(self):
         """Enable SSH access"""
@@ -481,6 +696,38 @@ class NuNetBootSplash:
         input(f"\n{self.colors.BLUE}Press Enter to return to splash screen...{self.colors.NC}")
         # Return to splash screen
         self.show_boot_splash()
+    
+    def quit_to_terminal(self):
+        """Quit to terminal and export DMS_PASSPHRASE"""
+        print(f"{self.colors.YELLOW}Quitting to terminal...{self.colors.NC}")
+        
+        # Export DMS_PASSPHRASE if the file exists
+        passphrase_file = Path.home() / ".secrets" / "dms_passphrase"
+        if passphrase_file.exists():
+            try:
+                with open(passphrase_file, 'r') as f:
+                    passphrase = f.read().strip()
+                
+                # Set in current process environment (for any child processes)
+                os.environ['DMS_PASSPHRASE'] = passphrase
+                
+                # Ensure setpp alias is in .bashrc
+                self.ensure_bashrc_aliases()
+                
+                print(f"{self.colors.GREEN}DMS_PASSPHRASE available{self.colors.NC}")
+            except Exception as e:
+                print(f"{self.colors.YELLOW}Warning: Could not read DMS passphrase: {e}{self.colors.NC}")
+        
+        # Show available commands
+        print(f"\n{self.colors.CYAN}Available commands:{self.colors.NC}")
+        print(f"  {self.colors.WHITE}menu{self.colors.NC}     - Reload the splash screen")
+        print(f"  {self.colors.WHITE}nnn <cmd>{self.colors.NC}  - Run DMS actor commands (e.g., {self.colors.WHITE}nnn status{self.colors.NC})")
+        print(f"  {self.colors.WHITE}setpp{self.colors.NC}    - Export DMS_PASSPHRASE to your shell")
+        print()
+        print(f"{self.colors.CYAN}Examples:{self.colors.NC}")
+        print(f"  {self.colors.WHITE}nnn status{self.colors.NC}           → nunet -c dms actor cmd /dms/node/status")
+        print(f"  {self.colors.WHITE}nnn info{self.colors.NC}             → nunet -c dms actor cmd /dms/node/info")
+        print(f"  {self.colors.WHITE}setpp{self.colors.NC}                → export DMS_PASSPHRASE=$(cat ~/.secrets/dms_passphrase)")
     
 def main():
     """Main entry point"""

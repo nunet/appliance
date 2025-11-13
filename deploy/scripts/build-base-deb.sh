@@ -285,11 +285,7 @@ echo "Snap installation complete."
 EOF
 chmod 0755 "$ROOT/usr/local/bin/install-snaps.sh"
 
-# Copy splash screen files
-cp backend/scripts/nunet_boot_splash.py "$ROOT/home/ubuntu/nunet/appliance/backend/scripts/"
-chmod 0755 "$ROOT/home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py"
-
-# Note: .bashrc modification will be done in postinst to append to existing file
+# Note: Splash screen is now installed by nunet-appliance-web package
 
 # --- DEBIAN metadata ---
 cat > "$ROOT/DEBIAN/control" <<EOF
@@ -338,19 +334,7 @@ chmod 755 /home/ubuntu/nunet/appliance/backend/scripts
 chmod 0660 /home/nunet/config/dms_config.json
 chown nunet:nunet /home/nunet/config/dms_config.json
 
-# Set ownership for splash files
-chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py
-
-# Append splash launcher to existing .bashrc (only if not already present)
-if [ -f /home/ubuntu/.bashrc ] && ! grep -q "NuNet Appliance Boot Splash Screen" /home/ubuntu/.bashrc; then
-    echo "" >> /home/ubuntu/.bashrc
-    echo "# NuNet Appliance Boot Splash Screen" >> /home/ubuntu/.bashrc
-    echo "# Show splash screen on login" >> /home/ubuntu/.bashrc
-    echo "if [ -f /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py ] && [ -t 1 ]; then" >> /home/ubuntu/.bashrc
-    echo "    python3 /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py 2>/dev/null || true" >> /home/ubuntu/.bashrc
-    echo "fi" >> /home/ubuntu/.bashrc
-    chown ubuntu:ubuntu /home/ubuntu/.bashrc
-fi
+# Note: Splash screen installation and .bashrc modification are now handled by nunet-appliance-web package
 
 # Install snap packages
 if [ -f /usr/local/bin/install-snaps.sh ]; then
