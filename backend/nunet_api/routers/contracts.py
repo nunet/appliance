@@ -178,16 +178,13 @@ def _build_action_response(
 ) -> ContractActionResponse:
     template_id = (template_meta or {}).get("template_id") or result.get("template_id")
     source = (template_meta or {}).get("source") or result.get("source")
-    organisation = (template_meta or {}).get("organization_did") or result.get("organization_did")
     return ContractActionResponse(
         status="success",
         message=result.get("message"),
         contract_did=contract_did or result.get("contract_did"),
         contract_file=result.get("contract_file"),
-        destination=result.get("destination"),
         template_id=template_id,
         source=source,
-        organization_did=organisation,
         contract_host_did=contract_host_did or result.get("contract_host_did"),
         stdout=result.get("stdout"),
         stderr=result.get("stderr"),
@@ -255,65 +252,22 @@ def get_contract_template_endpoint(
 @router.get("/", response_model=ContractListResponse)
 @router.get("", response_model=ContractListResponse, include_in_schema=False)
 def list_contracts_endpoint(
-    view: Literal["incoming", "active", "all"] = Query(
+    view: Literal["incoming", "outgoing", "active", "all"] = Query(
         "all",
         description="Filter contracts by lifecycle view.",
     ),
     mgr: DMSManager = Depends(get_mgr),
 ) -> ContractListResponse:
-    if view == "incoming":
-        result = mgr.list_incoming_contracts()
-        if result.get("status") != "success":
-            _raise_contract_error(result, "Failed to list incoming contracts")
-        return _build_list_response(result)
-
-    if view == "active":
-        result = mgr.list_signed_contracts()
-        if result.get("status") != "success":
-            _raise_contract_error(result, "Failed to list active contracts")
-        return _build_list_response(result)
-
-    incoming_result = mgr.list_incoming_contracts()
-    if incoming_result.get("status") != "success":
-        _raise_contract_error(incoming_result, "Failed to list incoming contracts")
-
-    active_result = mgr.list_signed_contracts()
-    if active_result.get("status") != "success":
-        _raise_contract_error(active_result, "Failed to list active contracts")
-
-    combined: dict[str, Any] = {
-        "contracts": [],
-        "filter": "all",
-        "total_count": 0,
-        "filtered_count": 0,
-        "raw": {
-            "incoming": incoming_result.get("raw"),
-            "active": active_result.get("raw"),
-        },
-        "stdout": "\n".join(filter(None, [incoming_result.get("stdout"), active_result.get("stdout")])),
-        "stderr": "\n".join(filter(None, [incoming_result.get("stderr"), active_result.get("stderr")])),
-        "returncode": incoming_result.get("returncode"),
-        "command": incoming_result.get("command"),
-        "message": incoming_result.get("message"),
-        "status": "success",
-    }
-
-    seen: set[str] = set()
-    for source in (incoming_result, active_result):
-        for entry in source.get("contracts") or []:
-            if not isinstance(entry, dict):
-                continue
-            did = entry.get("contract_did")
-            if isinstance(did, str):
-                if did in seen:
-                    continue
-                seen.add(did)
-            combined["contracts"].append(entry)
-
-    combined["total_count"] = len(combined["contracts"])
-    combined["filtered_count"] = len(combined["contracts"])
-
-    return _build_list_response(combined)
+    result = mgr.list_contracts(view)
+    if result.get("status") != "success":
+        errors = {
+            "incoming": "Failed to list incoming contracts",
+            "outgoing": "Failed to list outgoing contracts",
+            "active": "Failed to list signed contracts",
+            "all": "Failed to list contracts",
+        }
+        _raise_contract_error(result, errors.get(view, "Failed to list contracts"))
+    return _build_list_response(result)
 
 
 @router.get("/incoming", response_model=ContractListResponse)
@@ -321,6 +275,14 @@ def list_incoming_contracts(mgr: DMSManager = Depends(get_mgr)) -> ContractListR
     result = mgr.list_incoming_contracts()
     if result.get("status") != "success":
         _raise_contract_error(result, "Failed to list incoming contracts")
+    return _build_list_response(result)
+
+
+@router.get("/outgoing", response_model=ContractListResponse)
+def list_outgoing_contracts(mgr: DMSManager = Depends(get_mgr)) -> ContractListResponse:
+    result = mgr.list_outgoing_contracts()
+    if result.get("status") != "success":
+        _raise_contract_error(result, "Failed to list outgoing contracts")
     return _build_list_response(result)
 
 
@@ -352,22 +314,12 @@ def create_contract(
     request: ContractCreateRequest,
     mgr: DMSManager = Depends(get_mgr),
 ) -> ContractActionResponse:
-    destination = request.destination.strip() if isinstance(request.destination, str) else request.destination
     template_meta: Optional[Dict[str, Any]] = None
     if request.template_id:
-        template_meta = fetch_contract_template(request.template_id, org_did=request.organization_did)
+        template_meta = fetch_contract_template(request.template_id)
         if not template_meta:
             raise HTTPException(status_code=404, detail={"message": f"Contract template '{request.template_id}' not found"})
-        if not destination:
-            destination = (
-                template_meta.get("default_destination")
-                or (template_meta.get("metadata") or {}).get("default_destination")
-            )
         template_meta = dict(template_meta)
-        if request.organization_did and not template_meta.get("organization_did"):
-            template_meta["organization_did"] = request.organization_did
-    if not destination:
-        raise HTTPException(status_code=400, detail={"message": "Destination is required to create a contract"})
 
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
         json.dump(request.contract, tmp, indent=2)
@@ -377,7 +329,6 @@ def create_contract(
     try:
         result = mgr.create_contract(
             contract_path,
-            dest=destination,
             extra_args=request.extra_args,
             template_id=request.template_id,
         )

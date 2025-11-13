@@ -90,9 +90,13 @@ export interface ContractDuration {
   [key: string]: unknown;
 }
 
+export type ContractListView = "incoming" | "outgoing" | "active" | "all";
+export type ContractListEntryView = Exclude<ContractListView, "all">;
+
 export interface ContractMetadata {
   contract_did: string;
   current_state: ContractState;
+  list_view?: ContractListEntryView | null;
   solution_enabler_did?: ContractDIDRef | null;
   payment_validator_did?: ContractDIDRef | null;
   resource_configuration?: ContractResourceConfiguration | null;
@@ -139,9 +143,7 @@ export interface ContractStateResponse {
 
 export interface ContractCreatePayload {
   contract: Record<string, unknown>;
-  destination?: string | null;
   template_id?: string | null;
-  organization_did?: string | null;
   extra_args?: string[];
 }
 
@@ -161,10 +163,8 @@ export interface ContractActionResponse {
   message?: string | null;
   contract_did?: string | null;
   contract_file?: string | null;
-  destination?: string | null;
   template_id?: string | null;
   source?: "local" | "remote" | null;
-  organization_did?: string | null;
   contract_host_did?: string | null;
   stdout?: string | null;
   stderr?: string | null;
@@ -196,8 +196,6 @@ export interface ContractTemplateListResponse {
   message?: string | null;
 }
 
-export type ContractListView = "incoming" | "active" | "all";
-
 export const contractsApi = {
   async getContracts(view: ContractListView = "all", signal?: AbortSignal): Promise<ContractListResponse> {
     const { data } = await api.get<ContractListResponse>("/api/contracts/", {
@@ -209,6 +207,10 @@ export const contractsApi = {
 
   async getIncomingContracts(signal?: AbortSignal): Promise<ContractListResponse> {
     return contractsApi.getContracts("incoming", signal);
+  },
+
+  async getOutgoingContracts(signal?: AbortSignal): Promise<ContractListResponse> {
+    return contractsApi.getContracts("outgoing", signal);
   },
 
   async getSignedContracts(signal?: AbortSignal): Promise<ContractListResponse> {
@@ -261,5 +263,6 @@ export const contractsApi = {
 
 export type ContractSummaryCounts = {
   incoming: number;
+  outgoing: number;
   signed: number;
 };

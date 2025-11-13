@@ -9,7 +9,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .dms_utils import (
     run_dms_command_with_passphrase,
@@ -18,6 +18,7 @@ from .dms_utils import (
     contract_approve_local,
     contract_create,
     contract_list_incoming,
+    contract_list_outgoing,
     contract_terminate,
     contract_state,
 )
@@ -371,22 +372,139 @@ class DMSManager:
                 filtered.append(entry)
         return filtered
 
-    def list_contracts(self, view: str = "all", *, timeout: int = 30) -> Dict[str, Any]:
-        result = contract_list_incoming(timeout=timeout)
+    @staticmethod
+    def _annotate_contracts(contracts: Sequence[Dict[str, Any]], view: str) -> List[Dict[str, Any]]:
+        annotated: List[Dict[str, Any]] = []
+        for entry in contracts:
+            if not isinstance(entry, dict):
+                continue
+            enriched = dict(entry)
+            enriched.setdefault("list_view", view)
+            annotated.append(enriched)
+        return annotated
+
+    @staticmethod
+    def _merge_contract_sets(*collections: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for collection in collections:
+            for entry in collection:
+                if not isinstance(entry, dict):
+                    continue
+                contract_did = entry.get("contract_did")
+                if isinstance(contract_did, str):
+                    if contract_did in seen:
+                        continue
+                    seen.add(contract_did)
+                merged.append(entry)
+        return merged
+
+    def _list_single_view(
+        self,
+        executor: Callable[..., DmsCommandResult],
+        *,
+        normalized_view: str,
+        timeout: int,
+        filter_view: Optional[str],
+        error_message: str,
+    ) -> Dict[str, Any]:
+        result = executor(timeout=timeout)
         if not result.get("success"):
-            return self._contract_error(result, "Failed to list contracts")
+            return self._contract_error(result, error_message)
         payload = self._normalize_contract_list_payload(result)
         contracts = payload.get("contracts", [])
-        normalized_view = (view or "all").lower()
-        filtered = self._filter_contracts_by_view(contracts, normalized_view)
+        annotated = self._annotate_contracts(contracts, normalized_view)
+        filtered = self._filter_contracts_by_view(annotated, filter_view) if filter_view else list(annotated)
         payload["contracts"] = filtered
         payload["filter"] = normalized_view
         payload["total_count"] = len(contracts)
         payload["filtered_count"] = len(filtered)
         return self._contract_success(result, payload)
 
+    def _list_all_contracts(self, *, timeout: int) -> Dict[str, Any]:
+        incoming_result = contract_list_incoming(timeout=timeout)
+        if not incoming_result.get("success"):
+            return self._contract_error(incoming_result, "Failed to list incoming contracts")
+        outgoing_result = contract_list_outgoing(timeout=timeout)
+
+        incoming_payload = self._normalize_contract_list_payload(incoming_result)
+        outgoing_warning: Optional[str] = None
+        outgoing_payload: Dict[str, Any] = {"contracts": [], "raw": None}
+        outgoing_success = bool(outgoing_result.get("success"))
+        if outgoing_success:
+            outgoing_payload = self._normalize_contract_list_payload(outgoing_result)
+        else:
+            if outgoing_result.get("error_code") == "contracts_cli_missing":
+                outgoing_warning = outgoing_result.get("error") or "Outgoing contracts are unavailable on this nunet CLI."
+            else:
+                return self._contract_error(outgoing_result, "Failed to list outgoing contracts")
+
+        incoming_contracts = self._annotate_contracts(incoming_payload.get("contracts", []), "incoming")
+        outgoing_contracts = (
+            self._annotate_contracts(outgoing_payload.get("contracts", []), "outgoing") if outgoing_success else []
+        )
+        combined_contracts = self._merge_contract_sets(incoming_contracts, outgoing_contracts)
+        active_contracts = self._filter_contracts_by_view(incoming_payload.get("contracts", []), "active")
+
+        payload = {
+            "contracts": combined_contracts,
+            "filter": "all",
+            "total_count": len(combined_contracts),
+            "filtered_count": len(combined_contracts),
+            "raw": {
+                "incoming": incoming_payload.get("raw"),
+                "outgoing": outgoing_payload.get("raw") if outgoing_success else {"warning": outgoing_warning},
+                "active": {"contracts": active_contracts},
+            },
+        }
+
+        response = self._contract_success(incoming_result, payload)
+        response["stdout"] = "\n".join(
+            filter(None, [incoming_result.get("stdout"), outgoing_result.get("stdout")])
+        ) or None
+        response["stderr"] = "\n".join(
+            filter(None, [incoming_result.get("stderr"), outgoing_result.get("stderr")])
+        ) or None
+        if outgoing_warning:
+            existing = response.get("message") or incoming_result.get("message")
+            response["message"] = " ".join(filter(None, [existing, outgoing_warning]))
+        else:
+            response["message"] = incoming_result.get("message") or outgoing_result.get("message")
+        return response
+
+    def list_contracts(self, view: str = "all", *, timeout: int = 30) -> Dict[str, Any]:
+        normalized_view = (view or "all").lower()
+        if normalized_view == "incoming":
+            return self._list_single_view(
+                contract_list_incoming,
+                normalized_view="incoming",
+                timeout=timeout,
+                filter_view="incoming",
+                error_message="Failed to list incoming contracts",
+            )
+        if normalized_view == "outgoing":
+            return self._list_single_view(
+                contract_list_outgoing,
+                normalized_view="outgoing",
+                timeout=timeout,
+                filter_view=None,
+                error_message="Failed to list outgoing contracts",
+            )
+        if normalized_view == "active":
+            return self._list_single_view(
+                contract_list_incoming,
+                normalized_view="active",
+                timeout=timeout,
+                filter_view="active",
+                error_message="Failed to list signed contracts",
+            )
+        return self._list_all_contracts(timeout=timeout)
+
     def list_incoming_contracts(self, *, timeout: int = 30) -> Dict[str, Any]:
         return self.list_contracts("incoming", timeout=timeout)
+
+    def list_outgoing_contracts(self, *, timeout: int = 30) -> Dict[str, Any]:
+        return self.list_contracts("outgoing", timeout=timeout)
 
     def list_signed_contracts(self, *, timeout: int = 30) -> Dict[str, Any]:
         return self.list_contracts("active", timeout=timeout)
@@ -411,14 +529,12 @@ class DMSManager:
         self,
         contract_file: str,
         *,
-        dest: Optional[str] = None,
         extra_args: Optional[Sequence[str]] = None,
         template_id: Optional[str] = None,
         timeout: int = 60,
     ) -> Dict[str, Any]:
         result = contract_create(
             contract_file,
-            dest=dest,
             extra_args=extra_args,
             timeout=timeout,
         )
@@ -426,8 +542,6 @@ class DMSManager:
             return self._contract_error(result, "Failed to create contract")
         message = (result.get("stdout") or "").strip() or "Contract create command dispatched"
         payload: Dict[str, Any] = {"message": message, "contract_file": contract_file}
-        if dest:
-            payload["destination"] = dest
         if template_id:
             payload["template_id"] = template_id
         return self._contract_success(result, payload)

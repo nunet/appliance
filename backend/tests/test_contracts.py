@@ -39,12 +39,67 @@ def test_contract_utils_list_incoming_parses_json(monkeypatch: pytest.MonkeyPatc
     assert result["data"]["contracts"][0]["contract_did"] == "did:example:123"
     assert captured["cmd"] == [
         "nunet",
-        "actor",
-        "cmd",
+        "contracts",
         "--context",
         "dms",
-        "/dms/tokenomics/contract/list_incoming",
+        "list",
+        "incoming",
     ]
+
+
+def test_contract_utils_list_outgoing_uses_contracts_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: Dict[str, List[str]] = {}
+
+    def fake_run(cmd: List[str], **kwargs: Any) -> SimpleNamespace:
+        captured["cmd"] = cmd
+        payload = {"contracts": []}
+        return SimpleNamespace(stdout=json.dumps(payload), stderr="", returncode=0)
+
+    monkeypatch.setattr(dms_utils, "run_dms_command_with_passphrase", fake_run)
+
+    result = dms_utils.contract_list_outgoing()
+
+    assert result["success"] is True
+    assert captured["cmd"] == [
+        "nunet",
+        "contracts",
+        "--context",
+        "dms",
+        "list",
+        "outgoing",
+    ]
+
+
+def test_contract_utils_list_incoming_falls_back_when_contracts_cli_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: List[List[str]] = []
+
+    def fake_run(cmd: List[str], **kwargs: Any) -> SimpleNamespace:
+        calls.append(cmd)
+        if len(calls) == 1:
+            return SimpleNamespace(stdout="", stderr='Error: unknown command "contracts" for "nunet"', returncode=1)
+        payload = {"contracts": [{"contract_did": "did:example:fallback", "current_state": "PENDING"}]}
+        return SimpleNamespace(stdout=json.dumps(payload), stderr="", returncode=0)
+
+    monkeypatch.setattr(dms_utils, "run_dms_command_with_passphrase", fake_run)
+
+    result = dms_utils.contract_list_incoming()
+
+    assert result["success"] is True
+    assert result["endpoint"] == "/dms/tokenomics/contract/list_incoming"
+    assert calls[1][2] == "cmd"  # actor fallback
+
+
+def test_contract_utils_list_outgoing_reports_missing_contracts_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_run(cmd: List[str], **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(stdout="", stderr='Error: unknown command "contracts" for "nunet"', returncode=1)
+
+    monkeypatch.setattr(dms_utils, "run_dms_command_with_passphrase", fake_run)
+
+    result = dms_utils.contract_list_outgoing()
+
+    assert result["success"] is False
+    assert result["error_code"] == "contracts_cli_missing"
+    assert "upgrade" in result["error"]
 
 
 def test_contract_utils_create_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,6 +127,9 @@ class _ListStubManager:
         self.payload = payload
 
     def list_incoming_contracts(self) -> Dict[str, Any]:
+        return self.payload
+
+    def list_outgoing_contracts(self) -> Dict[str, Any]:
         return self.payload
 
 
@@ -113,6 +171,28 @@ def test_contracts_router_incoming_success() -> None:
     assert data.contracts[0].current_state.name == "ACCEPTED"
 
 
+def test_contracts_router_outgoing_success() -> None:
+    payload = {
+        "status": "success",
+        "contracts": [
+            {"contract_did": "did:key:outgoing1", "current_state": "DRAFT"},
+        ],
+        "raw": {"contracts": [{"contract_did": "did:key:outgoing1", "current_state": "DRAFT"}]},
+        "stdout": "",
+        "stderr": "",
+        "returncode": 0,
+        "command": "nunet contracts ...",
+    }
+    client = _make_test_app(_ListStubManager(payload))
+
+    response = client.get("/contracts/outgoing")
+    assert response.status_code == 200
+
+    data = ContractListResponse.model_validate(response.json())
+    assert data.contracts[0].contract_did == "did:key:outgoing1"
+    assert data.contracts[0].current_state.name == "DRAFT"
+
+
 def test_contracts_router_list_endpoint_filters() -> None:
     raw_contract = {
         "contract_did": "did:key:filter1",
@@ -141,11 +221,36 @@ def test_contracts_router_list_endpoint_filters() -> None:
     assert data.filter == "active"
     assert data.filtered_count == 1
     assert data.total_count == 2
+
+
+def test_contracts_router_list_endpoint_supports_outgoing() -> None:
+    payload = {
+        "status": "success",
+        "contracts": [{"contract_did": "did:key:out1", "current_state": "draft"}],
+        "raw": {"contracts": [{"contract_did": "did:key:out1"}]},
+        "filter": "outgoing",
+        "total_count": 1,
+        "filtered_count": 1,
+        "stdout": "",
+        "stderr": "",
+        "returncode": 0,
+        "command": "nunet contracts ...",
+    }
+    manager = _ListContractsStubManager(payload)
+    client = _make_test_app(manager)
+
+    response = client.get("/contracts/?view=outgoing")
+    assert response.status_code == 200
+    assert manager.last_view == "outgoing"
+
+    data = ContractListResponse.model_validate(response.json())
+    assert data.filter == "outgoing"
+    assert len(data.contracts) == 1
 def test_dms_manager_list_signed_filters_states(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {
         "success": True,
-        "endpoint": "/dms/tokenomics/contract/list_incoming",
-        "argv": ["nunet", "actor", "cmd", "--context", "dms", "/dms/tokenomics/contract/list_incoming"],
+        "endpoint": "contracts list incoming",
+        "argv": ["nunet", "contracts", "--context", "dms", "list", "incoming"],
         "returncode": 0,
         "stdout": "",
         "stderr": "",
@@ -167,6 +272,38 @@ def test_dms_manager_list_signed_filters_states(monkeypatch: pytest.MonkeyPatch)
     contracts = result["contracts"]
     assert len(contracts) == 2
     assert {c["contract_did"] for c in contracts} == {"did:key:a1", "did:key:signed"}
+
+
+def test_dms_manager_list_all_handles_missing_outgoing(monkeypatch: pytest.MonkeyPatch) -> None:
+    incoming_payload = {
+        "success": True,
+        "endpoint": "contracts list incoming",
+        "argv": [],
+        "returncode": 0,
+        "stdout": "",
+        "stderr": "",
+        "data": {"contracts": [{"contract_did": "did:key:only", "current_state": "draft"}]},
+    }
+    outgoing_payload = {
+        "success": False,
+        "endpoint": "contracts list outgoing",
+        "argv": [],
+        "returncode": 1,
+        "stdout": "",
+        "stderr": "",
+        "error": "Outgoing contracts require a newer nunet CLI.",
+        "error_code": "contracts_cli_missing",
+    }
+
+    monkeypatch.setattr(dms_manager_module, "contract_list_incoming", lambda timeout=30: incoming_payload)
+    monkeypatch.setattr(dms_manager_module, "contract_list_outgoing", lambda timeout=30: outgoing_payload)
+
+    mgr = DMSManager()
+    result = mgr.list_contracts("all")
+
+    assert result["status"] == "success"
+    assert len(result["contracts"]) == 1
+    assert "Outgoing contracts require" in result["message"]
 
 
 class _SignedStubManager:
@@ -202,20 +339,17 @@ class _CreateStubManager:
     def __init__(self) -> None:
         self.last_path: Optional[str] = None
         self.last_extra: Optional[List[str]] = None
-        self.last_dest: Optional[str] = None
         self.last_template_id: Optional[str] = None
 
     def create_contract(
         self,
         contract_file: str,
         *,
-        dest: Optional[str],
         extra_args: Optional[List[str]],
         template_id: Optional[str] = None,
         timeout: int = 60,
     ) -> Dict[str, Any]:
         self.last_path = contract_file
-        self.last_dest = dest
         self.last_extra = extra_args
         self.last_template_id = template_id
         with open(contract_file, "r", encoding="utf-8") as handle:
@@ -225,7 +359,6 @@ class _CreateStubManager:
             "status": "success",
             "message": "submitted",
             "contract_file": contract_file,
-            "destination": dest,
             "template_id": template_id,
             "stdout": "",
             "stderr": "",
@@ -248,12 +381,11 @@ def test_contracts_router_create_writes_contract_file_and_cleans_up(monkeypatch:
                 "requestor": {"uri": "did:key:requestor"},
             },
         },
-        "destination": "did:key:dest",
         "extra_args": ["--verbose"],
         "template_id": "local:default",
     }
 
-    def fake_template_lookup(template_id: str, org_did: Optional[str] = None):
+    def fake_template_lookup(template_id: str):
         assert template_id == "local:default"
         return {
             "template_id": template_id,
@@ -261,7 +393,6 @@ def test_contracts_router_create_writes_contract_file_and_cleans_up(monkeypatch:
             "source": "local",
             "origin": "backend/contracts/default.json",
             "contract": {"contract_terms": "Standard"},
-            "default_destination": "did:key:dest",
         }
 
     monkeypatch.setattr(contracts, "fetch_contract_template", fake_template_lookup)
@@ -270,8 +401,6 @@ def test_contracts_router_create_writes_contract_file_and_cleans_up(monkeypatch:
     assert response.status_code == 200
 
     data = ContractActionResponse.model_validate(response.json())
-    assert data.destination == "did:key:dest"
-    assert manager.last_dest == "did:key:dest"
     assert manager.last_extra == ["--verbose"]
     assert manager.last_template_id == "local:default"
     assert data.template_id == "local:default"

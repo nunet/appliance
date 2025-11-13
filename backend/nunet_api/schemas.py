@@ -260,6 +260,7 @@ class ContractMetadata(BaseModel):
 
     contract_did: str
     current_state: ContractState = ContractState.UNKNOWN
+    list_view: Optional[str] = None
     solution_enabler_did: Optional[ContractDIDRef] = None
     payment_validator_did: Optional[ContractDIDRef] = None
     resource_configuration: Optional[ContractResourceConfiguration] = None
@@ -307,9 +308,7 @@ class ContractCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract: Dict[str, Any]
-    destination: Optional[str] = None
     template_id: Optional[str] = None
-    organization_did: Optional[str] = None
     extra_args: Optional[List[str]] = None
 
 
@@ -333,10 +332,8 @@ class ContractActionResponse(BaseModel):
     message: Optional[str] = None
     contract_did: Optional[str] = None
     contract_file: Optional[str] = None
-    destination: Optional[str] = None
     template_id: Optional[str] = None
     source: Optional[Literal["local", "remote"]] = None
-    organization_did: Optional[str] = None
     contract_host_did: Optional[str] = None
     stdout: Optional[str] = None
     stderr: Optional[str] = None

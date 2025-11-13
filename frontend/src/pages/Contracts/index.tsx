@@ -2,6 +2,7 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
 import { ContractListView, ContractMetadata, ContractTerminatePayload, contractsApi } from "@/api/contracts";
+import { getDmsStatus } from "@/api/api";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,11 @@ const FILTER_TABS: Array<{ view: ContractListView; label: string; description: s
     view: "incoming",
     label: "Incoming",
     description: "Draft contracts waiting for acceptance or approval.",
+  },
+  {
+    view: "outgoing",
+    label: "Outgoing",
+    description: "Contracts created from this appliance.",
   },
   {
     view: "active",
@@ -117,7 +123,13 @@ function extractErrorMessage(error: unknown): string {
 
 function matchesStatus(contract: ContractMetadata, filter: ContractListView): boolean {
   if (filter === "incoming") {
+    if (contract.list_view && contract.list_view !== "incoming") {
+      return false;
+    }
     return INCOMING_STATES.has(contract.current_state);
+  }
+  if (filter === "outgoing") {
+    return contract.list_view === "outgoing";
   }
   if (filter === "active") {
     return SIGNED_STATES.has(contract.current_state);
@@ -138,8 +150,19 @@ function matchesSearch(contract: ContractMetadata, query: string): boolean {
   return requestor.includes(lower) || provider.includes(lower);
 }
 
-function canApproveContract(contract: ContractMetadata): boolean {
-  return contract.current_state === "DRAFT";
+function canApproveContract(contract: ContractMetadata, machineDid?: string): boolean {
+  if (contract.current_state !== "DRAFT") {
+    return false;
+  }
+  const normalizedMachineDid = machineDid?.trim().toLowerCase();
+  if (!normalizedMachineDid) {
+    return true;
+  }
+  const requestor = contract.participants?.requestor?.uri?.trim().toLowerCase();
+  if (!requestor) {
+    return true;
+  }
+  return requestor !== normalizedMachineDid;
 }
 
 export default function ContractsPage(): JSX.Element {
@@ -157,6 +180,15 @@ export default function ContractsPage(): JSX.Element {
     queryFn: ({ signal }) => contractsApi.getContracts("all", signal),
     refetchOnWindowFocus: false,
   });
+  const dmsStatusQuery = useQuery({
+    queryKey: ["dms", "status", "contracts", "list"],
+    queryFn: getDmsStatus,
+    staleTime: 1000 * 60 * 5,
+    refetchOnWindowFocus: false,
+  });
+  const cachedDashboardInfo = queryClient.getQueryData<{ dms_did?: string }>(["apiData"]);
+  const machineDid = dmsStatusQuery.data?.dms_did ?? cachedDashboardInfo?.dms_did ?? "";
+  const machineDidLower = machineDid.trim().toLowerCase();
 
   const allContracts = React.useMemo<ContractMetadata[]>(() => {
     const baseContracts = contractsQuery.data?.contracts ?? [];
@@ -191,9 +223,13 @@ export default function ContractsPage(): JSX.Element {
     const activeEntries = Array.isArray(rawSections?.active?.contracts)
       ? (rawSections.active.contracts as unknown[])
       : [];
+    const outgoingEntries = Array.isArray(rawSections?.outgoing?.contracts)
+      ? (rawSections.outgoing.contracts as unknown[])
+      : [];
 
     register(incomingEntries);
     register(activeEntries);
+    register(outgoingEntries);
 
     return baseContracts.map((contract) => {
       const overrideState = overrides.get(contract.contract_did);
@@ -209,6 +245,10 @@ export default function ContractsPage(): JSX.Element {
 
   const incomingCount = React.useMemo(
     () => allContracts.filter((contract) => matchesStatus(contract, "incoming")).length,
+    [allContracts],
+  );
+  const outgoingCount = React.useMemo(
+    () => allContracts.filter((contract) => matchesStatus(contract, "outgoing")).length,
     [allContracts],
   );
   const signedCount = React.useMemo(
@@ -309,6 +349,11 @@ export default function ContractsPage(): JSX.Element {
     [terminateMutation],
   );
 
+  const canApproveSelf = React.useCallback(
+    (contract: ContractMetadata) => canApproveContract(contract, machineDidLower),
+    [machineDidLower],
+  );
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="container/main flex flex-1 flex-col gap-2">
@@ -366,6 +411,10 @@ export default function ContractsPage(): JSX.Element {
                       <span className="font-mono">{incomingCount}</span>
                     </Badge>
                     <Badge variant="secondary" className="gap-1">
+                      Outgoing
+                      <span className="font-mono">{outgoingCount}</span>
+                    </Badge>
+                    <Badge variant="secondary" className="gap-1">
                       Signed
                       <span className="font-mono">{signedCount}</span>
                     </Badge>
@@ -391,7 +440,9 @@ export default function ContractsPage(): JSX.Element {
                   approvingMap={approvingId ? { [approvingId]: true } : undefined}
                   onApprove={handleApprove}
                   onSelect={handleSelect}
-                  canApprove={canApproveContract}
+                  canApprove={canApproveSelf}
+                  showListSource={statusFilter === "all"}
+                  listSourceKey="list_view"
                 />
               </CardContent>
             </Card>

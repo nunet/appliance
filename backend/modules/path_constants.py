@@ -5,6 +5,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Home directory context
 HOME_DIR = Path.home()
+DMS_DEFAULT_CONTEXT = "dms"
 
 # Ensemble templates
 ENSEMBLES_DIR = HOME_DIR / "ensembles"
@@ -47,6 +48,7 @@ __all__ = [
     "ONBOARDING_LOG_FILE",
     "KNOWN_ORGS_FILE",
     "CONTRACTS_DIR",
+    "DMS_DEFAULT_CONTEXT",
     "ROLE_METADATA_FILE",
     "LOCAL_DEPLOYMENTS_DIR",
     "DMS_DEPLOYMENTS_DIR",

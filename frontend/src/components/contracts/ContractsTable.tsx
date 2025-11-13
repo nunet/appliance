@@ -108,6 +108,31 @@ export function ContractsTable({
 }: ContractsTableProps) {
   const hasData = (contracts?.length ?? 0) > 0;
 
+  const renderSourceBadge = (sourceRaw: string) => {
+    const normalized = sourceRaw.trim().toLowerCase();
+    const label =
+      normalized === "incoming"
+        ? "Incoming"
+        : normalized === "outgoing"
+          ? "Outgoing"
+          : normalized === "active"
+            ? "Signed"
+            : sourceRaw;
+    const tone =
+      normalized === "incoming"
+        ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-100"
+        : normalized === "outgoing"
+          ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-100"
+          : normalized === "active"
+            ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-100"
+            : "bg-muted text-foreground/80";
+    return (
+      <Badge variant="outline" className={cn("uppercase tracking-wide text-[9px] px-2 py-0", tone)}>
+        {label}
+      </Badge>
+    );
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -152,14 +177,17 @@ export function ContractsTable({
               const requestorDid = getParticipantDid(contract, "requestor");
               const providerDid = getParticipantDid(contract, "provider");
 
+              const showBadge = showListSource && typeof rowSource === "string" && rowSource.trim().length > 0;
+
               return (
                 <div
                   key={contract.contract_did}
                   className={cn(
-                    "rounded-md border border-border/40 bg-muted/5 p-3 transition",
+                    "relative rounded-md border border-border/40 bg-muted/5 p-3 pt-8 transition",
                     onSelect ? "hover:border-primary/60" : ""
                   )}
                 >
+                  {showBadge ? <div className="absolute right-3 top-3">{renderSourceBadge(rowSource as string)}</div> : null}
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
@@ -174,11 +202,6 @@ export function ContractsTable({
                           Provider DID:
                         </span>
                         <DidDisplay value={providerDid} muted />
-                        {showListSource && typeof rowSource === "string" ? (
-                          <Badge variant="outline" className="uppercase">
-                            {rowSource}
-                          </Badge>
-                        ) : null}
                       </div>
                       <div className="flex flex-wrap items-center gap-2 text-xs">
                         <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">

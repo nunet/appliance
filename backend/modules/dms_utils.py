@@ -13,6 +13,8 @@ from copy import deepcopy
 from time import monotonic
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
 
+from .path_constants import DMS_DEFAULT_CONTEXT
+
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL_DEFAULT = 30.0
@@ -42,6 +44,7 @@ class DmsCommandResult(TypedDict, total=False):
     stderr: str
     data: Any
     error: str
+    error_code: str
 
 def _read_cache(cache: Dict[str, Any], lock: threading.Lock, ttl: float) -> Any:
     now = monotonic()
@@ -225,7 +228,7 @@ def categorize_listen_addresses(listen_addrs: Iterable[str] | str | None) -> Tup
     return local, public, relay
 
 def _run_actor_command(endpoint: str, *, timeout: int = 30) -> subprocess.CompletedProcess:
-    argv = ["nunet", "-c", "dms", "actor", "cmd", endpoint]
+    argv = ["nunet", "-c", DMS_DEFAULT_CONTEXT, "actor", "cmd", endpoint]
     return run_dms_command_with_passphrase(
         argv,
         capture_output=True,
@@ -240,9 +243,25 @@ def _run_contract_command(
     extra_args: Optional[Sequence[str]] = None,
     timeout: int = 30,
 ) -> Tuple[List[str], subprocess.CompletedProcess]:
-    argv: List[str] = ["nunet", "actor", "cmd", "--context", "dms", endpoint]
+    argv: List[str] = ["nunet", "actor", "cmd", "-c", DMS_DEFAULT_CONTEXT, endpoint]
     if extra_args:
         argv.extend([str(arg) for arg in extra_args])
+    cp = run_dms_command_with_passphrase(
+        argv,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return argv, cp
+
+
+def _run_contracts_command(
+    args: Sequence[str],
+    *,
+    timeout: int = 30,
+) -> Tuple[List[str], subprocess.CompletedProcess]:
+    argv: List[str] = ["nunet", "contracts", "--context", DMS_DEFAULT_CONTEXT]
+    argv.extend(str(arg) for arg in args)
     cp = run_dms_command_with_passphrase(
         argv,
         capture_output=True,
@@ -294,10 +313,51 @@ def _build_contract_result(
     return result
 
 
+def _contracts_cli_missing(stderr: str | None, stdout: str | None) -> bool:
+    combined = f"{stderr or ''}\n{stdout or ''}".lower()
+    return (
+        'unknown command "contracts"' in combined
+        or "unknown command 'contracts'" in combined
+        or "unknown command `contracts`" in combined
+    )
+
+
 def contract_list_incoming(*, timeout: int = 30) -> DmsCommandResult:
-    argv, cp = _run_contract_command("/dms/tokenomics/contract/list_incoming", timeout=timeout)
+    argv, cp = _run_contracts_command(["list", "incoming"], timeout=timeout)
+    if cp.returncode == 0 or not _contracts_cli_missing(cp.stderr, cp.stdout):
+        return _build_contract_result(
+            "contracts list incoming",
+            argv,
+            cp,
+            expect_json=True,
+        )
+    fallback_argv, fallback_cp = _run_contract_command("/dms/tokenomics/contract/list_incoming", timeout=timeout)
     return _build_contract_result(
         "/dms/tokenomics/contract/list_incoming",
+        fallback_argv,
+        fallback_cp,
+        expect_json=True,
+    )
+
+
+def contract_list_outgoing(*, timeout: int = 30) -> DmsCommandResult:
+    argv, cp = _run_contracts_command(["list", "outgoing"], timeout=timeout)
+    if cp.returncode != 0 and _contracts_cli_missing(cp.stderr, cp.stdout):
+        return {
+            "success": False,
+            "endpoint": "contracts list outgoing",
+            "argv": argv,
+            "returncode": cp.returncode,
+            "stdout": (cp.stdout or "").strip(),
+            "stderr": (cp.stderr or "").strip(),
+            "error": (
+                "Outgoing contracts require a newer nunet CLI that supports the 'contracts' subcommand. "
+                "Please upgrade nunet to list outgoing contracts."
+            ),
+            "error_code": "contracts_cli_missing",
+        }
+    return _build_contract_result(
+        "contracts list outgoing",
         argv,
         cp,
         expect_json=True,
@@ -329,13 +389,10 @@ def contract_state(
 def contract_create(
     contract_file: str,
     *,
-    dest: Optional[str] = None,
     extra_args: Optional[Sequence[str]] = None,
     timeout: int = 60,
 ) -> DmsCommandResult:
-    args: List[str] = ["--contract-file", contract_file]
-    if dest:
-        args.extend(["--dest", dest])
+    args: List[str] = ["--contract-file", contract_file, "--timeout", "1m"]
     if extra_args:
         args.extend([str(arg) for arg in extra_args])
     argv, cp = _run_contract_command(
