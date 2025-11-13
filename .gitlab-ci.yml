@@ -72,7 +72,7 @@ deploy-packages:
         for file in *.deb; do
           [[ -f "$file" ]] || continue
           found=true
-          if [[ $file =~ nunet-appliance-(base|web)_v([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
+          if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
             version=${BASH_REMATCH[2]}
             curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
               --upload-file "$file" \
@@ -127,7 +127,7 @@ update-permalinks:
       for file in *.deb; do
         echo $file
 
-        if [[ $file =~ nunet-appliance-(base|web)_v([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
+        if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
           type=${BASH_REMATCH[1]}
           version=${BASH_REMATCH[2]}
           arch=${BASH_REMATCH[3]}
