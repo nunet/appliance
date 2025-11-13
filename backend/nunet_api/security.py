@@ -84,6 +84,14 @@ def set_admin_password(password: str, username: str = ADMIN_USERNAME) -> Dict[st
     except NotImplementedError:
         pass
 
+    # Delete reset token when password is set - URLs should not show token after password is set
+    reset_token_file = Path.home() / ".secrets" / "reset_token"
+    try:
+        if reset_token_file.exists():
+            reset_token_file.unlink()
+    except Exception:
+        pass  # Non-critical if we can't delete the token
+
     return payload
 
 

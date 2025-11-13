@@ -30,7 +30,8 @@ DMS_LOG_PATH = Path("/home/nunet/logs/nunet-dms.log")
 DMS_CAP_FILE = Path("/home/ubuntu/.nunet/cap/dms.cap")
 
 # Credentials
-ADMIN_CREDENTIALS_PATH = REPO_ROOT / "deploy" / "admin_credentials.json"
+# Use ~/.secrets/ for credentials (works in both dev and prod)
+ADMIN_CREDENTIALS_PATH = HOME_DIR / ".secrets" / "admin_credentials.json"
 
 __all__ = [
     "REPO_ROOT",

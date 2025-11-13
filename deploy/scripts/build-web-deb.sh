@@ -65,6 +65,7 @@ mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/contracts"
 mkdir -p "$PKGDIR/lib/systemd/system"
 mkdir -p "$PKGDIR/etc/nunet-appliance-web"
+mkdir -p "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts"
 
 # payload
 install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-web/nunet-dms.pex"
@@ -87,6 +88,10 @@ fi
 if [ -d "$ROOT/backend/contracts" ]; then
   cp -a "$ROOT/backend/contracts/." "$PKGDIR/usr/share/nunet-appliance-web/data/contracts/" || true
 fi
+
+# Copy splash screen script
+cp "$ROOT/backend/scripts/nunet_boot_splash.py" "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts/"
+chmod 0755 "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py"
 
 # default env overrides (editable after install)
 cat > "$PKGDIR/etc/nunet-appliance-web/app.env" <<'EOF'
@@ -113,6 +118,7 @@ Environment=WORKERS=1
 Environment=NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
 Environment=SSL_CERTFILE=/etc/nunet-appliance-web/ssl/cert.pem
 Environment=SSL_KEYFILE=/etc/nunet-appliance-web/ssl/key.pem
+Environment=PEX_ROOT=/home/ubuntu/.local/share/nunet-appliance-web/pex
 EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/bin/python3 /usr/lib/nunet-appliance-web/nunet-dms.pex \\
           -k uvicorn.workers.UvicornWorker \\
@@ -133,7 +139,7 @@ SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0027
 # Allow writes to specific directories
-ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system
+ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.local/share/nunet-appliance-web /home/ubuntu/.secrets /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system
 
 [Install]
 WantedBy=multi-user.target
@@ -194,6 +200,27 @@ chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/ensembles || true
 chmod 755 /home/ubuntu/contracts || true
 
+# --- Create .secrets directory and migrate credentials ---
+SECRETS_DIR="/home/ubuntu/.secrets"
+mkdir -p "$SECRETS_DIR"
+chown ubuntu:ubuntu "$SECRETS_DIR" || true
+chmod 0700 "$SECRETS_DIR" || true
+
+# Migrate credentials from old PEX cache location if they exist
+OLD_CREDS="/home/ubuntu/.cache/pex/user_code/0/deploy/admin_credentials.json"
+NEW_CREDS="$SECRETS_DIR/admin_credentials.json"
+if [ -f "$OLD_CREDS" ] && [ ! -f "$NEW_CREDS" ]; then
+  cp "$OLD_CREDS" "$NEW_CREDS" || true
+  chown ubuntu:ubuntu "$NEW_CREDS" || true
+  chmod 0600 "$NEW_CREDS" || true
+  echo "Migrated admin credentials from PEX cache to $NEW_CREDS"
+fi
+
+# --- Create PEX directory ---
+PEX_DIR="/home/ubuntu/.local/share/nunet-appliance-web/pex"
+mkdir -p "$PEX_DIR"
+chown ubuntu:ubuntu "$PEX_DIR" || true
+chmod 0700 "$PEX_DIR" || true
 
 # --- TLS: generate self-signed cert on first install (idempotent) ---
 SSL_DIR="/etc/nunet-appliance-web/ssl"
@@ -239,6 +266,26 @@ OCNF
   chmod 0640 "$SSL_CERT" || true
 fi
 
+# --- Install splash screen script ---
+# Ensure directory exists (file is installed by dpkg from package structure)
+mkdir -p /home/ubuntu/nunet/appliance/backend/scripts
+# Set correct permissions on splash script (installed by dpkg)
+if [ -f /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py ]; then
+  chown ubuntu:ubuntu /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py || true
+  chmod 0755 /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py || true
+fi
+
+# --- Update .bashrc with splash screen launcher (only if not already present) ---
+if [ -f /home/ubuntu/.bashrc ] && ! grep -q "NuNet Appliance Boot Splash Screen" /home/ubuntu/.bashrc; then
+  echo "" >> /home/ubuntu/.bashrc
+  echo "# NuNet Appliance Boot Splash Screen" >> /home/ubuntu/.bashrc
+  echo "# Show splash screen on login" >> /home/ubuntu/.bashrc
+  echo "if [ -f /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py ] && [ -t 1 ]; then" >> /home/ubuntu/.bashrc
+  echo "    python3 /home/ubuntu/nunet/appliance/backend/scripts/nunet_boot_splash.py 2>/dev/null || true" >> /home/ubuntu/.bashrc
+  echo "fi" >> /home/ubuntu/.bashrc
+  chown ubuntu:ubuntu /home/ubuntu/.bashrc || true
+fi
+
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
 systemctl restart nunet-appliance-web.service || true
@@ -249,6 +296,11 @@ cat > "$PKGDIR/DEBIAN/prerm" <<'EOF'
 #!/bin/sh -e
 if [ "$1" = remove ] || [ "$1" = deconfigure ] || [ "$1" = upgrade ]; then
   systemctl stop nunet-appliance-web.service || true
+  # Clean up PEX cache directory before upgrade
+  PEX_DIR="/home/ubuntu/.local/share/nunet-appliance-web/pex"
+  if [ -d "$PEX_DIR" ]; then
+    rm -rf "$PEX_DIR"/* || true
+  fi
 fi
 exit 0
 EOF
