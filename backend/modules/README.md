@@ -47,7 +47,7 @@ The table below lists the modules in this package, what they do, and which route
 * `ddns_manager.make_dns_label()` mirrors the legacy naming scheme; adjust it if the manifest contract changes inside `ensemble_manager_v2.enrich_manifest_payload`.
 
 ### 2.5 Utilities
-* `utils.get_appliance_version()` checks, in order: `APPLIANCE_VERSION_PATH`, `/home/ubuntu/nunet/appliance/appliance_version.txt`, and `backend/version.txt`. Override the env var if you store the version elsewhere.
+* `utils.get_appliance_version()` reads `__version__`
 * `utils.get_public_ip()` caches lookups with a simple TTL. Extend or bypass the cache if you need higher-frequency polling.
 
 ---

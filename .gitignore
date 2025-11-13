@@ -238,3 +238,4 @@ cython_debug/
 local/
 dev/
 deploy/admin_credentials.json
+.aider*

@@ -16,7 +16,6 @@ APPLIANCE_DIR = HOME_DIR / "nunet" / "appliance"
 APPLIANCE_DEPLOYMENTS_DIR = Path("/home/ubuntu/nunet/appliance/deployments")
 APPLIANCE_DEPLOYMENT_LOGS_DIR = APPLIANCE_DIR / "deployment_logs"
 APPLIANCE_PUBLIC_IP_CACHE = APPLIANCE_DIR / "public_ip_cache.json"
-APPLIANCE_VERSION_FILE = APPLIANCE_DIR / "appliance_version.txt"
 ONBOARDING_STATE_FILE = APPLIANCE_DIR / "onboarding_state.json"
 ONBOARDING_LOG_FILE = APPLIANCE_DIR / "onboarding.log"
 KNOWN_ORGS_FILE = APPLIANCE_DIR / "known_orgs" / "known_organizations.json"
@@ -43,7 +42,6 @@ __all__ = [
     "APPLIANCE_DEPLOYMENTS_DIR",
     "APPLIANCE_DEPLOYMENT_LOGS_DIR",
     "APPLIANCE_PUBLIC_IP_CACHE",
-    "APPLIANCE_VERSION_FILE",
     "ONBOARDING_STATE_FILE",
     "ONBOARDING_LOG_FILE",
     "KNOWN_ORGS_FILE",

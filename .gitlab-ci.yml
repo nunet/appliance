@@ -7,7 +7,7 @@ version:
   stage: .pre
   image: ubuntu:24.04
   before_script:
-    - apt-get update && apt-get install -y git
+    - apt-get update && apt-get install -y git sed
   script:
     - bash deploy/scripts/version.sh
   only:
