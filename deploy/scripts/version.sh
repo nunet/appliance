@@ -32,11 +32,15 @@ fi
 echo $GITLAB_CI
 echo $CI_COMMIT_REF_NAME
 if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(main|master|release)$ ) ]]; then
-    # Push (uncomment in CI)
+    sed -i "s/__version__ = .*/__version__ = \"$APPLIANCE_NEW_VERSION\"/" backend/__init__.py
+
+    # Commit, tag and push the version bump
     git config --global user.email "ci@nunet.io"
     git config --global user.name "NuNet GitLab CI"
+    git add backend/__init__.py
+    git commit -m "chore: bump version to $APPLIANCE_NEW_VERSION [skip ci]"
     git tag -a "v$APPLIANCE_NEW_VERSION" -m "v$APPLIANCE_NEW_VERSION"
-    git push https://oauth2:$CI_TAG_PUSH_TOKEN@gitlab.com/$CI_PROJECT_PATH.git --tags
+    git push https://oauth2:$CI_TAG_PUSH_TOKEN@gitlab.com/$CI_PROJECT_PATH.git HEAD:"$CI_COMMIT_REF_NAME" --tags
 
     echo "Bumped to $APPLIANCE_NEW_VERSION"
 else

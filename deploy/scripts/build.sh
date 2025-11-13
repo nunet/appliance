@@ -13,12 +13,6 @@ PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
 
 ARCH="$(dpkg --print-architecture)"
 
-# check if current state is dirty
-IS_DIRTY=$(git describe --tags --dirty 2>/dev/null | grep dirty || true)
-if [[ -n "$IS_DIRTY" ]]; then
-    PKGVERSION="${PKGVERSION}-dirty"
-fi
-
 echo "Building NuNet Appliance packages ${PKGVERSION} for ${ARCH}"
 
 # Install system dependencies

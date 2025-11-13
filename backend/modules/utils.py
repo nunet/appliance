@@ -7,17 +7,15 @@ removed along with the legacy UI.
 """
 
 import json
-import os
 import socket
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict
 
-from .path_constants import (
-    APPLIANCE_PUBLIC_IP_CACHE,
-    APPLIANCE_VERSION_FILE,
-)
+from backend import __version__
+
+from .path_constants import APPLIANCE_PUBLIC_IP_CACHE
 
 
 def get_local_ip() -> str:
@@ -62,27 +60,8 @@ def get_public_ip(cache_ttl: int = 3600) -> str:
 
 
 def get_appliance_version() -> str:
-    """Read the appliance version from disk with sensible fallbacks."""
-    candidates = []
-
-    env_path = os.environ.get("APPLIANCE_VERSION_PATH")
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
-
-    candidates.append(APPLIANCE_VERSION_FILE)
-
-    repo_version = Path(__file__).resolve().parents[1] / "version.txt"
-    candidates.append(repo_version)
-
-    for path in candidates:
-        try:
-            if path.exists():
-                text = path.read_text().strip()
-                if text:
-                    return text
-        except Exception:
-            continue
-    return "Unknown"
+    """Read the appliance version from the package metadata."""
+    return __version__
 
 
 def get_ssh_status() -> str:
