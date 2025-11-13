@@ -8,8 +8,11 @@ set -exuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty)
+APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty | sed 's/^v//')
 PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
+
+# Generate version file for backend
+echo "__version__ = \"${PKGVERSION}\"" > "$ROOT/backend/_version.py"
 
 ARCH="$(dpkg --print-architecture)"
 
