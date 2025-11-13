@@ -33,7 +33,7 @@ SERVICE_USER="${SERVICE_USER:-ubuntu}"
 BACKEND_PORT="${BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT}}"
-VENV_DIR="${VENV_DIR:-$ROOT/deploy/.dev-venv}"
+VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
 TMUX_SESSION="nunet-dev"
 
 # State for install/rollback
