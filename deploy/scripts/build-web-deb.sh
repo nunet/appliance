@@ -28,6 +28,11 @@ if [ ! -f "$ROOT/frontend/dist/index.html" ]; then
   exit 1
 fi
 
+# --- generate version file for backend (required for PEX build) ---
+APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty 2>/dev/null | sed 's/^v//' || echo "${VERSION}")
+PKGVERSION="${APPLIANCE_VERSION:-${VERSION}}"
+echo "__version__ = \"${PKGVERSION}\"" > "$ROOT/backend/_version.py"
+
 # --- build backend: wheels + PEX ---
 VENV="$ROOT/.build-venv"
 python3 -m venv "$VENV"
