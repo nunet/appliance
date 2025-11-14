@@ -13,7 +13,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from backend import __version__
+try:
+    from backend import __version__
+except ImportError:
+    # Fallback for PEX builds where backend package structure may differ
+    try:
+        from _version import __version__
+    except ImportError:
+        __version__ = "0.0.0"
 
 from .path_constants import APPLIANCE_PUBLIC_IP_CACHE
 
