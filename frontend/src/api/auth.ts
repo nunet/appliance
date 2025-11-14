@@ -17,8 +17,20 @@ export const getAuthStatus = async () => {
   return res.data;
 };
 
-export const setupAdminPassword = async (password: string) => {
-  const res = await api.post<AuthResponse>("/auth/setup", { password });
+export const setupAdminPassword = async (
+  password: string,
+  setupToken?: string,
+  resetToken?: string
+) => {
+  const params = new URLSearchParams();
+  if (setupToken) {
+    params.append("setup_token", setupToken);
+  }
+  if (resetToken) {
+    params.append("reset_token", resetToken);
+  }
+  const url = `/auth/setup${params.toString() ? `?${params.toString()}` : ""}`;
+  const res = await api.post<AuthResponse>(url, { password });
   return res.data;
 };
 

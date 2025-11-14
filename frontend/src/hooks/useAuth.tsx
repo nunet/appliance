@@ -23,7 +23,7 @@ interface AuthContextValue {
   username: string;
   expiresAt: number | null;
   login: (password: string) => Promise<void>;
-  setupPassword: (password: string) => Promise<void>;
+  setupPassword: (password: string, setupToken?: string, resetToken?: string) => Promise<void>;
   logout: () => void;
   refreshStatus: () => Promise<void>;
 }
@@ -169,8 +169,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setupPassword = useCallback(
-    async (password: string) => {
-      const response = await setupAdminPassword(password);
+    async (password: string, setupToken?: string, resetToken?: string) => {
+      const response = await setupAdminPassword(password, setupToken, resetToken);
       applyTokenState(response, (value) => setToken(value), setExpiresAt);
       setPasswordSet(true);
       setUsername(response.username);
