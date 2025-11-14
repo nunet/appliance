@@ -40,14 +40,17 @@ class NuNetBootSplash:
         # Use standard locations that work in both dev and prod
         self.credentials_file = Path.home() / ".secrets" / "admin_credentials.json"
         self.reset_token_file = Path.home() / ".secrets" / "reset_token"
+        self.setup_token_file = Path.home() / ".secrets" / "setup_token"
         self.onboarding_state = Path.home() / "nunet" / "appliance" / "onboarding_state.json"
         self.known_orgs_dir = Path.home() / "nunet" / "appliance" / "known_orgs"
         self.known_orgs_file = self.known_orgs_dir / "known_organizations.json"
         self.bashrc_file = Path.home() / ".bashrc"
         # Ensure aliases are set up
         self.ensure_bashrc_aliases()
-        # Ensure reset token exists
+        # Ensure reset token exists (for password resets)
         self.ensure_reset_token()
+        # Ensure setup token exists (for first boot)
+        self.ensure_setup_token()
         
     def ensure_bashrc_aliases(self):
         """Ensure required aliases are in .bashrc"""
@@ -174,6 +177,51 @@ class NuNetBootSplash:
             pass
         return None
     
+    def ensure_setup_token(self):
+        """Ensure setup token exists, generate if not (for first boot password setup)"""
+        secrets_dir = self.setup_token_file.parent
+        if not secrets_dir.exists():
+            secrets_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                secrets_dir.chmod(0o700)
+            except Exception:
+                pass
+        
+        # Only generate if password is not set
+        if not self.is_password_set():
+            needs_generation = False
+            if self.setup_token_file.exists():
+                try:
+                    with open(self.setup_token_file, 'r') as f:
+                        existing_token = f.read().strip()
+                    # If token is longer than 20 chars, it's the old format - regenerate
+                    if len(existing_token) > 20 or not existing_token:
+                        needs_generation = True
+                except Exception:
+                    needs_generation = True
+            else:
+                needs_generation = True
+            
+            if needs_generation:
+                # Generate a secure random token (12 bytes = ~16 URL-safe chars)
+                token = secrets.token_urlsafe(12)
+                try:
+                    with open(self.setup_token_file, 'w') as f:
+                        f.write(token)
+                    self.setup_token_file.chmod(0o600)
+                except Exception:
+                    pass  # Non-critical if we can't write
+    
+    def get_setup_token(self) -> Optional[str]:
+        """Get the setup token if it exists"""
+        try:
+            if self.setup_token_file.exists():
+                with open(self.setup_token_file, 'r') as f:
+                    return f.read().strip()
+        except Exception:
+            pass
+        return None
+    
     def clear_screen(self):
         """Clear the terminal screen"""
         os.system('clear')
@@ -222,6 +270,18 @@ class NuNetBootSplash:
         except:
             pass
         return "Unknown"
+    
+    def is_password_set(self) -> bool:
+        """Check if admin password is set"""
+        if not self.credentials_file.exists():
+            return False
+        try:
+            with open(self.credentials_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Password is set if there's a password_hash and needs_reset is not True
+            return bool(data.get('password_hash')) and not data.get('needs_reset', False)
+        except Exception:
+            return False
     
     def get_admin_password_status(self) -> Tuple[str, str]:
         """Return admin password status text and color"""
@@ -362,9 +422,12 @@ class NuNetBootSplash:
         except Exception:
             hostname = "nunet-appliance"
         local_host_label = f"{hostname}.local"
-        # Get reset token for URL - only include if credentials need reset
+        # Get tokens for URL - setup_token for first boot, reset_token for password reset
+        setup_token = None
         reset_token = None
         needs_reset = False
+        password_set = self.is_password_set()
+        
         if self.credentials_file.exists():
             try:
                 with open(self.credentials_file, 'r', encoding='utf-8') as f:
@@ -373,21 +436,31 @@ class NuNetBootSplash:
             except Exception:
                 pass
         
-        # Only include reset token in URLs if password needs reset
+        # Get appropriate token based on scenario
         if needs_reset:
+            # Password reset scenario - use reset_token
             reset_token = self.get_reset_token()
+        elif not password_set:
+            # First boot scenario - use setup_token
+            setup_token = self.get_setup_token()
         
         # Build base URLs
         local_url_base = f"https://{local_host_label}:8443"
         ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
         public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
         
-        # Add reset token to URLs only if password needs reset
+        # Add token to URLs based on scenario
+        # Note: For HashRouter, tokens must be in the hash URL, not the root query string
         if reset_token and needs_reset:
             params = urlencode({"reset_token": reset_token})
-            local_url = f"{local_url_base}?{params}"
-            ip_url = f"{ip_url_base}?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
-            public_url = f"{public_url_base}?{params}" if public_ip not in ("Unknown", "") else ip_url
+            local_url = f"{local_url_base}#/setup?{params}"
+            ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+            public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
+        elif setup_token and not password_set:
+            params = urlencode({"setup_token": setup_token})
+            local_url = f"{local_url_base}#/setup?{params}"
+            ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+            public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
         else:
             local_url = local_url_base
             ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
@@ -426,6 +499,23 @@ class NuNetBootSplash:
             f"Local URL:  {local_url}",
             f"Public URL: {public_url}",
             f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
+        ]
+        
+        # Display setup token if password is not set (first boot)
+        if not password_set and setup_token:
+            text_lines.append("")
+            text_lines.append(f"{self.colors.YELLOW}⚠️  FIRST BOOT SETUP REQUIRED{self.colors.NC}")
+            text_lines.append(f"{self.colors.CYAN}Setup Token: {self.colors.BOLD}{setup_token}{self.colors.NC}")
+            text_lines.append(f"{self.colors.YELLOW}This token is required to set the admin password{self.colors.NC}")
+        
+        # Display reset token if password needs reset
+        if needs_reset and reset_token:
+            text_lines.append("")
+            text_lines.append(f"{self.colors.YELLOW}⚠️  PASSWORD RESET REQUIRED{self.colors.NC}")
+            text_lines.append(f"{self.colors.CYAN}Reset Token: {self.colors.BOLD}{reset_token}{self.colors.NC}")
+        
+        # Add remaining lines
+        text_lines.extend([
             "",
             f"{self.colors.YELLOW}Host: {system_info.get('hostname', 'Unknown')} | {local_ip}{self.colors.NC}",
             f"Public IP: {public_ip}",
@@ -444,7 +534,7 @@ class NuNetBootSplash:
             "",
             f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
             f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"
-        ]
+        ])
         # Display side by side
         self.display_side_by_side(qr_lines, text_lines)
         
@@ -462,8 +552,9 @@ class NuNetBootSplash:
                     hostname = "nunet-appliance"
                 local_host_label = f"{hostname}.local"
                 
-                # Check if password needs reset
+                # Check password status and get appropriate token
                 needs_reset = False
+                password_set = self.is_password_set()
                 if self.credentials_file.exists():
                     try:
                         with open(self.credentials_file, 'r', encoding='utf-8') as f:
@@ -472,22 +563,30 @@ class NuNetBootSplash:
                     except Exception:
                         pass
                 
-                # Only get token if password needs reset
+                setup_token = None
                 reset_token = None
                 if needs_reset:
                     reset_token = self.get_reset_token()
+                elif not password_set:
+                    setup_token = self.get_setup_token()
                 
                 # Build base URLs
                 local_url_base = f"https://{local_host_label}:8443"
                 ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
                 public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
                 
-                # Add reset token to URLs only if password needs reset
+                # Add token to URLs based on scenario
+                # Note: For HashRouter, tokens must be in the hash URL, not the root query string
                 if reset_token and needs_reset:
                     params = urlencode({"reset_token": reset_token})
-                    local_url = f"{local_url_base}?{params}"
-                    ip_url = f"{ip_url_base}?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
-                    public_url = f"{public_url_base}?{params}" if public_ip not in ("Unknown", "") else ip_url
+                    local_url = f"{local_url_base}#/setup?{params}"
+                    ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+                    public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
+                elif setup_token and not password_set:
+                    params = urlencode({"setup_token": setup_token})
+                    local_url = f"{local_url_base}#/setup?{params}"
+                    ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
+                    public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
                 else:
                     local_url = local_url_base
                     ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
