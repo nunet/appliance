@@ -260,12 +260,19 @@ export interface DmsPaymentItem {
   tx_hash: string; // can be empty string when unpaid
 }
 
+export interface DmsIgnoredPayment {
+  unique_id: string;
+  reason: string;
+}
+
 // List response with counts and sorted items (paid first, then unpaid)
 export interface DmsPaymentsListResponse {
   total_count: number;
   paid_count: number;
   unpaid_count: number;
   items: DmsPaymentItem[];
+  ignored_count: number;
+  ignored?: DmsIgnoredPayment[];
 }
 
 // Report payload we POST to DMS via backend after MetaMask sends
