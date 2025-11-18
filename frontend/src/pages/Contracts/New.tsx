@@ -5,6 +5,7 @@ import {
   ContractCreatePayload,
   ContractTemplateDetail,
   ContractTemplateSummary,
+  ContractBlockchain,
   contractsApi,
 } from "@/api/contracts";
 import { getDmsStatus } from "@/api/api";
@@ -127,6 +128,8 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
   const termination = (contract.termination_option as Record<string, any>) || {};
   const payment = (contract.payment_details as Record<string, any>) || {};
   const duration = (contract.duration as Record<string, any>) || {};
+  const paymentAddressesRaw = Array.isArray(payment.addresses) ? (payment.addresses as Array<Record<string, any>>) : [];
+  const primaryAddress = paymentAddressesRaw[0];
 
   return {
     solutionEnablerDid: contract.solution_enabler_did?.uri ?? "",
@@ -139,12 +142,12 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
     diskSize: disk.size != null ? String(disk.size) : "",
     terminationAllowed: Boolean(termination.allowed),
     terminationNotice: termination.notice_period != null ? String(termination.notice_period) : "",
-    paymentRequesterAddr: payment.requester_addr ?? "",
-    paymentProviderAddr: payment.provider_addr ?? "",
-    paymentCurrency: payment.currency ?? "",
+    paymentRequesterAddr: payment.requester_addr ?? primaryAddress?.requester_addr ?? "",
+    paymentProviderAddr: payment.provider_addr ?? primaryAddress?.provider_addr ?? "",
+    paymentCurrency: payment.currency ?? primaryAddress?.currency ?? "",
     paymentFeesPerAllocation: payment.fees_per_allocation ?? "",
     paymentType: payment.payment_type ?? "unknown",
-    paymentBlockchain: payment.blockchain ?? "UNKNOWN",
+    paymentBlockchain: payment.blockchain ?? (primaryAddress?.blockchain as ContractBlockchain | "") ?? "UNKNOWN",
     contractTerms: contract.contract_terms ?? "",
     durationStart: toDateInput(duration.start_date),
     durationEnd: toDateInput(duration.end_date),
@@ -226,17 +229,41 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   }
 
   const payment = base.payment_details ?? (base.payment_details = {});
-  payment.requester_addr = form.paymentRequesterAddr.trim();
-  payment.provider_addr = form.paymentProviderAddr.trim();
-  payment.currency = form.paymentCurrency.trim();
-  payment.fees_per_allocation = form.paymentFeesPerAllocation.trim();
-  payment.payment_type = form.paymentType;
-  payment.blockchain = form.paymentBlockchain;
+  const normalizedRequesterAddr = form.paymentRequesterAddr.trim();
+  const normalizedProviderAddr = form.paymentProviderAddr.trim();
+  const normalizedCurrency = form.paymentCurrency.trim();
+  const normalizedFeesPerAllocation = form.paymentFeesPerAllocation.trim();
+  const normalizedBlockchain = (form.paymentBlockchain ?? "").trim().toUpperCase();
 
+  payment.requester_addr = normalizedRequesterAddr;
+  payment.provider_addr = normalizedProviderAddr;
+  payment.currency = normalizedCurrency;
+  payment.fees_per_allocation = normalizedFeesPerAllocation;
+  payment.payment_type = form.paymentType;
+  payment.blockchain = normalizedBlockchain || undefined;
   if (!payment.requester_addr) delete payment.requester_addr;
   if (!payment.provider_addr) delete payment.provider_addr;
   if (!payment.currency) delete payment.currency;
   if (!payment.fees_per_allocation) delete payment.fees_per_allocation;
+  if (!payment.blockchain) delete payment.blockchain;
+  const addressPayload: Record<string, string> = {};
+  if (normalizedBlockchain) {
+    addressPayload.blockchain = normalizedBlockchain;
+  }
+  if (normalizedCurrency) {
+    addressPayload.currency = normalizedCurrency;
+  }
+  if (normalizedRequesterAddr) {
+    addressPayload.requester_addr = normalizedRequesterAddr;
+  }
+  if (normalizedProviderAddr) {
+    addressPayload.provider_addr = normalizedProviderAddr;
+  }
+  if (Object.keys(addressPayload).length > 0) {
+    payment.addresses = [addressPayload];
+  } else {
+    delete payment.addresses;
+  }
 
   if (form.contractTerms.trim()) {
     base.contract_terms = form.contractTerms.trim();
@@ -563,7 +590,6 @@ function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue
   const termination = detail.contract?.termination_option ?? {};
   const payment = detail.contract?.payment_details ?? {};
   const duration = detail.contract?.duration ?? {};
-
   return (
     <div className="space-y-6">
       <section className="space-y-4">
