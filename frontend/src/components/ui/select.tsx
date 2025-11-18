@@ -6,10 +6,46 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
+const SELECT_EMPTY_VALUE = "__select-empty__"
+
+function toInternalSelectValue(value: string) {
+  return value === "" ? SELECT_EMPTY_VALUE : value
+}
+
+function toOptionalInternalSelectValue(value?: string) {
+  if (value === undefined) {
+    return undefined
+  }
+  return toInternalSelectValue(value)
+}
+
+function fromInternalSelectValue(value: string) {
+  return value === SELECT_EMPTY_VALUE ? "" : value
+}
+
 function Select({
+  value,
+  defaultValue,
+  onValueChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  const internalValue = toOptionalInternalSelectValue(value)
+  const internalDefaultValue = toOptionalInternalSelectValue(defaultValue)
+  const handleValueChange = React.useCallback(
+    (nextValue: string) => {
+      onValueChange?.(fromInternalSelectValue(nextValue))
+    },
+    [onValueChange]
+  )
+  return (
+    <SelectPrimitive.Root
+      data-slot="select"
+      value={internalValue}
+      defaultValue={internalDefaultValue}
+      onValueChange={handleValueChange}
+      {...props}
+    />
+  )
 }
 
 function SelectGroup({
@@ -101,11 +137,13 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
+  value,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item>) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
+      value={toInternalSelectValue(value)}
       className={cn(
         "focus:bg-accent focus:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-default items-center gap-2 rounded-sm py-1.5 pr-8 pl-2 text-sm outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
