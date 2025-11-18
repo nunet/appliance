@@ -40,10 +40,31 @@ sudo apt-get install -y \
 # delete package-lock.json files to avoid npm warnings
 find "$ROOT" -name "package-lock.json" -type f -delete
 
-# Install Node.js 20+ from NodeSource
-echo "Installing Node.js 20+ from NodeSource..."
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+# Install Node.js 20+ (NodeSource preferred, tarball fallback)
+install_node() {
+    if command -v node >/dev/null 2>&1 && node --version | grep -qE "v(20|22)"; then
+        echo "Node.js $(node --version) already satisfies requirement"
+        return 0
+    fi
+
+    echo "Installing Node.js 20+ from NodeSource..."
+    if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && \
+       sudo apt-get install -y nodejs; then
+        echo "Node.js installed via NodeSource"
+        return 0
+    fi
+
+    echo "NodeSource unavailable, falling back to official Node.js tarball..."
+    local fallback_version="${NODE_FALLBACK_VERSION:-20.18.0}"
+    local tarball="node-v${fallback_version}-linux-x64.tar.xz"
+    local url="https://nodejs.org/dist/v${fallback_version}/${tarball}"
+    curl -fsSLO "$url"
+    sudo tar -C /usr/local --strip-components=1 -xJf "$tarball"
+    rm -f "$tarball"
+    echo "Node.js ${fallback_version} installed from tarball"
+}
+
+install_node
 
 # Create build directories
 mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
