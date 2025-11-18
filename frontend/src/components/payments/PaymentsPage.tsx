@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   getPaymentsConfig,
@@ -84,6 +84,21 @@ export default function PaymentsPage() {
 
   const config = cfgQ.data;
   const list = listQ.data;
+
+  const ignoredToastRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const ignoredCount = list?.ignored_count ?? 0;
+    if (ignoredCount > 0 && ignoredToastRef.current !== ignoredCount) {
+      const plural = ignoredCount === 1 ? "" : "s";
+      toast.warning(`${ignoredCount} transaction${plural} skipped due to incomplete DMS data.`);
+      ignoredToastRef.current = ignoredCount;
+      return;
+    }
+    if (ignoredToastRef.current !== ignoredCount) {
+      ignoredToastRef.current = ignoredCount;
+    }
+  }, [list?.ignored_count]);
 
   const items = list?.items ?? [];
 
