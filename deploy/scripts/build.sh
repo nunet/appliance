@@ -56,7 +56,24 @@ install_node() {
 
     echo "NodeSource unavailable, falling back to official Node.js tarball..."
     local fallback_version="${NODE_FALLBACK_VERSION:-20.18.0}"
-    local tarball="node-v${fallback_version}-linux-x64.tar.xz"
+    local arch="${ARCH:-$(dpkg --print-architecture)}"
+    local node_arch=""
+    case "$arch" in
+        amd64|x86_64)
+            node_arch="linux-x64"
+            ;;
+        arm64|aarch64)
+            node_arch="linux-arm64"
+            ;;
+        armhf|armv7l)
+            node_arch="linux-armv7l"
+            ;;
+        *)
+            echo "Unsupported architecture for Node.js tarball fallback: $arch" >&2
+            return 1
+            ;;
+    esac
+    local tarball="node-v${fallback_version}-${node_arch}.tar.xz"
     local url="https://nodejs.org/dist/v${fallback_version}/${tarball}"
     curl -fsSLO "$url"
     sudo tar -C /usr/local --strip-components=1 -xJf "$tarball"
