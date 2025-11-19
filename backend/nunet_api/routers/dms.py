@@ -293,23 +293,6 @@ def _get_dms_passphrase() -> str | None:
     except Exception:
         return None
 
-@router.post("/onboard", response_model=CommandResult)
-def onboard():
-    env = os.environ.copy()
-    dms_pw = _get_dms_passphrase()
-    if dms_pw:
-        env["DMS_PASSPHRASE"] = dms_pw
-
-    mgr = DMSManager()
-    script_path = (mgr.scripts_dir / "onboard-max.sh")
-    if not script_path.exists():
-        return CommandResult(status="error", message=f"Script not found: {script_path}", returncode=2)
-
-    argv = ["sudo", "-n", "-E", "-u", "ubuntu", str(script_path)]
-    result = _run_captured(argv, env=env, label="dms onboard")
-    invalidate_all_dms_caches()
-    return result
-
 
 @router.get("/peers/connected", response_model=ConnectedPeers)
 def peers_connected(
