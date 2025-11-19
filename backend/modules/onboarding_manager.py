@@ -463,7 +463,7 @@ class OnboardingManager:
         if self._is_onboarded_status(status_raw):
             return info
 
-        self.append_log("submit_data", "Running onboard-max.sh to refresh compute resources...")
+        self.append_log("submit_data", "Running compute onboarding to refresh resources...")
         result = self.dms_manager.onboard_compute()
         if result.get("status") != "success":
             message = result.get("message", "Compute onboarding failed")

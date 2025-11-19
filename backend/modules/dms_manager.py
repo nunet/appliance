@@ -4,6 +4,8 @@ Device Management Service (DMS) management helpers.
 
 import json
 import logging
+import math
+import os
 import platform
 import subprocess
 import time
@@ -276,17 +278,302 @@ class DMSManager:
             "is_relayed": bool(relay_addrs and not public_addrs),
         }
 
-    def onboard_compute(self) -> Dict[str, str]:
-        script_path = self.scripts_dir / ONBOARD_SCRIPT_NAME
-        if not script_path.exists():
-            message = f"Script not found at {script_path}"
-            logger.error(message)
-            return {"status": "error", "message": message}
+    @staticmethod
+    def _calculate_onboard_resources() -> Dict[str, Any]:
+        """
+        Calculate CPU, RAM, Disk, and GPU resources for onboarding.
+        Uses /dms/node/hardware/spec endpoint for hardware information.
+        Replicates the logic from onboard-max.sh bash script.
+        """
+        resources: Dict[str, Any] = {
+            "cpu_cores": 1,
+            "ram_gb": 0.0,
+            "disk_gb": 0.0,
+            "gpus": [],  # List of (index, vram_gb) tuples for all detected GPUs
+        }
+
+        # Get hardware specification from DMS
+        hardware_spec = None
         try:
-            run_dms_command_with_passphrase([str(script_path)], check=True)
-            return {"status": "success", "message": "Compute resources onboarded successfully"}
-        except subprocess.CalledProcessError as exc:
-            logger.error("Error during compute onboarding: %s", exc)
+            logger.info("Querying hardware spec from DMS: /dms/node/hardware/spec")
+            cp = run_dms_command_with_passphrase(
+                ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/hardware/spec"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if cp.returncode == 0 and cp.stdout:
+                try:
+                    hardware_spec = json.loads(cp.stdout)
+                    logger.info("Hardware spec retrieved successfully: %s", json.dumps(hardware_spec, indent=2))
+                except json.JSONDecodeError as exc:
+                    logger.warning("Failed to parse hardware spec JSON: %s. Raw output: %s", exc, cp.stdout[:200])
+            else:
+                logger.warning("Failed to get hardware spec: rc=%s, stdout=%s, stderr=%s", 
+                             cp.returncode, cp.stdout or "", cp.stderr or "")
+        except Exception as exc:
+            logger.warning("Failed to query hardware spec: %s", exc, exc_info=True)
+
+        # 1) CPU: total cores minus 1 (minimum 1)
+        try:
+            # Check multiple possible response structures
+            cpu_cores = None
+            if hardware_spec:
+                # Try different response formats
+                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("cpu"):
+                    cpu_cores = hardware_spec["Resources"]["cpu"].get("cores", 0)
+                    logger.info("Using CPU cores from hardware spec (OK format): %s", cpu_cores)
+                elif hardware_spec.get("Resources", {}).get("cpu"):
+                    cpu_cores = hardware_spec["Resources"]["cpu"].get("cores", 0)
+                    logger.info("Using CPU cores from hardware spec (no OK key): %s", cpu_cores)
+                elif "cpu" in hardware_spec:
+                    cpu_cores = hardware_spec["cpu"].get("cores", 0) if isinstance(hardware_spec["cpu"], dict) else None
+                    if cpu_cores:
+                        logger.info("Using CPU cores from hardware spec (flat format): %s", cpu_cores)
+            
+            if cpu_cores is None or cpu_cores == 0:
+                # Fallback to os.cpu_count()
+                cpu_cores = os.cpu_count() or 1
+                logger.info("Using fallback CPU count: %s", cpu_cores)
+            
+            cpu_onboard = max(1, cpu_cores - 1)
+            resources["cpu_cores"] = cpu_onboard
+            logger.info("Final CPU cores to onboard: %s", cpu_onboard)
+        except Exception as exc:
+            logger.warning("Failed to determine CPU cores: %s", exc, exc_info=True)
+
+        # 2) RAM in GiB
+        #    - Total from hardware spec (bytes) -> GiB, or fallback to /proc/meminfo
+        #    - Used from "free -k" (KiB) -> GiB
+        #    - Free = (Total - Used)
+        #    - Floor free RAM to nearest 0.5 GiB
+        #    - Onboard RAM = min(floored free RAM, 89% of total)
+        try:
+            # Get total RAM from hardware spec or fallback to /proc/meminfo
+            total_ram_gb = None
+            if hardware_spec:
+                # Try different response formats
+                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("ram"):
+                    ram_bytes = hardware_spec["Resources"]["ram"].get("size", 0)
+                    if ram_bytes > 0:
+                        total_ram_gb = ram_bytes / (1024 ** 3)
+                        logger.info("Using RAM from hardware spec (OK format): %.2f GiB", total_ram_gb)
+                elif hardware_spec.get("Resources", {}).get("ram"):
+                    ram_bytes = hardware_spec["Resources"]["ram"].get("size", 0)
+                    if ram_bytes > 0:
+                        total_ram_gb = ram_bytes / (1024 ** 3)
+                        logger.info("Using RAM from hardware spec (no OK key): %.2f GiB", total_ram_gb)
+                elif "ram" in hardware_spec:
+                    ram_data = hardware_spec["ram"]
+                    if isinstance(ram_data, dict):
+                        ram_bytes = ram_data.get("size", 0)
+                        if ram_bytes > 0:
+                            total_ram_gb = ram_bytes / (1024 ** 3)
+                            logger.info("Using RAM from hardware spec (flat format): %.2f GiB", total_ram_gb)
+            
+            if total_ram_gb is None:
+                # Fallback to /proc/meminfo
+                logger.info("Using fallback RAM calculation from /proc/meminfo")
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            total_ram_kb = int(line.split()[1])
+                            total_ram_gb = total_ram_kb / 1048576.0
+                            logger.info("Total RAM from /proc/meminfo: %.2f GiB", total_ram_gb)
+                            break
+                    else:
+                        raise ValueError("MemTotal not found in /proc/meminfo")
+
+            # Get current used RAM from "free -k"
+            free_cp = subprocess.run(
+                ["free", "-k"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if free_cp.returncode == 0 and total_ram_gb is not None:
+                for line in free_cp.stdout.splitlines():
+                    if line.startswith("Mem:"):
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            current_ram_used_kb = int(parts[2])
+                            current_ram_used_gb = current_ram_used_kb / 1048576.0
+                            free_ram_gb = total_ram_gb - current_ram_used_gb
+
+                            # Floor free RAM to the nearest 0.5 GiB
+                            floored_free_ram_gb = math.floor(free_ram_gb * 2) / 2.0
+                            if floored_free_ram_gb < 0:
+                                floored_free_ram_gb = 0.0
+
+                            # 89% of total RAM
+                            ram_89_percent_gb = total_ram_gb * 0.89
+
+                            # Choose the smaller value
+                            ram_onboard_gb = min(floored_free_ram_gb, ram_89_percent_gb)
+                            resources["ram_gb"] = round(ram_onboard_gb, 1)
+                            break
+        except Exception as exc:
+            logger.warning("Failed to calculate RAM: %s", exc)
+
+        # 3) Disk in GiB
+        #    - Use df -k --total to get free space in KiB
+        #    - Convert KiB -> GiB
+        #    - Subtract 5 GiB
+        try:
+            df_cp = subprocess.run(
+                ["df", "-k", "--total"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if df_cp.returncode == 0:
+                lines = df_cp.stdout.strip().splitlines()
+                if lines:
+                    # Last line is the total
+                    total_line = lines[-1]
+                    parts = total_line.split()
+                    if len(parts) >= 4:
+                        free_disk_kb = int(parts[3])
+                        free_disk_gb = free_disk_kb / 1048576.0
+                        disk_onboard_gb = max(0.0, free_disk_gb - 5.0)
+                        resources["disk_gb"] = round(disk_onboard_gb, 2)
+        except Exception as exc:
+            logger.warning("Failed to calculate disk space: %s", exc)
+
+        # 4) GPU selection
+        #    - Get GPU info from hardware spec JSON
+        #    - Detect ALL GPUs reported
+        #    - Allocate 80% of each GPU's VRAM
+        #    - If GPUs are detected, we MUST onboard them (specify them exactly)
+        try:
+            gpus = None
+            if hardware_spec:
+                # Try different response formats
+                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("gpus"):
+                    gpus = hardware_spec["Resources"]["gpus"]
+                    logger.info("Found GPUs in hardware spec (OK format): %s", gpus)
+                elif hardware_spec.get("Resources", {}).get("gpus"):
+                    gpus = hardware_spec["Resources"]["gpus"]
+                    logger.info("Found GPUs in hardware spec (no OK key): %s", gpus)
+                elif "gpus" in hardware_spec:
+                    gpus = hardware_spec["gpus"]
+                    logger.info("Found GPUs in hardware spec (flat format): %s", gpus)
+            
+            if gpus and isinstance(gpus, list):
+                for gpu in gpus:
+                    try:
+                        gpu_index = gpu.get("index")
+                        vram_bytes = gpu.get("vram", 0)
+                        
+                        if gpu_index is not None and vram_bytes > 0:
+                            # Convert VRAM from bytes to GiB, then calculate 80%, minimum 1 GiB
+                            vram_gb = vram_bytes / (1024 ** 3)
+                            gpu_vram_onboard_gb = max(1, int(vram_gb * 0.8))
+                            resources["gpus"].append((gpu_index, gpu_vram_onboard_gb))
+                            logger.info("Detected GPU: index=%s, vram_bytes=%s, vram_gb=%.2f, onboard_gb=%s", 
+                                       gpu_index, vram_bytes, vram_gb, gpu_vram_onboard_gb)
+                        else:
+                            logger.debug("Skipping GPU entry with missing index or vram: %s", gpu)
+                    except (ValueError, TypeError) as exc:
+                        logger.warning("Failed to parse GPU entry '%s': %s", gpu, exc)
+            else:
+                if gpus is not None:
+                    logger.debug("GPUs not in expected list format: %s (type: %s)", gpus, type(gpus))
+                else:
+                    logger.debug("No GPU entries found in hardware spec")
+        except Exception as exc:
+            logger.warning("Failed to process GPU info from hardware spec: %s", exc, exc_info=True)
+
+        return resources
+
+    def onboard_compute(self) -> Dict[str, str]:
+        """
+        Onboard compute resources using calculated values.
+        Replaces the bash script onboard-max.sh with Python implementation.
+        """
+        try:
+            # Calculate resources
+            resources = self._calculate_onboard_resources()
+
+            # Build the nunet command
+            cmd = [
+                "nunet",
+                "-c",
+                "dms",
+                "actor",
+                "cmd",
+                "/dms/node/onboarding/onboard",
+                "--disk",
+                str(resources["disk_gb"]),
+                "--ram",
+                str(resources["ram_gb"]),
+                "--cpu",
+                str(resources["cpu_cores"]),
+            ]
+
+            # Add GPU args for ALL detected GPUs (must specify them exactly)
+            if resources["gpus"]:
+                for gpu_index, gpu_vram_gb in resources["gpus"]:
+                    cmd.extend(["-G", f"{gpu_index}:{gpu_vram_gb}"])
+
+            # Log the calculated resources
+            logger.info("===== Raw System Resources =====")
+            logger.info("Total CPU cores:            %s", os.cpu_count() or "Unknown")
+            logger.info("RAM to onboard (GiB):       %s", resources["ram_gb"])
+            logger.info("Disk to onboard (GiB):      %s", resources["disk_gb"])
+            if resources["gpus"]:
+                for gpu_index, gpu_vram_gb in resources["gpus"]:
+                    logger.info("GPU index to onboard:       %s", gpu_index)
+                    logger.info("GPU VRAM to onboard (GiB):  %s", gpu_vram_gb)
+            else:
+                logger.info("GPU onboarding:             skipped (no GPUs detected)")
+
+            logger.info("===== Onboarding DMS =====")
+            logger.info("Command: %s", " ".join(cmd))
+
+            # Execute the onboarding command with output capture for better error reporting
+            # Use capture_output=True with encoding to ensure output is captured even if binary
+            cp = run_dms_command_with_passphrase(
+                cmd,
+                capture_output=True,  # This captures both stdout and stderr
+                text=True,
+                encoding='utf-8',
+                errors='replace',  # Replace invalid UTF-8 sequences instead of failing
+                check=False,
+            )
+
+            if cp.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": "Compute resources onboarded successfully",
+                    "stdout": cp.stdout or "",
+                    "stderr": cp.stderr or "",
+                }
+
+            # Build error message with available information
+            stdout_str = cp.stdout or ""
+            stderr_str = cp.stderr or ""
+            
+            if not stdout_str and not stderr_str:
+                error_msg = f"Command failed with return code {cp.returncode} (no output captured)"
+                logger.error("Onboarding failed: %s. Command: %s", error_msg, " ".join(cmd))
+            else:
+                error_msg = stderr_str.strip() or stdout_str.strip() or f"Command failed with return code {cp.returncode}"
+                logger.error("Onboarding failed: %s", error_msg)
+                if stdout_str:
+                    logger.debug("Onboarding stdout: %s", stdout_str)
+                if stderr_str:
+                    logger.debug("Onboarding stderr: %s", stderr_str)
+            
+            return {
+                "status": "error",
+                "message": error_msg,
+                "stdout": stdout_str,
+                "stderr": stderr_str,
+                "returncode": cp.returncode,
+            }
+        except Exception as exc:
+            logger.exception("Unexpected error during compute onboarding")
             return {"status": "error", "message": str(exc)}
 
     def offboard_compute(self) -> Dict[str, str]:
