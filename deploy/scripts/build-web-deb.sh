@@ -69,6 +69,7 @@ mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles"
 mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/contracts"
 mkdir -p "$PKGDIR/lib/systemd/system"
+mkdir -p "$PKGDIR/etc/systemd/system"
 mkdir -p "$PKGDIR/etc/nunet-appliance-web"
 mkdir -p "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts"
 
@@ -145,6 +146,52 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0027
 # Allow writes to specific directories
 ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.local/share/nunet-appliance-web /home/ubuntu/.secrets /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Caddy proxy monitor service (installed to /etc/systemd/system/)
+# Create a wrapper script to run the module from the PEX
+# PEX files are zipfiles that can be added to sys.path directly
+cat > "$PKGDIR/usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh" <<'EOF'
+#!/bin/bash
+# Wrapper script to run caddy_proxy_manager module from PEX
+# Extract interval from first argument or use default
+INTERVAL="${1:-30}"
+
+# Use Python to import from the PEX file (PEX files are zipfiles)
+exec /usr/bin/python3 -c "
+import sys
+import os
+
+# Add PEX file to Python path (PEX files are zipfiles containing modules)
+pex_path = '/usr/lib/nunet-appliance-web/nunet-dms.pex'
+if os.path.exists(pex_path):
+    sys.path.insert(0, pex_path)
+    
+    # Import and run the module
+    from modules.caddy_proxy_manager import CaddyProxyManager
+    CaddyProxyManager.systemd_monitor_entry(interval=int('${INTERVAL}'))
+else:
+    raise FileNotFoundError(f'PEX file not found: {pex_path}')
+"
+EOF
+chmod 0755 "$PKGDIR/usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh"
+
+cat > "$PKGDIR/etc/systemd/system/nunet-caddy-proxy-monitor.service" <<EOF
+[Unit]
+Description=NuNet Caddy Proxy Manager Monitor
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=always
+User=${SERVICE_USER}
+WorkingDirectory=/usr/lib/nunet-appliance-web
+ExecStart=/usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh 30
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
@@ -294,6 +341,20 @@ fi
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
 systemctl restart nunet-appliance-web.service || true
+
+# Enable and start caddy proxy monitor service
+# Ensure wrapper script exists and has correct permissions
+if [ -f /usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh ]; then
+  chmod 0755 /usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh || true
+  chown ubuntu:ubuntu /usr/lib/nunet-appliance-web/run-caddy-proxy-monitor.sh || true
+fi
+# Reload systemd to pick up any service file changes
+systemctl daemon-reload || true
+# Enable service (idempotent - safe if already enabled)
+systemctl enable nunet-caddy-proxy-monitor.service >/dev/null 2>&1 || true
+# Restart service to use new configuration (will start if not running)
+systemctl restart nunet-caddy-proxy-monitor.service || true
+
 exit 0
 EOF
 
@@ -301,6 +362,7 @@ cat > "$PKGDIR/DEBIAN/prerm" <<'EOF'
 #!/bin/sh -e
 if [ "$1" = remove ] || [ "$1" = deconfigure ] || [ "$1" = upgrade ]; then
   systemctl stop nunet-appliance-web.service || true
+  systemctl stop nunet-caddy-proxy-monitor.service || true
   # Clean up PEX cache directory before upgrade
   PEX_DIR="/home/ubuntu/.local/share/nunet-appliance-web/pex"
   if [ -d "$PEX_DIR" ]; then
@@ -315,6 +377,7 @@ cat > "$PKGDIR/DEBIAN/postrm" <<'EOF'
 systemctl daemon-reload || true
 if [ "$1" = purge ]; then
   systemctl disable nunet-appliance-web.service || true
+  systemctl disable nunet-caddy-proxy-monitor.service || true
   rm -rf /etc/nunet-appliance-web
 fi
 exit 0

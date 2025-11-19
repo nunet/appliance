@@ -10,7 +10,7 @@ The table below lists the modules in this package, what they do, and which route
 
 | Module | High-level responsibility | Primary public API | Routers consuming it |
 | --- | --- | --- | --- |
-| `caddy_proxy_manager.py` | Manage installation and lifecycle of the Caddy proxy that fronts onboarding HTTPS traffic. | `install_systemd_service()`, `get_caddy_proxy_status()` | `organizations.py` |
+| `caddy_proxy_manager.py` | Manage the Caddy proxy that fronts onboarding HTTPS traffic. Service is installed via nunet-appliance-web deb package. | `get_caddy_proxy_status()`, `update_caddy_config()` | `organizations.py` |
 | `ddns_manager.py` | Register/update DDNS entries for deployments, verify propagation, inspect DDNS-enabled containers. | `register_ddns()`, `list_ddns_containers()`, `force_ddns_update()` | `ensemble.py` (manifest enrichment) |
 | `docker_manager.py` | Lightweight wrapper around the `docker` CLI to check service health and enumerate running containers. | `check_docker_status()`, `get_running_containers()` | Used by `ddns_manager.py` |
 | `dms_manager.py` | High-level DMS orchestration: service lifecycle, status, onboarding scripts, contract flows, resource queries, log collection. | `get_dms_version()`, `check_dms_installation()`, `list_incoming_contracts()`, `create_contract()`, `approve_contract()`, `get_structured_logs()` | `dms.py`, `payments.py`, `contracts.py`, `proc.py`, `stream.py` |

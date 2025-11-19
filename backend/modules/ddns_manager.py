@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from .docker_manager import DockerManager
+from .utils import get_public_ip
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,25 +76,28 @@ class DDNSManager:
             info = json.loads(result.stdout)[0]
             env = info["Config"].get("Env", [])
             env_dict = dict(e.split("=", 1) for e in env if "=" in e)
+            
+            # Note: Container IP is not needed for DDNS - we only need the public IP of the host
+            # The container IP extraction was removed to avoid errors with newer Docker versions
+            # and because it's not actually used in the DDNS registration process
+            
             return {
                 "name": info["Name"].lstrip("/"),
-                "env": env_dict,
-                "ip": info["NetworkSettings"]["IPAddress"]
+                "env": env_dict
             }
         except Exception as e:
             logger.error(f"Failed to get container info: {e}")
             return None
 
     def _get_public_ip(self) -> Optional[str]:
-        """Get the public IP address"""
+        """Get the public IP address using the cached utility function"""
         try:
-            result = subprocess.run(
-                ["curl", "-s", "https://api.ipify.org"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
+            # Use the cached get_public_ip from utils which has TTL caching
+            # This avoids hammering the API service
+            ip = get_public_ip(cache_ttl=600)  # 10 minute cache for DDNS
+            if ip and ip != "Unavailable":
+                return ip
+            return None
         except Exception as e:
             logger.error(f"Failed to get public IP: {e}")
             return None

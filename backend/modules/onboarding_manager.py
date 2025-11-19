@@ -849,7 +849,8 @@ class OnboardingManager:
                 ca_bundle = payload.get("infra_bundle_crt")
                 if client_crt and client_key and ca_bundle:
                     self.append_log("mtls_certs_saved", "All required certificates available. Enabling Caddy proxy service...")
-                    self.caddy_proxy_manager.install_systemd_service(interval=30)
+                    # Service is now installed via nunet-appliance-web deb package
+                    # No manual installation needed
                     status = self.caddy_proxy_manager.get_caddy_proxy_status()
                     self.append_log("mtls_certs_saved", f"Caddy proxy service status: {status}")
                 else:
