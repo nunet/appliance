@@ -1,0 +1,74 @@
+version: "V1"
+
+allocations:
+
+    ollama:
+      executor: docker
+      type: service
+      resources:
+        gpus:
+          - vendor: NVIDIA
+        cpu:
+          cores: {{ allocations_ollama_resources_cpu_cores }}
+        ram:
+          size: {{ allocations_ollama_resources_ram_size }} # in GiB
+        disk:
+          size: {{ allocations_ollama_resources_disk_size }} # in GiB
+      execution:
+        type: docker
+        image: ollama/ollama:latest
+        environment:
+          - NVIDIA_VISIBLE_DEVICES=all
+          - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+          - OLLAMA_DEBUG=1
+          #- OLLAMA_KEEP_ALIVE=-1
+          #- OLLAMA_CONTEXT_LENGTH=8192
+          # - OLLAMA_FLASH_ATTENTION=1
+      volume:
+          - type: local
+            src: "/home/ubuntu/local_volumes/ollama"
+            mount_destination: "/root/.ollama"
+            read_only: false
+
+    # n8n instance for building workflows visually
+    n8n:
+      executor: docker
+      type: service
+      resources:
+        cpu:
+          cores: {{ allocations_n8n_resources_cpu_cores }}
+        ram:
+          size: {{ allocations_n8n_resources_ram_size }} # in GiB
+        disk:
+          size: {{ allocations_n8n_resources_disk_size }} # in GiB
+      execution:
+        type: docker
+        image: n8nio/n8n:latest
+        environment:
+          - N8N_DIAGNOSTICS_ENABLED=false
+          - OLLAMA_HOST=http://ollama.internal:{{ollama_public_port}}
+          - DMS_REQUIRE_PROXY=false
+          - DMS_PROXY_PORT=5678
+          - DMS_DDNS_URL=true
+          - DMS_DDNS_DOMAIN=ddns.nunet.network
+          - DDNS_PROXY_WILDCARD=true
+          - N8N_SECURE_COOKIE=false
+      volume:
+          - type: local
+            src: "/home/ubuntu/local_volumes/n8n_data"
+            mount_destination: "/home/node/.n8n"
+            read_only: false
+
+nodes:
+    big-bertha:
+       allocations:
+            - ollama
+            - n8n
+       ports:
+          - public: {{ollama_public_port}}
+            private: 11434
+            allocation: ollama
+          - public: {{n8n_public_port}}
+            private: 5678
+            allocation: n8n
+       peer: {{peer_id}}

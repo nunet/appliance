@@ -17,9 +17,10 @@ allocations:
             image: registry.gitlab.com/nunet/solutions/crappybird:v0.5.4
             working_directory: /app
             environment:
-              - DMS_REQUIRE_PROXY=true
+              - DMS_REQUIRE_PROXY={{dms_require_proxy}}
               - DMS_PROXY_PORT={{ proxy_port }}
               - DMS_DDNS_URL=true
+              - DDNS_PROXY_WILDCARD=true
               - BIRD_COLOR={{ bird_color }}
               - PYTHONUNBUFFERED=1        # required for real‑time log flush
               - SCORES_API_URL=https://lambda.telemetry.nunet.io/scores
@@ -34,3 +35,7 @@ nodes:
         allocations:
             - alloc1
         peer: {{ peer_id }}
+        ports: # expose the local port for testing purposes
+            - public: {{ proxy_port }}
+              private: {{ proxy_port }}
+              allocation: alloc1

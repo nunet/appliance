@@ -1,0 +1,54 @@
+{
+    "name": "Ensemble default",
+    "description": "Deploy an ensemble with a contract, you will need to provide the DID of the contract and the DID of the contract host",
+    "fields": {
+      "contract_did": {
+        "label": "Contract DID",
+        "type": "text",
+        "default": "did:key:z6MksJm96qqckBKtW9TjECQFTzDnnEzJX3MJ1QnSnF2tQ3u4",
+        "required": true,
+        "description": "The DID of the contract",
+        "category": "contract"
+      },
+      "contract_host_did": {
+        "label": "Contract Host DID",
+        "type": "text",
+        "default": "did:key:z6MkvUbwPLmXuwmyrz3XuDZiijY3gJz6WbVWUSzhMhYhUvCq",
+        "required": true,
+        "description": "The DID of the contract host",
+        "category": "contract"
+      },
+      "allocations_alloc1_resources_cpu_cores": {
+        "label": "CPU Cores",
+        "type": "number",
+        "default": 0.5,
+        "min": 0.5,
+        "max": 4,
+        "step": 0.5,
+        "required": true,
+        "description": "Number of CPU cores to allocate",
+        "category": "resources"
+      },
+      "allocations_alloc1_resources_ram_size": {
+        "label": "RAM Size (GiB)",
+        "type": "number",
+        "default": 0.5,
+        "min": 0.5,
+        "max": 8,
+        "step": 0.5,
+        "required": true,
+        "description": "Amount of RAM to allocate in GiB",
+        "category": "resources"
+      },
+      "allocations_alloc1_resources_disk_size": {
+        "label": "Disk Size (GiB)",
+        "type": "number",
+        "default": 1,
+        "min": 0.5,
+        "max": 20,
+        "required": true,
+        "description": "Amount of disk space to allocate in GiB",
+        "category": "resources"
+      }
+    }
+  }

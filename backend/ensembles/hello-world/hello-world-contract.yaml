@@ -1,0 +1,26 @@
+version: "V1"
+
+contracts:
+  contract1:
+    did: {{ contract_did }}
+    host: {{ contract_host_did }}
+
+allocations:
+    alloc1:
+        executor: docker
+        type: task
+        resources:
+            cpu:
+                cores: {{ allocations_alloc1_resources_cpu_cores }}
+            gpus: []
+            ram:
+                size: {{ allocations_alloc1_resources_ram_size }} # in GiB
+            disk:
+                size: {{ allocations_alloc1_resources_disk_size }} # in GiB
+        execution:
+            type: docker
+            image: hello-world
+nodes:
+    node1:
+        allocations:
+            - alloc1

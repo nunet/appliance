@@ -2,6 +2,13 @@
     "name": "Floppy Bird Game",
     "description": "Deploy a Flappy Bird-style game server with configurable settings",
     "fields": {
+        "dms_require_proxy": {
+            "label": "DMS Require Proxy",
+            "type": "boolean",
+            "default": true,
+            "required": true,
+            "description": "Whether to require a proxy to access the Floppy Bird game instance"
+        },
         "bird_color": {
             "label": "Bird Color",
             "type": "select",
