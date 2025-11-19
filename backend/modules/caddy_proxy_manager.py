@@ -241,8 +241,19 @@ class CaddyProxyManager:
                 env = info["Config"].get("Env", [])
                 env_dict = dict(e.split("=", 1) for e in env if "=" in e)
                 # Get networks and internal IP
-                networks = info["NetworkSettings"]["Networks"]
-                ip_address = next((networks[n]["IPAddress"] for n in networks if networks[n]["IPAddress"]), None)
+                network_settings = info.get("NetworkSettings", {})
+                networks = network_settings.get("Networks", {})
+                
+                # Extract IP address - handle both legacy and modern Docker network formats
+                ip_address = None
+                # Try legacy format first (for default bridge network) - use .get() to avoid KeyError
+                ip_address = network_settings.get("IPAddress")
+                if not ip_address:
+                    # Try modern format (for custom networks)
+                    for network_name, network_info in networks.items():
+                        ip_address = network_info.get("IPAddress")
+                        if ip_address:
+                            break
                 ports = info["NetworkSettings"].get("Ports", {})
                 containers.append({
                     "id": cid,
@@ -402,67 +413,6 @@ class CaddyProxyManager:
         except KeyboardInterrupt:
             logger.info("Caddy Proxy Manager monitor stopped.")
 
-    def install_systemd_service(self, interval: int = 30):
-        """Install or update a systemd service to run the Caddy Proxy Manager monitor loop in the background."""
-        import sys
-        import tempfile
-        service_name = "nunet-caddy-proxy-monitor.service"
-        python_exec = sys.executable
-        script_path = os.path.abspath(__file__)
-        # Set WorkingDirectory to the parent of modules (i.e., /home/ubuntu/menu)
-        working_dir = os.path.dirname(os.path.dirname(script_path))
-        service_content = f"""
-[Unit]
-Description=NuNet Caddy Proxy Manager Monitor
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-Restart=always
-User=ubuntu
-WorkingDirectory={working_dir}
-ExecStart={python_exec} -m modules.caddy_proxy_manager --systemd-monitor --interval {interval}
-
-[Install]
-WantedBy=multi-user.target
-"""
-        service_path = f"/etc/systemd/system/{service_name}"
-        try:
-            with tempfile.NamedTemporaryFile("w", delete=False) as tf:
-                tf.write(service_content)
-                temp_path = tf.name
-            subprocess.run(["sudo", "mv", temp_path, service_path], check=True)
-            subprocess.run(["sudo", "chown", "root:root", service_path], check=True)
-            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
-            subprocess.run(["sudo", "systemctl", "enable", service_name], check=True)
-            subprocess.run(["sudo", "systemctl", "restart", service_name], check=True)
-            print(f"Systemd service '{service_name}' installed and started.")
-        except Exception as e:
-            print(f"Failed to install systemd service: {e}")
-
-    def uninstall_systemd_service(self):
-        """Stop and uninstall the systemd service, but only if no containers require proxy."""
-        service_name = "nunet-caddy-proxy-monitor.service"
-        service_path = f"/etc/systemd/system/{service_name}"
-        # Check for containers requiring proxy
-        containers = self.get_docker_containers()
-        proxied = [c for c in containers if c["env"].get("DMS_REQUIRE_PROXY", "false").lower() == "true" and "DMS_PROXY_URL" in c["env"]]
-        if proxied:
-            print("Cannot uninstall: There are currently running containers requiring proxy.")
-            for c in proxied:
-                print(f"- {c['name']} ({c['env'].get('DMS_PROXY_URL', '')})")
-            return
-        try:
-            subprocess.run(["sudo", "systemctl", "stop", service_name], check=True)
-            subprocess.run(["sudo", "systemctl", "disable", service_name], check=True)
-            if os.path.exists(service_path):
-                subprocess.run(["sudo", "rm", service_path], check=True)
-            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
-            print(f"Systemd service '{service_name}' stopped and uninstalled.")
-        except Exception as e:
-            print(f"Failed to uninstall systemd service: {e}")
-
     @staticmethod
     def systemd_monitor_entry(interval: int = 30):
         """Entry point for systemd service to run the monitor loop."""
@@ -496,22 +446,14 @@ WantedBy=multi-user.target
         input("\nPress Enter to continue...")
 
     def show_manager_menu(self):
-        def install_systemd_service():
-            try:
-                interval = input("Enter monitor interval in seconds (default 30): ").strip()
-                interval = int(interval) if interval else 30
-            except Exception:
-                interval = 30
-            self.install_systemd_service(interval=interval)
-
+        """Show menu for managing Caddy Proxy Manager (service is now installed via deb package)."""
         menu_options = {
             "1": ("Show Proxy Manager Log", "📄", self.show_proxy_log),
-            "2": ("Install/Update systemd Monitor Service", "🛠", install_systemd_service),
-            "3": ("Stop & Uninstall systemd Monitor Service", "🛑", self.uninstall_systemd_service),
         }
         while True:
             print("\n=== Manage Caddy Proxy Manager ===")
             print(f"Status: {self.get_caddy_proxy_status()}")
+            print("Note: Service is managed by nunet-appliance-web package")
             for key, (label, icon, _) in menu_options.items():
                 print(f"{key}) {icon} {label}")
             print("0) 🔙 Return to Appliance Menu")
@@ -564,10 +506,24 @@ WantedBy=multi-user.target
             for c in domain_containers:
                 subdomain_list.append(c['proxy_url'])
                 port = self.get_proxy_port(c)
-                ip = c.get('ip_address', c['name'])
+                # Use IP address if available, fallback to container name
+                # Container names with dots (e.g., .alloc1) may not resolve via Docker DNS
+                # Reference: https://forums.docker.com/t/embedded-dns-does-not-resolve-hostnames/42352
+                ip_address = c.get('ip_address')
+                if ip_address:
+                    target = f"{ip_address}:{port}"
+                else:
+                    # Fallback to container name if IP not available
+                    # NOTE: Currently commented out due to Docker DNS issues with dotted names
+                    # Keep this code for future use if container name format changes or Docker DNS improves
+                    # container_name = c['name']
+                    # target = f"{container_name}:{port}"
+                    # For now, log error if IP is not available
+                    logger.error(f"No IP address available for container {c['name']}, cannot create proxy target")
+                    continue
                 container_configs.append({
                     'proxy_url': c['proxy_url'],
-                    'target': f"{ip}:{port}"
+                    'target': target
                 })
             
             # Generate a block that handles all subdomains with the wildcard certificate
@@ -587,17 +543,25 @@ WantedBy=multi-user.target
         # Generate individual blocks for containers not using wildcard certificates
         for c in regular_containers:
             port = self.get_proxy_port(c)
-            ip = c.get('ip_address')
             proxy_url = c['proxy_url']
+            # Use IP address if available, fallback to container name
+            # Container names with dots (e.g., .alloc1) may not resolve via Docker DNS
+            # Reference: https://forums.docker.com/t/embedded-dns-does-not-resolve-hostnames/42352
+            ip_address = c.get('ip_address')
+            if ip_address:
+                target = f"{ip_address}:{port}"
+            else:
+                # Fallback to container name if IP not available
+                # NOTE: Currently commented out due to Docker DNS issues with dotted names
+                # Keep this code for future use if container name format changes or Docker DNS improves
+                # container_name = c['name']
+                # target = f"{container_name}:{port}"
+                # For now, skip this container if IP is not available
+                logger.error(f"No IP address available for container {c['name']}, skipping proxy configuration")
+                continue
             
             caddyfile += f"{proxy_url} {{\n"
-            
-            # Add reverse proxy configuration
-            if ip:
-                caddyfile += f"  reverse_proxy {ip}:{port}\n"
-            else:
-                caddyfile += f"  reverse_proxy {c['name']}:{port}\n"
-            
+            caddyfile += f"  reverse_proxy {target}\n"
             caddyfile += "}\n\n"
         
         return caddyfile
