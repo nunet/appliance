@@ -252,6 +252,18 @@ chmod 755 /home/ubuntu/nunet/appliance/deployments
 chmod 755 /home/ubuntu/ensembles || true
 chmod 755 /home/ubuntu/contracts || true
 
+# --- Create local volumes directories for ensembles ---
+# These directories are used by example ensemble deployments for persistent data storage.
+# Each ensemble that requires local volume mounts should have its data directory
+# created here to ensure proper permissions and existence before deployment.
+LOCAL_VOLUMES_DIR="/home/ubuntu/local_volumes"
+mkdir -p "$LOCAL_VOLUMES_DIR/n8n_data"
+mkdir -p "$LOCAL_VOLUMES_DIR/ollama"
+chown -R ubuntu:ubuntu "$LOCAL_VOLUMES_DIR" || true
+chmod 755 "$LOCAL_VOLUMES_DIR" || true
+chmod 755 "$LOCAL_VOLUMES_DIR/n8n_data" || true
+chmod 755 "$LOCAL_VOLUMES_DIR/ollama" || true
+
 # --- Create .secrets directory and migrate credentials ---
 SECRETS_DIR="/home/ubuntu/.secrets"
 mkdir -p "$SECRETS_DIR"
