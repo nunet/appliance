@@ -145,7 +145,7 @@ SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 UMask=0027
 # Allow writes to specific directories
-ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.local/share/nunet-appliance-web /home/ubuntu/.secrets /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system
+ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.local/share/nunet-appliance-web /home/ubuntu/.secrets /home/ubuntu/.nunet/cap /home/nunet/.nunet/cap /home/nunet/config /etc/systemd/system /home/ubuntu/ensembles /home/ubuntu/contracts
 
 [Install]
 WantedBy=multi-user.target
@@ -231,12 +231,32 @@ if [ -z "$(ls -A /home/ubuntu/ensembles 2>/dev/null)" ]; then
     cp -a /usr/share/nunet-appliance-web/data/ensembles/. /home/ubuntu/ensembles/
   fi
 fi
+if [ -d /usr/share/nunet-appliance-web/data/ensembles ]; then
+  for tmpl in default-ensemble.json default-contract.json; do
+    src="/usr/share/nunet-appliance-web/data/ensembles/${tmpl}"
+    dest="/home/ubuntu/ensembles/${tmpl}"
+    if [ -f "$src" ] && [ ! -f "$dest" ]; then
+      install -m 0644 -T "$src" "$dest"
+      chown ubuntu:ubuntu "$dest" || true
+    fi
+  done
+fi
 
 mkdir -p /home/ubuntu/contracts
 if [ -z "$(ls -A /home/ubuntu/contracts 2>/dev/null)" ]; then
   if [ -d /usr/share/nunet-appliance-web/data/contracts ]; then
     cp -a /usr/share/nunet-appliance-web/data/contracts/. /home/ubuntu/contracts/
   fi
+fi
+if [ -d /usr/share/nunet-appliance-web/data/contracts ]; then
+  for tmpl in default-contract.json; do
+    src="/usr/share/nunet-appliance-web/data/contracts/${tmpl}"
+    dest="/home/ubuntu/contracts/${tmpl}"
+    if [ -f "$src" ] && [ ! -f "$dest" ]; then
+      install -m 0644 -T "$src" "$dest"
+      chown ubuntu:ubuntu "$dest" || true
+    fi
+  done
 fi
 
 chown ubuntu:ubuntu /home/ubuntu/nunet/appliance

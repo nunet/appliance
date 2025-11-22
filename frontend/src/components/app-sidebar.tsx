@@ -52,6 +52,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       icon: IconCloudUpload,  
     },
     {
+      title: "Ensembles",
+      url: "/ensembles",
+      icon: IconChartBar,
+    },
+    {
       title: "Organizations",
       url: "/organizations",
       icon: IconUsers,
@@ -65,11 +70,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   if (mode === "advanced") {
     navMain.push(
-      {
-        title: "Ensembles",
-        url: "/ensembles",
-        icon: IconChartBar,
-      },
       {
         title: "Appliance",
         url: "/appliance",
@@ -114,7 +114,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="pt-4 lg:pt-6">
         <NavMain items={navMain} />
       </SidebarContent>
       {isMobile && (

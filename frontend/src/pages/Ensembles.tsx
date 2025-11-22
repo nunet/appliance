@@ -1,130 +1,512 @@
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+
 import {
   Card,
   CardHeader,
   CardTitle,
   CardDescription,
+  CardContent,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useQuery } from "@tanstack/react-query";
-import { getTemplates } from "../api/deployments";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 import TemplateUploadDialog from "@/components/ensembles/TemplateUploadDialog";
+import { TemplateDeleteDialog } from "@/components/ensembles/TemplateDeleteDialog";
+import { getTemplates, Template } from "@/api/deployments";
+import { getTemplateDetail, TemplateDetailResponse, getEffectiveSchema } from "@/api/ensembles";
 
-export default function HorizontalCarousel() {
-  const [uploadOpen, setUploadOpen] = React.useState(false);
+type GroupedTemplate = {
+  stem: string;
+  category: string;
+  yamlTemplate: Template | null;
+  jsonTemplate: Template | null;
+  displayPath: string;
+};
 
-  // Fetch templates using TanStack Query
-  const { data, isLoading, isError } = useQuery({
+export default function EnsemblesPage() {
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [selectedGroup, setSelectedGroup] = React.useState<GroupedTemplate | null>(null);
+  const [editingDetail, setEditingDetail] = React.useState<TemplateDetailResponse | null>(null);
+  const [isLoadingDetail, setIsLoadingDetail] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState("");
+  const [fileType, setFileType] = React.useState<"all" | "yaml" | "json">("all");
+
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["templates-ensembles"],
     queryFn: getTemplates,
   });
 
-  // If still loading → show skeletons
+  const templates = data?.items || [];
+  const folderOptions = React.useMemo(() => {
+    const values = new Set<string>();
+    templates.forEach((tpl: Template) => {
+      const category = (tpl.category || "").trim();
+      values.add(category || "root");
+    });
+    return Array.from(values).sort();
+  }, [templates]);
+
+  // Group templates by stem (name without extension)
+  const groupedTemplates = React.useMemo(() => {
+    const groups = new Map<string, GroupedTemplate>();
+    
+    templates.forEach((tpl: Template) => {
+      const name = tpl.name || tpl.path || "";
+      const isYaml = name.endsWith(".yaml") || name.endsWith(".yml");
+      const isJson = name.endsWith(".json");
+      
+      if (!isYaml && !isJson) return;
+      
+      // Extract stem (name without extension)
+      let stem = name;
+      if (isYaml) {
+        stem = name.replace(/\.(ya?ml)$/i, "");
+      } else if (isJson) {
+        stem = name.replace(/\.json$/i, "");
+      }
+      
+      const category = (tpl.category || "").trim() || "root";
+      const key = `${category}:${stem}`;
+      
+      if (!groups.has(key)) {
+        groups.set(key, {
+          stem,
+          category,
+          yamlTemplate: null,
+          jsonTemplate: null,
+          displayPath: (tpl as any)?.relative_path || tpl.path || "",
+        });
+      }
+      
+      const group = groups.get(key)!;
+      if (isYaml) {
+        group.yamlTemplate = tpl;
+        // Use YAML path for display
+        group.displayPath = (tpl as any)?.relative_path || tpl.path || "";
+      } else if (isJson) {
+        group.jsonTemplate = tpl;
+        // Only use JSON path if YAML doesn't exist
+        if (!group.yamlTemplate) {
+          group.displayPath = (tpl as any)?.relative_path || tpl.path || "";
+        }
+      }
+    });
+    
+    return Array.from(groups.values());
+  }, [templates]);
+
+  const resolveTemplatePath = React.useCallback(
+    (grouped: GroupedTemplate) => {
+      // Prefer YAML path, fallback to JSON
+      const yamlPath = grouped.yamlTemplate?.yaml_path || 
+                      (grouped.yamlTemplate as any)?.relative_path || 
+                      grouped.yamlTemplate?.path;
+      if (yamlPath) return yamlPath;
+      
+      const jsonPath = (grouped.jsonTemplate as any)?.relative_path || 
+                      grouped.jsonTemplate?.path;
+      if (jsonPath) {
+        // Convert JSON path to YAML path
+        return jsonPath.replace(/\.json$/i, ".yaml");
+      }
+      
+      return "";
+    },
+    []
+  );
+
+  const resolveDeletePath = React.useCallback(
+    (grouped: GroupedTemplate | null) => {
+      if (!grouped) return "";
+
+      const yamlPath =
+        grouped.yamlTemplate?.yaml_path ||
+        (grouped.yamlTemplate as any)?.relative_path ||
+        grouped.yamlTemplate?.path;
+      if (yamlPath) return yamlPath;
+
+      const jsonPath =
+        (grouped.jsonTemplate as any)?.relative_path ||
+        grouped.jsonTemplate?.path ||
+        "";
+      return jsonPath;
+    },
+    []
+  );
+
+  const handleEdit = React.useCallback(
+    async (grouped: GroupedTemplate) => {
+      // Handle JSON-only templates differently
+      if (grouped.jsonTemplate && !grouped.yamlTemplate) {
+        // For JSON-only templates, we need to fetch the JSON content
+        const jsonPath = (grouped.jsonTemplate as any)?.relative_path || grouped.jsonTemplate?.path || "";
+        const yamlPath = jsonPath.replace(/\.json$/i, ".yaml");
+        
+        setIsLoadingDetail(true);
+        try {
+          // Try to get template detail - this will fail because YAML doesn't exist
+          // but we'll catch it and construct our own response with JSON content
+          try {
+            const detail = await getTemplateDetail(yamlPath);
+            setEditingDetail(detail);
+            setEditOpen(true);
+          } catch (yamlErr: any) {
+            // YAML doesn't exist (expected for JSON-only templates)
+            // Try to fetch JSON content via getEffectiveSchema or construct from available data
+            let jsonContent = "";
+            
+            try {
+              // Try to get JSON schema - this might work even without YAML
+              // by using the JSON path converted to YAML path
+              const schema = await getEffectiveSchema(yamlPath, "sidecar");
+              jsonContent = JSON.stringify(schema, null, 2);
+            } catch (schemaErr: any) {
+              // Schema fetch failed, try to get it from template object
+              const jsonSchema = (grouped.jsonTemplate as any)?.schema;
+              if (jsonSchema) {
+                jsonContent = JSON.stringify(jsonSchema, null, 2);
+              }
+              // If still no content, leave empty - user can edit it
+            }
+            
+            // Construct detail response for JSON-only template
+            const detail: TemplateDetailResponse = {
+              status: "success",
+              yaml_path: yamlPath, // Path where YAML should be created
+              json_path: jsonPath,
+              category: grouped.category,
+              yaml_content: "", // Empty YAML - user can create it
+              json_content: jsonContent || null,
+            };
+            setEditingDetail(detail);
+            setEditOpen(true);
+          }
+        } catch (err: any) {
+          const detail = err?.response?.data?.detail;
+          toast.error(detail || "Failed to load template.");
+        } finally {
+          setIsLoadingDetail(false);
+        }
+        return;
+      }
+      
+      // Normal flow for templates with YAML
+      const templatePath = resolveTemplatePath(grouped);
+      if (!templatePath) {
+        toast.error("Template path is missing.");
+        return;
+      }
+      setIsLoadingDetail(true);
+      try {
+        const detail = await getTemplateDetail(templatePath);
+        setEditingDetail(detail);
+        setEditOpen(true);
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail;
+        toast.error(detail || "Failed to load template.");
+      } finally {
+        setIsLoadingDetail(false);
+      }
+    },
+    [resolveTemplatePath]
+  );
+
+  const handleDelete = React.useCallback((grouped: GroupedTemplate) => {
+    setSelectedGroup(grouped);
+    setDeleteOpen(true);
+  }, []);
+
+  const matchesFilters = React.useCallback(
+    (grouped: GroupedTemplate) => {
+      const stemLower = grouped.stem.toLowerCase();
+      const pathLower = grouped.displayPath.toLowerCase();
+      const query = searchTerm.trim().toLowerCase();
+      
+      if (query && !stemLower.includes(query) && !pathLower.includes(query)) {
+        return false;
+      }
+      
+      if (fileType === "yaml") {
+        return grouped.yamlTemplate !== null;
+      }
+      if (fileType === "json") {
+        return grouped.jsonTemplate !== null;
+      }
+      return true;
+    },
+    [searchTerm, fileType]
+  );
+
+  const filteredTemplates = React.useMemo(
+    () => groupedTemplates.filter(matchesFilters),
+    [groupedTemplates, matchesFilters]
+  );
+  
+  const templateCount = React.useMemo(() => filteredTemplates.length, [filteredTemplates]);
+  const yamlCount = React.useMemo(
+    () => filteredTemplates.filter((g) => g.yamlTemplate !== null).length,
+    [filteredTemplates]
+  );
+  const jsonCount = React.useMemo(
+    () => filteredTemplates.filter((g) => g.jsonTemplate !== null).length,
+    [filteredTemplates]
+  );
+
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
-          {/* ✅ Put the button in the header even during loading */}
-          <CardHeader className="flex items-center justify-between flex-row">
-            <div>
-              <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+        <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+          <CardHeader className="flex flex-col gap-4">
+            <div className="flex items-center justify-between flex-row w-full">
+              <div>
+                <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+                <CardDescription>Loading templates…</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => setCreateOpen(true)}>
+                  Add Ensemble
+                </Button>
+                <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+                  Deploy
+                </Button>
+              </div>
             </div>
-            <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
+            <div className="flex flex-col gap-2 md:flex-row">
+              <Input placeholder="Search file name…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
+                <SelectTrigger className="md:w-48">
+                  <SelectValue placeholder="File type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="yaml">YAML only</SelectItem>
+                  <SelectItem value="json">JSON only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
-          <div className="w-full overflow-x-auto">
-            <div className="flex gap-4 p-4">
-              {[1, 2, 3].map((i) => (
-                <Card
-                  key={i}
-                  className="min-w-[300px] max-w-[300px] flex-shrink-0 p-4"
-                >
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-3">
+              {[1, 2, 3].map((key) => (
+                <Card key={key} className="p-4">
                   <Skeleton className="h-6 w-1/2 mb-2" />
                   <Skeleton className="h-4 w-3/4 mb-2" />
                   <Skeleton className="h-3 w-full" />
                 </Card>
               ))}
             </div>
-          </div>
+          </CardContent>
         </Card>
-
-        {/* ✅ Mount the dialog */}
-        <TemplateUploadDialog
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-        />
       </div>
     );
   }
 
-  // If error
   if (isError) {
-    return <p className="text-destructive">Failed to load templates.</p>;
+    return <p className="px-4 text-destructive">Failed to load templates.</p>;
   }
 
-  const templates = data?.items || [];
-
-  // If empty
   if (templates.length === 0) {
     return (
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
-          <CardHeader className="flex items-center justify-between flex-row">
-            <div>
-              <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
-              <CardDescription>Upload a template to get started.</CardDescription>
+        <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+          <CardHeader className="flex flex-col gap-4">
+          <div>
+            <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+            <CardDescription>No templates found.</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setCreateOpen(true)}>
+              Add Ensemble
+            </Button>
+            <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+              Deploy
+            </Button>
+          </div>
+            <div className="flex flex-col gap-2 md:flex-row">
+              <Input placeholder="Search file name…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
+                <SelectTrigger className="md:w-48">
+                  <SelectValue placeholder="File type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="yaml">YAML only</SelectItem>
+                  <SelectItem value="json">JSON only</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
           </CardHeader>
         </Card>
-
-        <TemplateUploadDialog
-          open={uploadOpen}
-          onOpenChange={setUploadOpen}
-        />
       </div>
     );
   }
 
-  // Normal render
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4">
-      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
-        {/* ✅ Button in the main header */}
-        <CardHeader className="flex items-center justify-between flex-row">
-          <div>
-            <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
-            <CardDescription>
-              Click on a template to view or deploy.
-            </CardDescription>
+      <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+        <CardHeader className="flex flex-col gap-4">
+          <div className="flex items-center justify-between w-full">
+            <div>
+              <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
+              <CardDescription>Manage, edit, or delete your ensemble templates.</CardDescription>
+              <p className="text-xs text-muted-foreground mt-1">
+                {templateCount} templates · {yamlCount} YAML · {jsonCount} JSON
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setCreateOpen(true)}>
+                Add Ensemble
+              </Button>
+              <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+                Deploy
+              </Button>
+            </div>
           </div>
-          <Button onClick={() => setUploadOpen(true)}>Upload Template</Button>
+          <div className="flex flex-col gap-2 md:flex-row">
+            <Input
+              placeholder="Search file name…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
+              <SelectTrigger className="md:w-48">
+                <SelectValue placeholder="File type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All files</SelectItem>
+                <SelectItem value="yaml">YAML only</SelectItem>
+                <SelectItem value="json">JSON only</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
+        <CardContent>
+          {filteredTemplates.length === 0 ? (
+            <p className="text-muted-foreground py-4 text-center">No templates found</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {filteredTemplates.map((grouped) => (
+                <Card key={`${grouped.category}:${grouped.stem}`} className="hover:shadow-md transition-shadow">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4">
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="text-base font-semibold mb-1">
+                        {grouped.stem}
+                      </CardTitle>
+                      <div className="text-sm text-muted-foreground space-y-0.5">
+                        <p className="break-all font-mono text-xs">
+                          {grouped.displayPath}
+                        </p>
+                        <p>
+                          <b>Category:</b> <span className="font-semibold">{grouped.category}</span>
+                        </p>
+                      </div>
+                    </div>
 
-        <div className="w-full overflow-x-auto">
-          <div className="flex gap-4 snap-x snap-mandatory overflow-x-scroll scrollbar-hide p-4">
-            {templates.map((template: any, idx: number) => (
-              <Card
-                key={idx}
-                className="min-w-[300px] max-w-[300px] snap-center shadow-md flex-shrink-0"
-              >
-                <CardHeader>
-                  <CardTitle>{template.name}</CardTitle>
-                  <CardDescription>{template.relative_path}</CardDescription>
-                  <p className="text-xs text-muted-foreground break-all mt-2">
-                    {template.path}
-                  </p>
-                </CardHeader>
-              </Card>
-            ))}
-          </div>
-        </div>
+                    <div className="flex flex-col md:items-end gap-3 shrink-0">
+                      <div className="flex gap-2 self-start md:self-end">
+                        {grouped.yamlTemplate && (
+                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">
+                            YAML
+                          </Badge>
+                        )}
+                        {grouped.jsonTemplate && (
+                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800">
+                            JSON
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex gap-2 self-start md:self-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full md:w-auto"
+                          onClick={() => handleEdit(grouped)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="w-full md:w-auto"
+                          onClick={() => handleDelete(grouped)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
       </Card>
 
       <TemplateUploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
+        open={createOpen}
+        onOpenChange={(openDialog) => setCreateOpen(openDialog)}
+        onUploaded={() => {
+          setCreateOpen(false);
+          refetch();
+        }}
+        existingFolders={folderOptions}
       />
+
+      <TemplateUploadDialog
+        mode="edit"
+        open={editOpen}
+        onOpenChange={(openDialog) => {
+          setEditOpen(openDialog);
+          if (!openDialog) setEditingDetail(null);
+        }}
+        onUploaded={() => {
+          refetch();
+          setEditingDetail(null);
+        }}
+        initialData={
+          editingDetail
+            ? {
+                yamlPath: editingDetail.yaml_path,
+                yamlContent: editingDetail.yaml_content,
+                jsonContent: editingDetail.json_content,
+                category: editingDetail.category,
+              }
+            : null
+        }
+        isLoadingInitialData={isLoadingDetail && !editingDetail}
+      />
+
+      <TemplateDeleteDialog
+        open={deleteOpen}
+        onOpenChange={(openDialog) => {
+          setDeleteOpen(openDialog);
+          if (!openDialog) setSelectedGroup(null);
+        }}
+        templatePath={resolveDeletePath(selectedGroup)}
+        templateName={selectedGroup?.stem}
+        onDeleted={() => {
+          setSelectedGroup(null);
+          refetch();
+        }}
+      />
+
     </div>
   );
 }
