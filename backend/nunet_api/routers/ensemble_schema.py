@@ -10,12 +10,19 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from pydantic import BaseModel
 
 from modules.ensemble_manager_v2 import EnsembleManagerV2
+from modules.path_constants import (
+    DEFAULT_CONTRACT_JSON_TEMPLATE,
+    DEFAULT_ENSEMBLE_JSON_TEMPLATE,
+)
 
 from ..schemas import (
-    # success response model you already have
     UploadTemplateResponse,
-    # simple schema primitives
-    FormSchema, FormField, FormFieldOption, SchemaHints, SchemaFieldOverride,
+    SimpleStatusResponse,
+    FormSchema,
+    FormField,
+    FormFieldOption,
+    SchemaHints,
+    SchemaFieldOverride,
 )
 
 router = APIRouter()
@@ -49,6 +56,13 @@ def _ensure_inside_base(p: Path) -> Path:
     if not str(p).startswith(str(base)):
         raise HTTPException(status_code=400, detail="Path must be inside ~/ensembles")
     return p
+
+def _resolve_template_path(template_path: str) -> Path:
+    if not template_path:
+        raise HTTPException(status_code=400, detail="template_path is required")
+    rel = template_path.strip().lstrip("/\\")
+    candidate = _base_dir() / Path(rel)
+    return _ensure_inside_base(candidate)
 
 def _vars_from_text(yaml_text: str) -> List[str]:
     return sorted(set(_VAR_RE.findall(yaml_text)))
@@ -180,6 +194,42 @@ def _matching_yaml_for(json_path: Path) -> Path | None:
         return cand2
     return None
 
+class TemplateDetailResponse(BaseModel):
+    status: str = "success"
+    yaml_path: str
+    json_path: Optional[str] = None
+    category: str
+    yaml_content: str
+    json_content: Optional[str] = None
+    modified_at: Optional[str] = None
+    size: Optional[int] = None
+
+class UpdateTemplatePayload(BaseModel):
+    template_path: str
+    yaml_content: str
+    json_content: Optional[str] = None
+
+def _load_default_form(contract_required: bool) -> Dict[str, Any]:
+    """
+    Load the bundled default JSON form used when the user does not upload one.
+    """
+    template_path = (
+        DEFAULT_CONTRACT_JSON_TEMPLATE if contract_required else DEFAULT_ENSEMBLE_JSON_TEMPLATE
+    )
+    if not template_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Default form template missing: {template_path}",
+        )
+    try:
+        with open(template_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:  # noqa: BLE001 - surface specific parsing failure
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to load default form template: {exc}",
+        ) from exc
+
 
 # ---------- Endpoints ----------
 
@@ -193,17 +243,13 @@ async def upload_template_simple(
     category: Optional[str] = Form(None, description="Folder under ~/ensembles to store files"),
     # overwrite confirmation
     confirm_overwrite: bool = Form(False),
-    # optional generation when JSON is absent
-    generate_json: bool = Form(True),
-    # optional hints/extras for generation (JSON strings; FE can start empty)
-    hints_json: Optional[str] = Form(None, description="SchemaHints JSON (name, description, field_overrides)"),
-    extras_json: Optional[str] = Form(None, description="Additional field overrides for missing info"),
+    # whether the default JSON form should include contract fields
+    contract_required: bool = Form(False, description="Use the contract default form template"),
 ):
     """
     One-stop simple flow:
     - Upload YAML (+ optional JSON). If JSON is present, we save both together and return.
-    - If JSON isn't present but hints/extras are provided (or generate_json=True), we infer a JSON schema.
-      If we need more info (e.g., select options), we return 422 with a needs_input payload.
+    - If JSON isn't present we copy one of the bundled default JSON forms (contract/no-contract).
     - If the YAML/JSON already exist and confirm_overwrite is false -> 409 confirm_overwrite.
     """
     base = _base_dir()
@@ -235,7 +281,7 @@ async def upload_template_simple(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_yaml.write_bytes(data)
 
-    # If user provided a sidecar JSON, save it and we're done (no generation)
+    # If user provided a sidecar JSON, save it and we're done
     if sidecar:
         content = await sidecar.read()
         # save with YAML stem to keep your listing behavior consistent
@@ -251,78 +297,9 @@ async def upload_template_simple(
             message="YAML and JSON saved."
         )
 
-    # --- JSON generation path (if requested)
-    if not generate_json:
-        stat = dest_yaml.stat()
-        return UploadTemplateResponse(
-            status="success",
-            yaml_path=str(dest_yaml.relative_to(base)),
-            json_path=None,
-            name=dest_yaml.name,
-            size=stat.st_size,
-            modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            message="YAML saved (no JSON sidecar provided or generated)."
-        )
-
-    # Parse hints/extras if provided (both are optional)
-    hints: Optional[SchemaHints] = None
-    if hints_json:
-        try:
-            hints = SchemaHints.model_validate_json(hints_json)  # v2
-        except AttributeError:
-            hints = SchemaHints.parse_raw(hints_json)            # v1
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid hints_json: {e}")
-
-    if extras_json:
-        try:
-            try:
-                extras = SchemaHints.model_validate_json(extras_json)  # v2
-            except AttributeError:
-                extras = SchemaHints.parse_raw(extras_json)            # v1
-            if not hints:
-                hints = SchemaHints()
-            hints.field_overrides.update(extras.field_overrides)
-            if extras.name: hints.name = extras.name
-            if extras.description: hints.description = extras.description
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid extras_json: {e}")
-
-
-    yaml_text = dest_yaml.read_text(encoding="utf-8")
-    schema, warnings, meta = _build_schema(dest_yaml, yaml_text, hints)
-
-    # Determine if we need more input (e.g., select without options)
-    prompts: List[Dict[str, Any]] = []
-    if hints and hints.field_overrides:
-        for fname, ov in hints.field_overrides.items():
-            if ov and ov.type == "select" and (ov.options is None or len(ov.options) == 0):
-                prompts.append({
-                    "field": fname,
-                    "required_keys": ["options"],
-                    "reason": "select_missing_options",
-                    "examples": [
-                        {"value": "red", "label": "Red"},
-                        {"value": "blue", "label": "Blue"}
-                    ]
-                })
-
-    if prompts:
-        # We’ve saved the YAML but need more info to finalize JSON
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "status": "needs_input",
-                "message": "Additional information required to generate form JSON.",
-                "prompts": prompts,
-                "warnings": warnings,
-                "meta": {"supports": meta["supports"], "needs_peer_id": meta["needs_peer_id"]}
-            }
-        )
-
-    # Persist generated schema
-    _write_json(dest_json, schema)
-
+    # --- Default JSON path
+    default_schema = _load_default_form(contract_required)
+    _write_json(dest_json, default_schema)
     stat = dest_yaml.stat()
     return UploadTemplateResponse(
         status="success",
@@ -331,7 +308,7 @@ async def upload_template_simple(
         name=dest_yaml.name,
         size=stat.st_size,
         modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        message="YAML saved and JSON schema generated."
+        message="YAML saved and default JSON schema copied."
     )
 
 @router.get("/templates/forms", response_model=dict)
@@ -440,3 +417,118 @@ def get_effective_schema(
     yaml_text = yaml_path.read_text(encoding="utf-8")
     schema, _, _ = _build_schema(yaml_path, yaml_text, hints=None)
     return schema
+
+@router.get("/templates/detail", response_model=TemplateDetailResponse)
+def get_template_detail(
+    template_path: str = Query(..., description="Path under ~/ensembles, e.g. demos/floppybird.yaml")
+) -> TemplateDetailResponse:
+    yaml_path = _resolve_template_path(template_path)
+    if not yaml_path.exists():
+        raise HTTPException(status_code=404, detail="Template not found")
+    base = _base_dir()
+    try:
+        yaml_text = yaml_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to read YAML file: {exc}") from exc
+    json_path = yaml_path.with_suffix(".json")
+    json_text = None
+    if json_path.exists():
+        try:
+            json_text = json_path.read_text(encoding="utf-8")
+        except Exception:
+            json_text = None
+    stat = yaml_path.stat()
+    try:
+        yaml_rel = str(yaml_path.relative_to(base))
+    except Exception:
+        yaml_rel = str(yaml_path)
+    json_rel = None
+    if json_path.exists():
+        try:
+            json_rel = str(json_path.relative_to(base))
+        except Exception:
+            json_rel = str(json_path)
+    return TemplateDetailResponse(
+        yaml_path=yaml_rel,
+        json_path=json_rel,
+        category=_category_for(yaml_path, base),
+        yaml_content=yaml_text,
+        json_content=json_text,
+        modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        size=stat.st_size,
+    )
+
+@router.put("/templates/detail", response_model=UploadTemplateResponse)
+def update_template(payload: UpdateTemplatePayload) -> UploadTemplateResponse:
+    yaml_path = _resolve_template_path(payload.template_path)
+    # Allow creating YAML file if it doesn't exist (for JSON-only templates)
+    if not yaml_path.exists():
+        # Ensure parent directory exists
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        yaml_path.write_text(payload.yaml_content, encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to write YAML file: {exc}") from exc
+
+    base = _base_dir()
+    json_path = yaml_path.with_suffix(".json")
+    json_rel: Optional[str] = None
+    if payload.json_content is not None:
+        stripped = payload.json_content.strip()
+        if not stripped:
+            if json_path.exists():
+                try:
+                    json_path.unlink()
+                except Exception as exc:
+                    raise HTTPException(status_code=500, detail=f"Unable to delete JSON file: {exc}") from exc
+        else:
+            try:
+                json_payload = json.loads(payload.json_content)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON content: {exc}") from exc
+            _write_json(json_path, json_payload)
+        if json_path.exists():
+            try:
+                json_rel = str(json_path.relative_to(base))
+            except Exception:
+                json_rel = str(json_path)
+    else:
+        if json_path.exists():
+            try:
+                json_rel = str(json_path.relative_to(base))
+            except Exception:
+                json_rel = str(json_path)
+
+    stat = yaml_path.stat()
+    try:
+        yaml_rel = str(yaml_path.relative_to(base))
+    except Exception:
+        yaml_rel = str(yaml_path)
+    return UploadTemplateResponse(
+        status="success",
+        yaml_path=yaml_rel,
+        json_path=json_rel,
+        name=yaml_path.name,
+        size=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        message="Template updated.",
+    )
+
+@router.delete("/templates/detail", response_model=SimpleStatusResponse)
+def delete_template(
+    template_path: str = Query(..., description="Path under ~/ensembles, e.g. demos/floppybird.yaml")
+) -> SimpleStatusResponse:
+    yaml_path = _resolve_template_path(template_path)
+    if not yaml_path.exists():
+        raise HTTPException(status_code=404, detail="Template not found")
+    try:
+        yaml_path.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to delete YAML file: {exc}") from exc
+    json_path = yaml_path.with_suffix(".json")
+    if json_path.exists():
+        try:
+            json_path.unlink()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Unable to delete JSON file: {exc}") from exc
+    return SimpleStatusResponse(status="success", message="Template deleted.")

@@ -1,10 +1,4 @@
-import { RefreshCw } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import * as React from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { fetchTemplates, type Template } from "../../api/deployments";
 import { cn } from "../../lib/utils";
@@ -19,9 +13,13 @@ import {
 import { Badge } from "../ui/badge";
 import { RefreshButton } from "../ui/RefreshButton";
 import { useAuth } from "../../hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import TemplateUploadDialog from "../ensembles/TemplateUploadDialog";
 
 export default function DeploymentStepOne({ ...props }) {
   const { token } = useAuth();
+  const navigate = useNavigate();
+  const [uploadOpen, setUploadOpen] = React.useState(false);
   
   const {
     data,
@@ -43,18 +41,49 @@ export default function DeploymentStepOne({ ...props }) {
   });
 
   const templates: Template[] = data?.pages.flatMap((p) => p.items) ?? [];
+  const folderOptions = React.useMemo(
+    () => Array.from(new Set(templates.map((tpl) => tpl.category).filter(Boolean))).sort(),
+    [templates]
+  );
+
+  const resolveJsonPath = React.useCallback((yamlPath: string, jsonPath?: string | null) => {
+    if (jsonPath) return jsonPath;
+    if (yamlPath.endsWith(".yaml")) return `${yamlPath.slice(0, -5)}.json`;
+    if (yamlPath.endsWith(".yml")) return `${yamlPath.slice(0, -4)}.json`;
+    return yamlPath;
+  }, []);
+
+  const handleUploaded = React.useCallback(
+    (payload: { yamlPath: string; jsonPath?: string | null; category: string }) => {
+      const jsonPath = resolveJsonPath(payload.yamlPath, payload.jsonPath);
+      props.setter(jsonPath);
+      props.setCategory(payload.category);
+      props.set_yaml_path(payload.yamlPath);
+      setUploadOpen(false);
+      refetch();
+    },
+    [props, refetch, resolveJsonPath]
+  );
 
   return (
     <div className="flex flex-col w-full h-full overflow-x-hidden">
       {/* Header row with title + refresh */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <h2 className="text-2xl font-semibold">Select an Ensemble</h2>
 
-        <RefreshButton
-          onClick={() => refetch()}
-          isLoading={isRefetching}
-          tooltip="Refresh Templates"
-        />
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={() => navigate("/ensembles")}>
+            Manage Ensembles
+          </Button>
+          <Button variant="outline" onClick={() => setUploadOpen(true)}>
+            Add Ensemble
+          </Button>
+          <RefreshButton
+            onClick={() => refetch()}
+            isLoading={isRefetching}
+            tooltip="Refresh Templates"
+          />
+        </div>
       </div>
 
       {status === "pending" && <p>Loading...</p>}
@@ -105,6 +134,13 @@ export default function DeploymentStepOne({ ...props }) {
           </div>
         )}
       </div>
+      <TemplateUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onUploaded={handleUploaded}
+        existingFolders={folderOptions}
+        defaultCategory={props.category}
+      />
     </div>
   );
 }
