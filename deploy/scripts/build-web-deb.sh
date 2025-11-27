@@ -122,6 +122,13 @@ WorkingDirectory=/usr/lib/nunet-appliance-web
 Environment=PORT=8443
 Environment=WORKERS=1
 Environment=NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
+Environment=APPLIANCE_ROOT=/home/ubuntu/nunet/appliance
+Environment=NUNET_DATA_DIR=/home/ubuntu/nunet
+Environment=ENSEMBLES_DIR=/home/ubuntu/ensembles
+Environment=CONTRACTS_DIR=/home/ubuntu/contracts
+Environment=DMS_CAP_FILE=/home/ubuntu/.nunet/cap/dms.cap
+Environment=SERVICE_DMS_CAP_FILE=/home/nunet/.nunet/cap/dms.cap
+Environment=NUNET_CONFIG_PATH=/home/nunet/config/dms_config.json
 Environment=SSL_CERTFILE=/etc/nunet-appliance-web/ssl/cert.pem
 Environment=SSL_KEYFILE=/etc/nunet-appliance-web/ssl/key.pem
 Environment=PEX_ROOT=/home/ubuntu/.local/share/nunet-appliance-web/pex

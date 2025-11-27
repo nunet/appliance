@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import {
@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { JsonEditor } from "@/components/code/JsonEditor";
 import { YamlEditor, lintYaml } from "@/components/code/YamlEditor";
-import { uploadTemplate, updateTemplateContent, deleteTemplate } from "@/api/ensembles";
+import { uploadTemplate, updateTemplateContent, deleteTemplate, getTemplateCategories } from "@/api/ensembles";
 import { parseDocument } from "yaml";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, ChevronDown, ChevronUp, Info } from "lucide-react";
@@ -100,21 +100,35 @@ const EDIT_STEPS = [
   { id: "json", label: "JSON schema" },
 ] as const;
 
-const formatYamlContent = (content: string) => {
-  if (!content?.trim()) return content || "";
-  try {
-    const doc = parseDocument(content);
-    return doc.toString({ lineWidth: 120 }).trimEnd();
-  } catch {
-    return content;
-  }
-};
-
 const formatJsonContent = (content: string) => {
   if (!content?.trim()) return content || "";
   try {
     const parsed = JSON.parse(content);
     return JSON.stringify(parsed, null, 2);
+  } catch {
+    return content;
+  }
+};
+
+const formatYamlContentSafely = (content: string) => {
+  // Temporarily escape handlebars-style placeholders to avoid YAML rewriter mangling them
+  const placeholderMap = new Map<string, string>();
+  let temp = content || "";
+  const regex = /{{\s*([^}]+?)\s*}}/g;
+  let idx = 0;
+  temp = temp.replace(regex, (match) => {
+    const key = `__PLACEHOLDER_${idx++}__`;
+    placeholderMap.set(key, match);
+    return key;
+  });
+  try {
+    const doc = parseDocument(temp);
+    let formatted = doc.toString({ lineWidth: 120 }).trimEnd();
+    // Restore placeholders
+    placeholderMap.forEach((original, token) => {
+      formatted = formatted.replace(token, original);
+    });
+    return formatted;
   } catch {
     return content;
   }
@@ -238,10 +252,18 @@ export default function TemplateUploadDialog({
   const [editJsonError, setEditJsonError] = React.useState<string | null>(null);
   const [editStep, setEditStep] = React.useState<"yaml" | "json">("yaml");
 
-  const folderOptions = React.useMemo(
-    () => Array.from(new Set(existingFolders.filter(Boolean))).sort(),
-    [existingFolders]
-  );
+  const { data: categoryData } = useQuery({
+    queryKey: ["template-categories"],
+    queryFn: getTemplateCategories,
+    staleTime: 60_000,
+  });
+
+  const folderOptions = React.useMemo(() => {
+    const set = new Set<string>(["root"]);
+    existingFolders.filter(Boolean).forEach((f) => set.add(f));
+    (categoryData || []).forEach((f) => set.add(f));
+    return Array.from(set).sort();
+  }, [existingFolders, categoryData]);
   const fallbackCategory = React.useMemo(() => {
     if (defaultCategory) return defaultCategory;
     if (folderOptions.includes("root")) return "root";
@@ -355,11 +377,11 @@ export default function TemplateUploadDialog({
   }, [jsonMode, contractRequired]);
 
   React.useEffect(() => {
-    if (!isEditMode) return;
-    if (open && initialData) {
-      const prettyYaml = formatYamlContent(initialData.yamlContent || "");
-      const prettyJson = formatJsonContent(initialData.jsonContent || "");
-      setEditYamlContent(prettyYaml);
+      if (!isEditMode) return;
+      if (open && initialData) {
+        const prettyYaml = initialData.yamlContent || "";
+        const prettyJson = formatJsonContent(initialData.jsonContent || "");
+        setEditYamlContent(prettyYaml);
       setEditJsonContent(prettyJson);
       setEditYamlError(null);
       setEditJsonError(null);

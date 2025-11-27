@@ -76,8 +76,21 @@ export function YamlEditor({
         setFormatError(null);
         return;
       }
-      const doc = parseDocument(value);
-      const formatted = doc.toString({ lineWidth: 120 }).trimEnd();
+      // Preserve handlebars-style placeholders by temporarily masking them
+      const placeholderMap = new Map<string, string>();
+      let temp = value;
+      const regex = /{{\s*[^}]+?\s*}}/g;
+      let idx = 0;
+      temp = temp.replace(regex, (match) => {
+        const key = `__PLACEHOLDER_${idx++}__`;
+        placeholderMap.set(key, match);
+        return key;
+      });
+      const doc = parseDocument(temp);
+      let formatted = doc.toString({ lineWidth: 120 }).trimEnd();
+      placeholderMap.forEach((original, token) => {
+        formatted = formatted.replace(token, original);
+      });
       onChange(formatted);
       setFormatError(null);
     } catch (fmtError: any) {

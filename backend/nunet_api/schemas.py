@@ -441,6 +441,7 @@ class TemplatesListItem(BaseModel):
     name: str
     path: str
     relative_path: str
+    category: str
 
 class TemplatesListResponse(BaseModel):
     items: List[TemplatesListItem]

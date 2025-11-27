@@ -24,15 +24,14 @@ from .dms_utils import (
     contract_terminate,
     contract_state,
 )
-from .path_constants import DMS_DEPLOYMENTS_LOGS
+from .path_constants import BACKEND_DIR, DMS_DEPLOYMENTS_LOGS
 
 logger = logging.getLogger(__name__)
 
 NUNET_SERVICE = "nunetdms"
 ONBOARD_SCRIPT_NAME = "onboard-max.sh"
 
-DEFAULT_MENU_DIR = Path.home() / "menu"
-DEFAULT_SCRIPTS_DIR = DEFAULT_MENU_DIR / "scripts"
+DEFAULT_SCRIPTS_DIR = BACKEND_DIR / "scripts"
 
 POLL_ATTEMPTS = 30
 POLL_DELAY_SEC = 1.0
@@ -49,9 +48,8 @@ class DMSManager:
     _SIGNED_STATES = set(_ACTIVE_STATES) | {"COMPLETED", "SETTLED", "TERMINATED"}
 
     def __init__(self, menu_dir: Optional[Path] = None, scripts_dir: Optional[Path] = None) -> None:
-        self.menu_dir = menu_dir or DEFAULT_MENU_DIR
-        candidate_scripts_dir = scripts_dir or (self.menu_dir / "scripts")
-
+        # menu_dir retained only for backward compatibility; scripts now live under backend/scripts
+        candidate_scripts_dir = scripts_dir or DEFAULT_SCRIPTS_DIR
         if not (candidate_scripts_dir / ONBOARD_SCRIPT_NAME).exists():
             try:
                 repo_scripts = Path(__file__).resolve().parents[1] / "scripts"
@@ -957,36 +955,18 @@ class DMSManager:
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
 
     def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
-        try:
-            normalized_blockchain = self._normalize_blockchain(blockchain)
-        except ValueError as exc:
-            logger.error("Invalid blockchain for list_transactions: %s", exc)
-            return {"status": "error", "message": str(exc)}
-
         base_cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/transactions/list",
         ]
-        cmd = base_cmd + ["--blockchain", normalized_blockchain]
         cp = run_dms_command_with_passphrase(
-            cmd,
+            base_cmd,
             capture_output=True,
             text=True,
             check=False,
         )
         stdout = cp.stdout or ""
         stderr = cp.stderr or ""
-        error_text_lower = f"{stderr}\n{stdout}".lower()
-        if cp.returncode != 0 and "unknown flag: --blockchain" in error_text_lower:
-            logger.warning("list_transactions: CLI does not support --blockchain flag, retrying without it")
-            cp = run_dms_command_with_passphrase(
-                base_cmd,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            stdout = cp.stdout or ""
-            stderr = cp.stderr or ""
         if cp.returncode != 0:
             message = stderr or stdout or f"Command failed with return code {cp.returncode}"
             logger.error("Failed to list transactions: %s", message)
