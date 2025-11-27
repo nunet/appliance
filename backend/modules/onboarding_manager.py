@@ -24,9 +24,12 @@ from .dms_utils import get_dms_resource_info, run_dms_command_with_passphrase
 from .org_utils import load_known_organizations, extract_role_profiles, get_tokens_for_org
 from .path_constants import (
     APPLIANCE_DIR,
+    DMS_CAP_FILE,
     KNOWN_ORGS_FILE,
+    NUNET_CONFIG_PATH,
     ONBOARDING_LOG_FILE,
     ONBOARDING_STATE_FILE,
+    SERVICE_DMS_CAP_FILE,
 )
 from .caddy_proxy_manager import CaddyProxyManager
 
@@ -354,11 +357,7 @@ class OnboardingManager:
 
     @staticmethod
     def _known_orgs_candidates() -> List[Path]:
-        primary = KNOWN_ORGS_FILE
-        legacy = Path.home() / "nunet" / "appliance" / "known_orgs" / "known_organizations.json"
-        if legacy == primary:
-            return [primary]
-        return [primary, legacy]
+        return [KNOWN_ORGS_FILE]
 
     @classmethod
     def _active_known_orgs_path(cls) -> Optional[Path]:
@@ -726,7 +725,7 @@ class OnboardingManager:
         if not api_key:
             return
 
-        config_path = Path("/home/nunet/config/dms_config.json")
+        config_path = NUNET_CONFIG_PATH
         updates = [
             ("observability.elasticsearch_api_key", api_key),
             ("observability.elasticsearch_enabled", "true"),
@@ -775,8 +774,8 @@ class OnboardingManager:
 
     def copy_capability_tokens_to_dms_user(self) -> bool:
         """Copy ubuntu user's capability tokens into the nunet service account."""
-        src = Path("/home/ubuntu/.nunet/cap/dms.cap")
-        dest = Path("/home/nunet/.nunet/cap/dms.cap")
+        src = DMS_CAP_FILE
+        dest = SERVICE_DMS_CAP_FILE
 
         if not src.exists():
             self.append_log("capability_token_copy", f"Source capability file not found: {src}")

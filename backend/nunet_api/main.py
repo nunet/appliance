@@ -1,14 +1,39 @@
 # backend/nunet_api/main.py
+import logging
+import os
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
-from pathlib import Path
-import os
+from starlette.staticfiles import StaticFiles
 
+from modules.path_constants import FRONTEND_DIR
 from .security import require_auth
 from .routers import auth, contracts, dms, ensemble, ensemble_schema, organizations, payments, sysinfo, upnp
+
+logger = logging.getLogger(__name__)
+
+NUNET_STATIC_DIR = os.getenv("NUNET_STATIC_DIR")
+if NUNET_STATIC_DIR:
+    NUNET_STATIC_DIR = Path(NUNET_STATIC_DIR)
+else:
+    NUNET_STATIC_DIR = FRONTEND_DIR / "dist"
+
+cors_origins_env = os.getenv("CORS_ORIGINS")
+if cors_origins_env:
+    allow_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+    if not allow_origins:
+        allow_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+else:
+    allow_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+cors_allow_credentials = True
+if allow_origins == ["*"]:
+    cors_allow_credentials = False
 
 
 class SPAStaticFiles(StaticFiles):
@@ -27,8 +52,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # we can tighten later if same-origin
-    allow_credentials=True,
+    allow_origins=allow_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,21 +79,7 @@ def health():
 
 
 # --- Static: frontend/dist ---
-# Priority 1 (production): use env var (e.g., /usr/share/nunet-dms/frontend/dist or /home/ubuntu/package/frontend/dist)
-# Priority 2 (dev only): try repo layout (../frontend/dist from backend/)
-ENV_KEY = "NUNET_STATIC_DIR"
-env_dir = os.environ.get(ENV_KEY)
-
-if env_dir:
-    static_path = Path(env_dir).resolve()
+if NUNET_STATIC_DIR.is_dir():
+    app.mount("/", SPAStaticFiles(directory=str(NUNET_STATIC_DIR), html=True), name="spa")
 else:
-    # dev fallback – likely *not* valid inside a PEX unless you bundled the dist into the package
-    static_path = (Path(__file__).resolve().parents[2] / "frontend" / "dist")
-
-if not static_path.exists():
-    raise RuntimeError(
-        f"Static directory not found: {static_path}\n"
-        f"Set {ENV_KEY} to your built SPA dir (e.g., /home/ubuntu/package/frontend/dist)."
-    )
-
-app.mount("/", SPAStaticFiles(directory=str(static_path), html=True), name="spa")
+    logger.warning("Static directory not found at %s; skipping SPA mount.", NUNET_STATIC_DIR)

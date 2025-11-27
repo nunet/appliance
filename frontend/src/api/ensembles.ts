@@ -103,3 +103,8 @@ export async function deleteTemplate(templatePath: string) {
   );
   return res.data;
 }
+
+export async function getTemplateCategories(): Promise<string[]> {
+  const res = await api.get<string[]>("/ensemble/templates/categories");
+  return res.data;
+}

@@ -4,6 +4,8 @@ set -euo pipefail
 # Resolve repository root from deploy/scripts
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+APPLIANCE_ROOT="${APPLIANCE_ROOT:-$ROOT}"
+export APPLIANCE_ROOT
 
 # Self-setup: Ensure devctl alias exists and points to absolute path
 setup_alias() {
@@ -28,13 +30,19 @@ setup_alias() {
 # Run alias setup on first use
 setup_alias
 
-# Defaults (overridable via .env.dev)
+# Defaults (overridable via .env dev/prod)
 SERVICE_USER="${SERVICE_USER:-ubuntu}"
 BACKEND_PORT="${BACKEND_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT}}"
 VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
 TMUX_SESSION="nunet-dev"
+DEVCTL_USE_TMUX="${DEVCTL_USE_TMUX:-0}"
+DEV_RUN_DIR="${DEV_RUN_DIR:-$ROOT/.devctl/run}"
+DEV_BACKEND_PIDFILE="$DEV_RUN_DIR/backend.pid"
+DEV_FRONTEND_PIDFILE="$DEV_RUN_DIR/frontend.pid"
+DEV_BACKEND_LOG="$DEV_RUN_DIR/backend.log"
+DEV_FRONTEND_LOG="$DEV_RUN_DIR/frontend.log"
 
 # State for install/rollback
 STATE_DIR="${STATE_DIR:-/var/lib/nunet-appliance/devctl}"
@@ -60,22 +68,28 @@ Usage:
   $(basename "$0") doctor              Check deps and port availability
   $(basename "$0") -h|--help|help      Show this help
 
-Environment (overridable via .env.dev at repo root):
+Environment (overridable via .env at repo root):
   SERVICE_USER     Default ubuntu
   BACKEND_PORT     Default 8080
   FRONTEND_PORT    Default 5173
   CORS_ORIGINS     Default http://localhost:5173
   VENV_DIR         Default deploy/.dev-venv under repo
+  DEVCTL_USE_TMUX  Default 0 (set to 1 to use legacy tmux dev up)
 
 Examples:
   $(basename "$0") build 1.2.3
   $(basename "$0") install && $(basename "$0") prod up
-  $(basename "$0") dev up   # then tmux attach -t nunet-dev
+  $(basename "$0") dev up   # set DEVCTL_USE_TMUX=1 if you prefer tmux windows
 EOF
 }
 
 load_env() {
-  [ -f "$ROOT/.env.dev" ] && set -a && . "$ROOT/.env.dev" && set +a || true
+  if [ -f "$ROOT/.env" ]; then
+    set -a && . "$ROOT/.env" && set +a
+  elif [ -f "$ROOT/.env.dev" ]; then
+    set -a && . "$ROOT/.env.dev" && set +a
+  fi
+  set +a
 }
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2; exit 1; }; }
@@ -83,6 +97,22 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2;
 ensure_state_dir() {
   sudo mkdir -p "$STATE_DIR"
   sudo chmod 0775 "$STATE_DIR" || true
+}
+
+apply_default_env() {
+  APPLIANCE_ROOT="${APPLIANCE_ROOT:-$ROOT}"
+  export APPLIANCE_ROOT
+  BACKEND_PORT="${BACKEND_PORT:-8080}"
+  FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+  CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT}}"
+  VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
+  export NUNET_DATA_DIR="${NUNET_DATA_DIR:-/home/ubuntu/nunet}"
+  export ENSEMBLES_DIR="${ENSEMBLES_DIR:-/home/ubuntu/ensembles}"
+  export CONTRACTS_DIR="${CONTRACTS_DIR:-/home/ubuntu/contracts}"
+  export DMS_CAP_FILE="${DMS_CAP_FILE:-/home/ubuntu/.nunet/cap/dms.cap}"
+  export SERVICE_DMS_CAP_FILE="${SERVICE_DMS_CAP_FILE:-/home/nunet/.nunet/cap/dms.cap}"
+  export NUNET_CONFIG_PATH="${NUNET_CONFIG_PATH:-/home/nunet/config/dms_config.json}"
+  export NUNET_STATIC_DIR="${NUNET_STATIC_DIR:-$APPLIANCE_ROOT/frontend/dist}"
 }
 
 current_installed_version() {
@@ -128,17 +158,33 @@ status() {
   local svc_state svc_pid tmux_state cur_ver
   svc_state=$(systemctl is-active "$SYSTEMD_WEBSVC" || true)
   svc_pid=$(systemctl show -p MainPID --value "$SYSTEMD_WEBSVC" 2>/dev/null || echo "0")
-  tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux_state="active" || tmux_state="inactive"
+  tmux_state="inactive"
+  if [ "$DEVCTL_USE_TMUX" = "1" ] && command -v tmux >/dev/null 2>&1; then
+    tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux_state="active" || tmux_state="inactive"
+  fi
   cur_ver=$(current_installed_version)
 
   echo "=== PROD (systemd) ==="
   echo "service: $SYSTEMD_WEBSVC -> $svc_state${svc_pid:+ (pid:$svc_pid)}"
   echo "installed: ${cur_ver:-none}"
   echo
-  echo "=== DEV (tmux) ==="
-  echo "session: $TMUX_SESSION -> $tmux_state"
-  if [ "$tmux_state" = "active" ]; then
-    tmux list-windows -t "$TMUX_SESSION" 2>/dev/null | sed 's/^/  window: /'
+  echo "=== DEV ==="
+  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
+    echo "session: $TMUX_SESSION -> $tmux_state"
+    if [ "$tmux_state" = "active" ]; then
+      tmux list-windows -t "$TMUX_SESSION" 2>/dev/null | sed 's/^/  window: /'
+    fi
+  else
+    if [ -f "$DEV_BACKEND_PIDFILE" ]; then
+      echo "backend pid: $(cat "$DEV_BACKEND_PIDFILE") (log: $DEV_BACKEND_LOG)"
+    else
+      echo "backend pid: <none>"
+    fi
+    if [ -f "$DEV_FRONTEND_PIDFILE" ]; then
+      echo "frontend pid: $(cat "$DEV_FRONTEND_PIDFILE") (log: $DEV_FRONTEND_LOG)"
+    else
+      echo "frontend pid: <none>"
+    fi
   fi
   echo
   echo "=== Ports ==="
@@ -159,42 +205,74 @@ prod_down() {
 }
 
 dev_setup() {
-  need python3; need tmux
-  
+  need python3
+
   # Check Node.js version and install if needed
   if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(20|22)"; then
     echo "Installing Node.js 20+ for frontend development..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
     sudo apt-get install -y nodejs
   fi
-  
+
   need npm
   python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
   # shellcheck disable=SC1090
   . "$VENV_DIR/bin/activate"
-  pip install -U pip wheel uvicorn gunicorn
+  pip install -U pip wheel
   pip install -r "$ROOT/backend/nunet_api/requirements.txt"
+}
+
+start_dev_processes() {
+  mkdir -p "$DEV_RUN_DIR"
+  bash "$ROOT/deploy/scripts/dev_frontend.sh" >"$DEV_FRONTEND_LOG" 2>&1 &
+  echo $! > "$DEV_FRONTEND_PIDFILE"
+  bash "$ROOT/deploy/scripts/dev_backend.sh" >"$DEV_BACKEND_LOG" 2>&1 &
+  echo $! > "$DEV_BACKEND_PIDFILE"
+  echo "dev up: started frontend (pid $(cat "$DEV_FRONTEND_PIDFILE")) and backend (pid $(cat "$DEV_BACKEND_PIDFILE"))"
+  echo "logs: $DEV_FRONTEND_LOG, $DEV_BACKEND_LOG"
+}
+
+stop_pidfile() {
+  local pidfile="$1"
+  if [ -f "$pidfile" ]; then
+    local pid
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pidfile"
+  fi
+}
+
+dev_up_tmux() {
+  tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
+  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev'"
+  tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
+    "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app --bind 0.0.0.0:$BACKEND_PORT --reload --workers 1\""
+  echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
+  echo "Attach with: tmux attach -t $TMUX_SESSION"
 }
 
 dev_up() {
   prod_down || true
   dev_setup
-  tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
-  # Use bash --norc to bypass .bashrc splash screen
-  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev'"
-  tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
-    "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec uvicorn nunet_api.main:app --host 0.0.0.0 --port $BACKEND_PORT --reload\""
-  echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
-  echo "Attach with: tmux attach -t $TMUX_SESSION"
-  echo "Note: Using bash --norc to bypass splash screen in dev mode"
+  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
+    dev_up_tmux
+  else
+    start_dev_processes
+  fi
 }
 
 dev_down() {
-  tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
+    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+  fi
+  stop_pidfile "$DEV_BACKEND_PIDFILE"
+  stop_pidfile "$DEV_FRONTEND_PIDFILE"
+  pkill -f "gunicorn .*--bind 0.0.0.0:$BACKEND_PORT" 2>/dev/null || true
   pkill -f "uvicorn .*--port $BACKEND_PORT" 2>/dev/null || true
   pkill -f "npm run dev" 2>/dev/null || true
   pkill -f "vite" 2>/dev/null || true
-  # If anything still holds the frontend port, kill it
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${FRONTEND_PORT}/tcp" 2>/dev/null || true
   fi
@@ -274,7 +352,8 @@ logs() {
 
 doctor() {
   echo "Checking dependencies and ports..."
-  for x in python3 npm tmux ss systemctl dpkg-query; do need "$x"; done
+  for x in python3 npm ss systemctl dpkg-query; do need "$x"; done
+  if [ "$DEVCTL_USE_TMUX" = "1" ]; then need tmux; fi
   ss -ltn | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" && echo "Warning: dev ports busy" || true
   echo "OK"
 }
@@ -283,24 +362,23 @@ case "${1:-}" in
   ""|-h|--help|help)
     show_help ;;
   dev)
-    load_env; case "${2:-}" in up) dev_up ;; down) dev_down ;; *) echo "Usage: $0 dev [up|down]"; exit 1 ;; esac ;;
+    load_env; apply_default_env; case "${2:-}" in up) dev_up ;; down) dev_down ;; *) echo "Usage: $0 dev [up|down]"; exit 1 ;; esac ;;
   prod)
-    case "${2:-}" in up) prod_up ;; down) prod_down ;; *) echo "Usage: $0 prod [up|down]"; exit 1 ;; esac ;;
+    load_env; apply_default_env; case "${2:-}" in up) prod_up ;; down) prod_down ;; *) echo "Usage: $0 prod [up|down]"; exit 1 ;; esac ;;
   build)
-    build "${2:-1.0.0}" ;;
+    load_env; apply_default_env; build "${2:-1.0.0}" ;;
   install)
-    install_latest ;;
+    load_env; apply_default_env; install_latest ;;
   rollback)
-    rollback ;;
+    load_env; apply_default_env; rollback ;;
   status)
-    status ;;
+    load_env; apply_default_env; status ;;
   logs)
-    logs ;;
+    load_env; apply_default_env; logs ;;
   ps)
-    ss -ltnp | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" || true ;;
+    load_env; apply_default_env; ss -ltnp | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" || true ;;
   doctor)
-    doctor ;;
+    load_env; apply_default_env; doctor ;;
   *)
     show_help ; exit 1 ;;
 esac
-

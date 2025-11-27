@@ -1,6 +1,6 @@
 import * as React from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { fetchTemplates, type Template } from "../../api/deployments";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { fetchTemplates, getTemplates, type Template } from "../../api/deployments";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import {
@@ -41,10 +41,22 @@ export default function DeploymentStepOne({ ...props }) {
   });
 
   const templates: Template[] = data?.pages.flatMap((p) => p.items) ?? [];
-  const folderOptions = React.useMemo(
-    () => Array.from(new Set(templates.map((tpl) => tpl.category).filter(Boolean))).sort(),
-    [templates]
-  );
+  const { data: rawTemplates } = useQuery({
+    queryKey: ["templates-raw"],
+    queryFn: getTemplates,
+    enabled: !!token,
+  });
+  const folderOptions = React.useMemo(() => {
+    const set = new Set<string>(["root"]);
+    templates.forEach((tpl) => {
+      if (tpl.category) set.add(tpl.category);
+    });
+    const raw = rawTemplates?.items ?? [];
+    raw.forEach((tpl: any) => {
+      if (tpl.category) set.add(tpl.category);
+    });
+    return Array.from(set).sort();
+  }, [templates, rawTemplates]);
 
   const resolveJsonPath = React.useCallback((yamlPath: string, jsonPath?: string | null) => {
     if (jsonPath) return jsonPath;

@@ -71,6 +71,18 @@ Internally, the script performs a few key tasks:
 
 ---
 
+## Runtime Paths & Config
+
+- Default writable locations (dev + prod): ensembles at `/home/ubuntu/ensembles`, contracts at `/home/ubuntu/contracts`, appliance data at `/home/ubuntu/nunet/appliance`, DMS caps under `/home/ubuntu/.nunet` and `/home/nunet/.nunet`, DMS config at `/home/nunet/config/dms_config.json`.
+- `.env` is optional in dev; if present it can override ports or paths. If omitted, the fixed defaults above apply (no fallbacks to repo-relative paths).
+
+## Logs
+
+- Dev (`devctl dev up`): backend/frontend logs live under `.devctl/run/backend.log` and `.devctl/run/frontend.log` in the repo.
+- Prod (deb install): backend logs via `journalctl -u nunet-appliance-web -f`; DMS logs at `/home/ubuntu/nunet/appliance/logs/nunet-dms.log`.
+
+---
+
 ## Contributing
 
 * Keep `backend/modules` in sync with the API – only helpers needed by the routers should live there.

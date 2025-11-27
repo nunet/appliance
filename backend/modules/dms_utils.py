@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import threading
+from pathlib import Path
 from copy import deepcopy
 from time import monotonic
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
@@ -121,8 +122,16 @@ def _merge_env(user_env: Optional[Dict[str, str]]) -> Dict[str, str]:
     env = os.environ.copy()
     if user_env:
         env.update(user_env)
+    # Always prefer keyctl, fall back to ~/.secrets/dms_passphrase if present; do not require env
     passphrase = _get_keyctl_passphrase()
-    if passphrase and not env.get("DMS_PASSPHRASE"):
+    if not passphrase:
+        try:
+            secret_path = Path.home() / ".secrets" / "dms_passphrase"
+            if secret_path.exists():
+                passphrase = secret_path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            logger.debug("Unable to read dms_passphrase file: %s", exc)
+    if passphrase:
         env["DMS_PASSPHRASE"] = passphrase
     return env
 

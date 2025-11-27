@@ -8,6 +8,7 @@ from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from modules.path_constants import DMS_DEPLOYMENTS_DIR
 from modules.onboarding_manager import OnboardingManager
+from modules.path_constants import ENSEMBLES_DIR
 from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
@@ -568,7 +569,16 @@ def list_templates(mgr: EnsembleManagerV2 = Depends(get_mgr)):
             rel = path.relative_to(mgr.base_dir)
         except Exception:
             rel = path.name
-        out.append(TemplatesListItem(index=idx, name=path.name, path=str(path), relative_path=str(rel)))
+        category = rel.parts[0] if isinstance(rel, Path) and len(rel.parts) > 1 else "root"
+        out.append(
+            TemplatesListItem(
+                index=idx,
+                name=path.name,
+                path=str(path),
+                relative_path=str(rel),
+                category=category,
+            )
+        )
     return TemplatesListResponse(items=out)
 
 
@@ -578,6 +588,19 @@ def copy_template(payload: CopyRequest, mgr: EnsembleManagerV2 = Depends(get_mgr
     dst = _resolve_path(mgr, payload.dest)
     res = mgr.copy_ensemble(src, dst)
     return CopyResponse(status=res.get("status", "error"), message=res.get("message", ""))
+
+
+@router.get("/templates/categories", response_model=List[str])
+def list_template_categories() -> List[str]:
+    """List top-level ensemble folders (including root)."""
+    categories = {"root"}
+    try:
+        for entry in ENSEMBLES_DIR.iterdir():
+            if entry.is_dir():
+                categories.add(entry.name)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Unable to list ensemble categories: %s", exc)
+    return sorted(categories)
 
 
 @router.post("/examples/download", response_model=SimpleStatusResponse)

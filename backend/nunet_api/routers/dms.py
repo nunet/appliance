@@ -12,6 +12,7 @@ from ..adapters import normalize_dms_status, parse_connected_peers, build_full_s
 from pathlib import Path
 import json, subprocess
 from modules.dms_manager import DMSManager
+from modules.path_constants import DMS_INIT_SCRIPT
 from modules.dms_utils import (
     get_cached_dms_peer_raw,
     get_cached_dms_resource_info,
@@ -236,7 +237,7 @@ def init():
         # ensure sudo preserves this
         env["DMS_PASSPHRASE"] = dms_pw
 
-    script_path = Path("/home/ubuntu/menu/scripts/configure-dms.sh")
+    script_path = DMS_INIT_SCRIPT
     if not script_path.exists():
         return CommandResult(status="error", message=f"Script not found: {script_path}", returncode=2)
 
