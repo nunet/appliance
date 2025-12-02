@@ -45,6 +45,12 @@ export interface SshStatus {
   authorized_keys: number;
 }
 
+export interface UpdateInfo {
+  available: boolean;
+  current: string;
+  latest: string;
+}
+
 // ==== AXIOS INSTANCE ====
 // In development, Vite runs on 5173 and backend on 8080
 // In production, both frontend and backend serve from the same port
@@ -166,6 +172,16 @@ export const getApplianceVersion = () =>
 export const getSshStatus = () =>
   api.get<SshStatus>("/sys/ssh-status").then((res) => res.data);
 
+export const checkUpdates = () =>
+  api.get<string>("/sys/check-updates").then((res) => {
+    // The backend returns a JSON string that is itself JSON-encoded.
+    const result: UpdateInfo = JSON.parse(res.data);
+    return result;
+  });
+
+export const triggerUpdate = () =>
+  api.post<CommandResult>("/sys/trigger-update").then((res) => res.data);
+
 export const getDockerContainer = () =>
   api
     .get<{
@@ -199,11 +215,13 @@ export const allSysInfo = () => {
     getPublicIp(),
     getApplianceVersion(),
     getSshStatus(),
-  ]).then(([localIp, publicIp, applianceVersion, sshStatus]) => ({
+    checkUpdates(),
+  ]).then(([localIp, publicIp, applianceVersion, sshStatus, updateInfo]) => ({
     localIp,
     publicIp,
     applianceVersion,
     sshStatus,
+    updateInfo,
   }));
 };
 

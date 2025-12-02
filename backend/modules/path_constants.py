@@ -44,6 +44,8 @@ NUNET_CONFIG_PATH = Path("/home/nunet/config/dms_config.json")
 # Credentials
 ADMIN_CREDENTIALS_PATH = HOME_DIR / ".secrets" / "admin_credentials.json"
 
+GITLAB_PACKAGES_URL = "https://gitlab.com/api/v4/projects/74166253/packages?sort=desc&order_by=version"
+
 __all__ = [
     "APPLIANCE_ROOT",
     "REPO_ROOT",
@@ -76,4 +78,5 @@ __all__ = [
     "NUNET_CONFIG_PATH",
     "DMS_INIT_SCRIPT",
     "ADMIN_CREDENTIALS_PATH",
+    "GITLAB_PACKAGES_URL",
 ]
