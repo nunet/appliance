@@ -8,7 +8,11 @@ set -exuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty | sed 's/^v//')
+GIT_DESCRIBE_ARGS="--tags --always --abbrev=0"
+if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
+    GIT_DESCRIBE_ARGS="$GIT_DESCRIBE_ARGS --dirty"
+fi
+APPLIANCE_VERSION=$(git describe $GIT_DESCRIBE_ARGS | sed 's/^v//')
 PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
 
 # Generate version file for backend
