@@ -20,18 +20,27 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
+import {
   allInfo,
   allSysInfo,
   getDockerContainer,
   offboardCompute,
   onboardCompute,
+  triggerUpdate,
 } from "../../api/api";
 import {
+  ArrowUp,
   CircleMinusIcon,
   CirclePlusIcon,
   DownloadCloudIcon,
   Loader2,
   LoaderPinwheelIcon,
+  RefreshCw,
   XIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -203,6 +212,34 @@ export function SectionCards() {
   const handleOffboardConfirm = async () => {
     try {
       await triggerOffboard();
+    } catch {
+      // Error handled via onError toast
+    }
+  };
+
+  const {
+    mutateAsync: doTriggerUpdate,
+    isPending: isUpdating,
+  } = useMutation({
+    mutationFn: triggerUpdate,
+    onSuccess: () => {
+      toast.info("Appliance is being updated. Please refresh the page.", {
+        duration: Infinity,
+        closeButton: true,
+        action: {
+          label: "Refresh",
+          onClick: () => window.location.reload(),
+        },
+      });
+    },
+    onError: (error) => {
+      toast.error(extractErrorMessage(error, "Failed to start update"));
+    },
+  });
+
+  const handleTriggerUpdate = async () => {
+    try {
+      await doTriggerUpdate();
     } catch {
       // Error handled via onError toast
     }
@@ -437,7 +474,53 @@ export function SectionCards() {
 
                 <div className="flex main_board_info">
                   <span className="font-bold">Appliance Version</span>
-                  <span>{sysinfo?.applianceVersion}</span>
+                  <TooltipProvider>
+                    <div className="flex items-center gap-2">
+                      <span>{sysinfo?.applianceVersion}</span>
+                      {sysinfo?.updateInfo?.available ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              className="h-auto w-auto p-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                              onClick={handleTriggerUpdate}
+                              disabled={isUpdating}
+                            >
+                              {isUpdating ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <ArrowUp className="size-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Update to {sysinfo.updateInfo.latest}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-auto w-auto p-1"
+                              onClick={() => refetchSys()}
+                              disabled={isRefetchingSys}
+                            >
+                              {isRefetchingSys ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <RefreshCw className="size-4" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Check for updates</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </TooltipProvider>
                 </div>
 
                 <div className="flex main_board_info">

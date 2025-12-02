@@ -76,6 +76,7 @@ mkdir -p "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts"
 # payload
 install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-web/nunet-dms.pex"
 install -m 0644 "$ROOT/release/gunicorn_conf.py" "$PKGDIR/usr/lib/nunet-appliance-web/gunicorn_conf.py"
+install -m 0755 "$ROOT/deploy/scripts/updater.sh" "$PKGDIR/usr/lib/nunet-appliance-web/updater.sh"
 cp -a "$ROOT/release/frontend-dist/." "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist/"
 
 # Include known organizations metadata for backend defaults.
@@ -204,6 +205,32 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# systemd unit for updater service
+cat > "$PKGDIR/lib/systemd/system/nunet-appliance-updater.service" <<EOF
+[Unit]
+Description=NuNet Appliance Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nunet-appliance-web/updater.sh
+User=root
+EOF
+
+# systemd timer for updater
+cat > "$PKGDIR/lib/systemd/system/nunet-appliance-updater.timer" <<EOF
+[Unit]
+Description=Run NuNet Appliance Updater Daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 # DEBIAN metadata
 cat > "$PKGDIR/DEBIAN/control" <<EOF
 Package: nunet-appliance-web
@@ -211,7 +238,7 @@ Version: ${DEB_VERSION}
 Section: web
 Priority: optional
 Architecture: ${ARCH}
-Depends: python3 (>= 3.10), systemd, openssl, iproute2, libminiupnpc-dev
+Depends: python3 (>= 3.10), systemd, openssl, iproute2, libminiupnpc-dev, wget
 Maintainer: NuNet <maintainer@example.com>
 Description: NuNet Appliance Web — FastAPI + React served by Gunicorn/Uvicorn
  Prebuilt PEX + static assets. Installs a systemd service 'nunet-appliance-web'.
@@ -379,6 +406,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
+systemctl enable --now nunet-appliance-updater.timer >/dev/null 2>&1 || true
 systemctl restart nunet-appliance-web.service || true
 
 # Enable and start caddy proxy monitor service
@@ -402,6 +430,7 @@ cat > "$PKGDIR/DEBIAN/prerm" <<'EOF'
 if [ "$1" = remove ] || [ "$1" = deconfigure ] || [ "$1" = upgrade ]; then
   systemctl stop nunet-appliance-web.service || true
   systemctl stop nunet-caddy-proxy-monitor.service || true
+  systemctl disable --now nunet-appliance-updater.timer >/dev/null 2>&1 || true
   # Clean up PEX cache directory before upgrade
   PEX_DIR="/home/ubuntu/.local/share/nunet-appliance-web/pex"
   if [ -d "$PEX_DIR" ]; then

@@ -1,12 +1,33 @@
 # nunet_api/app/routers/sysinfo.py
-from fastapi import APIRouter, Depends, HTTPException, Query
-from ..schemas import SshStatus
+from fastapi import APIRouter, HTTPException, Query
+from ..schemas import CommandResult, SshStatus
 from ..adapters import parse_ssh_status
-from modules.utils import get_local_ip, get_public_ip, get_appliance_version, get_ssh_status
-import subprocess, shutil, json
+from modules.utils import (
+    get_appliance_version,
+    get_local_ip,
+    get_public_ip,
+    get_ssh_status,
+    get_updates,
+    trigger_appliance_update,
+)
+import subprocess
+import shutil
+import json
 from typing import Any, Dict, List
 
 router = APIRouter()
+
+@router.get("/check-updates", response_model=str)
+def check_updates():
+    return get_updates()
+
+
+@router.post("/trigger-update", response_model=CommandResult)
+def trigger_update():
+    """Triggers the nunet-appliance-updater service."""
+    result = trigger_appliance_update()
+    return CommandResult(**result)
+
 
 @router.get("/local-ip", response_model=str)
 def local_ip():
