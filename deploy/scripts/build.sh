@@ -8,11 +8,7 @@ set -exuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-GIT_DESCRIBE_ARGS="--tags --always --abbrev=0"
-if [ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]; then
-    GIT_DESCRIBE_ARGS="$GIT_DESCRIBE_ARGS --dirty"
-fi
-APPLIANCE_VERSION=$(git describe $GIT_DESCRIBE_ARGS | sed 's/^v//')
+APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty | sed 's/^v//')
 PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
 
 # Generate version file for backend
@@ -41,25 +37,22 @@ sudo apt-get install -y \
     debhelper \
     devscripts
 
-# delete package-lock.json files to avoid npm warnings
-find "$ROOT" -name "package-lock.json" -type f -delete
-
-# Install Node.js 20+ (NodeSource preferred, tarball fallback)
+# Install Node.js 22+ (NodeSource preferred, tarball fallback)
 install_node() {
-    if command -v node >/dev/null 2>&1 && node --version | grep -qE "v(20|22)"; then
+    if command -v node >/dev/null 2>&1 && node --version | grep -qE "v(22|24)"; then
         echo "Node.js $(node --version) already satisfies requirement"
         return 0
     fi
 
-    echo "Installing Node.js 20+ from NodeSource..."
-    if curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && \
+    echo "Installing Node.js 22+ from NodeSource..."
+    if curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
        sudo apt-get install -y nodejs; then
         echo "Node.js installed via NodeSource"
         return 0
     fi
 
     echo "NodeSource unavailable, falling back to official Node.js tarball..."
-    local fallback_version="${NODE_FALLBACK_VERSION:-20.18.0}"
+    local fallback_version="${NODE_FALLBACK_VERSION:-22.21.1}"
     local arch="${ARCH:-$(dpkg --print-architecture)}"
     local node_arch=""
     case "$arch" in
