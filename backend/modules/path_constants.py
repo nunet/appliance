@@ -33,13 +33,15 @@ CONTRACTS_DIR = Path("/home/ubuntu/contracts")
 
 # DMS artefacts / defaults
 DMS_DEFAULT_CONTEXT = "dms"
-DMS_DEPLOYMENTS_DIR = APPLIANCE_DIR / "dms_deployments"
+DMS_SERVICE_HOME = Path("/home/nunet")
+DMS_WORK_DIR = DMS_SERVICE_HOME / "nunet"
+DMS_DEPLOYMENTS_DIR = DMS_WORK_DIR / "deployments"
 DMS_DEPLOYMENTS_LOGS = DMS_DEPLOYMENTS_DIR
-DMS_LOG_PATH = APPLIANCE_DIR / "logs" / "nunet-dms.log"
+DMS_LOG_PATH = DMS_SERVICE_HOME / "logs" / "nunet-dms.log"
 DMS_INIT_SCRIPT = DEFAULT_SCRIPTS_DIR / "configure-dms.sh"
 DMS_CAP_FILE = HOME_DIR / ".nunet" / "cap" / "dms.cap"
-SERVICE_DMS_CAP_FILE = Path("/home/nunet/.nunet/cap/dms.cap")
-NUNET_CONFIG_PATH = Path("/home/nunet/config/dms_config.json")
+SERVICE_DMS_CAP_FILE = DMS_SERVICE_HOME / ".nunet" / "cap" / "dms.cap"
+NUNET_CONFIG_PATH = DMS_SERVICE_HOME / "config" / "dms_config.json"
 
 # Credentials
 ADMIN_CREDENTIALS_PATH = HOME_DIR / ".secrets" / "admin_credentials.json"
@@ -70,8 +72,10 @@ __all__ = [
     "KNOWN_ORGS_FILE",
     "CONTRACTS_DIR",
     "DMS_DEFAULT_CONTEXT",
+    "DMS_SERVICE_HOME",
     "ROLE_METADATA_FILE",
     "LOCAL_DEPLOYMENTS_DIR",
+    "DMS_WORK_DIR",
     "DMS_DEPLOYMENTS_DIR",
     "DMS_LOG_PATH",
     "DMS_CAP_FILE",
