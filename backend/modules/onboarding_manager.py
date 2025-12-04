@@ -725,17 +725,34 @@ class OnboardingManager:
         if not api_key:
             return
 
-        config_path = NUNET_CONFIG_PATH
+        # Ensure we use the absolute path to the config file
+        config_path = NUNET_CONFIG_PATH.resolve()
         updates = [
             ("observability.elasticsearch_api_key", api_key),
             ("observability.elasticsearch_enabled", "true"),
             ("observability.elasticsearch_url", payload.get("elasticsearch_url", "https://telemetry.nunet.io")),
+            ("observability.elasticsearch_index", "nunet-dms"),
+            ("observability.elastic.flush_interval", 5),
+            ("observability.elastic.insecure_skip_verify", "true"),
+            ("observability.elastic.api_key", api_key),
+            ("observability.elastic.enabled", "true"),
+            ("observability.elastic.url", payload.get("elasticsearch_url", "https://telemetry.nunet.io")),
+            ("observability.elastic.index", "nunet-dms"),
+            ("observability.elastic.flush_interval", 5),
+            ("observability.elastic.insecure_skip_verify", "true"),
+            ("logging.level", "DEBUG"),
+            ("logging.file", "/home/nunet/logs/nunet-dms.log"),
+            ("logging.rotation.max_age_days", 28),
+            ("logging.rotation.max_size_mb", 100),
+            ("logging.rotation.max_backups", 3),
         ]
 
         for key, value in updates:
             try:
+                # Run nunet config set as nunet user to preserve file ownership and permissions
+                # Explicitly specify the config file path with --config flag
                 subprocess.run(
-                    ["nunet", "--config", str(config_path), "config", "set", key, str(value)],
+                    ["sudo", "-u", "nunet", "nunet", "--config", str(config_path), "config", "set", key, str(value)],
                     capture_output=True,
                     text=True,
                     check=True,
