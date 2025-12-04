@@ -740,11 +740,11 @@ class OnboardingManager:
             ("observability.elastic.index", "nunet-dms"),
             ("observability.elastic.flush_interval", 5),
             ("observability.elastic.insecure_skip_verify", "true"),
-            ("logging.level", "DEBUG"),
-            ("logging.file", "/home/nunet/logs/nunet-dms.log"),
-            ("logging.rotation.max_age_days", 28),
-            ("logging.rotation.max_size_mb", 100),
-            ("logging.rotation.max_backups", 3),
+            ("observability.logging.level", "DEBUG"),
+            ("observability.logging.file", "/home/nunet/logs/nunet-dms.log"),
+            ("observability.logging.rotation.max_age_days", 28),
+            ("observability.logging.rotation.max_size_mb", 100),
+            ("observability.logging.rotation.max_backups", 3),
         ]
 
         for key, value in updates:
