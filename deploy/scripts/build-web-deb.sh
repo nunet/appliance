@@ -77,6 +77,7 @@ mkdir -p "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts"
 install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-web/nunet-dms.pex"
 install -m 0644 "$ROOT/release/gunicorn_conf.py" "$PKGDIR/usr/lib/nunet-appliance-web/gunicorn_conf.py"
 install -m 0755 "$ROOT/deploy/scripts/updater.sh" "$PKGDIR/usr/lib/nunet-appliance-web/updater.sh"
+install -m 0755 "$ROOT/deploy/scripts/dms-updater.sh" "$PKGDIR/usr/lib/nunet-appliance-web/dms-updater.sh"
 cp -a "$ROOT/release/frontend-dist/." "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist/"
 
 # Include known organizations metadata for backend defaults.
@@ -229,6 +230,19 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target
+EOF
+
+# systemd unit for DMS updater service
+cat > "$PKGDIR/lib/systemd/system/nunet-dms-updater.service" <<EOF
+[Unit]
+Description=NuNet DMS Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nunet-appliance-web/dms-updater.sh
+User=root
 EOF
 
 # DEBIAN metadata

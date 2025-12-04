@@ -159,6 +159,13 @@ export const initDms = () =>
 export const updateDms = () =>
   api.post<CommandResult>("/dms/update").then((res) => res.data);
 
+export const checkDmsUpdates = () =>
+  api.get<string>("/dms/check-updates").then((res) => {
+    // The backend returns a JSON string that is itself JSON-encoded.
+    const result: UpdateInfo = JSON.parse(res.data);
+    return result;
+  });
+
 // ==== SYSINFO ENDPOINTS ====
 export const getLocalIp = () =>
   api.get<string>("/sys/local-ip").then((res) => res.data);
@@ -216,12 +223,14 @@ export const allSysInfo = () => {
     getApplianceVersion(),
     getSshStatus(),
     checkUpdates(),
-  ]).then(([localIp, publicIp, applianceVersion, sshStatus, updateInfo]) => ({
+    checkDmsUpdates(),
+  ]).then(([localIp, publicIp, applianceVersion, sshStatus, updateInfo, dmsUpdateInfo]) => ({
     localIp,
     publicIp,
     applianceVersion,
     sshStatus,
     updateInfo,
+    dmsUpdateInfo,
   }));
 };
 
