@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from .path_constants import APPLIANCE_PUBLIC_IP_CACHE, GITLAB_PACKAGES_URL
+from .path_constants import APPLIANCE_PUBLIC_IP_CACHE, GITLAB_PACKAGES_URL, GITLAB_DMS_PACKAGES_URL
 
 try:
     from backend import __version__
@@ -159,6 +159,34 @@ def trigger_appliance_update() -> Dict[str, Any]:
         }
 
 
+def trigger_dms_update() -> Dict[str, Any]:
+    """Triggers the systemd service to update DMS asynchronously."""
+    try:
+        # Use Popen to start the process and not wait for it to complete.
+        # This avoids the API process being killed when the updater restarts it.
+        subprocess.Popen(
+            ["sudo", "-n", "systemctl", "start", "nunet-dms-updater.service"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {
+            "status": "success",
+            "message": "DMS update service triggered successfully. The update is running in the background.",
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+        }
+    except Exception as e:
+        # This will catch errors like "sudo not found" or immediate permission errors.
+        return {
+            "status": "error",
+            "message": f"Unexpected error triggering DMS update: {e}",
+            "stdout": "",
+            "stderr": "",
+            "returncode": None,
+        }
+
+
 def fetch_latest_appliance() -> str:
     """Fetch the latest appliance version from the Gitlab package registry."""
     try:
@@ -199,4 +227,57 @@ def get_updates() -> str:
         "available": available,
         "current": current_version,
         "latest": latest_version,
+    })
+
+
+def fetch_latest_dms_version() -> str:
+    """Fetch the latest DMS version from the Gitlab package registry."""
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(GITLAB_DMS_PACKAGES_URL, timeout=5) as response:
+            packages = json.loads(response.read().decode("utf-8"))
+            if packages:
+                return packages[0]["version"].strip()
+            return ""
+    except Exception:
+        return ""
+
+
+def get_dms_updates() -> str:
+    """Compare the current DMS version with the latest available."""
+    from modules.dms_manager import DMSManager
+
+    latest_version = fetch_latest_dms_version()
+    mgr = DMSManager()
+    current_version = mgr.get_dms_version()
+
+    if not latest_version or not current_version or current_version in ("Not Installed", "Unknown"):
+        return json.dumps({
+            "available": False,
+            "current": current_version or "Unknown",
+            "latest": latest_version or "Unknown"
+        })
+
+    if latest_version == current_version:
+        return json.dumps({
+            "available": False,
+            "current": current_version,
+            "latest": latest_version
+        })
+
+    try:
+        # Compare versions like "1.2.3" > "1.2.2"
+        latest_parts = [int(p) for p in latest_version.split(".")]
+        current_parts = [int(p) for p in current_version.split(".")]
+        available = latest_parts > current_parts
+    except (ValueError, IndexError):
+        # Fallback for non-numeric versions (e.g. "Unknown", or "1.2.3-beta")
+        # We already checked for equality, so if they differ, we'll suggest an update.
+        available = latest_version != current_version
+
+    return json.dumps({
+        "available": available,
+        "current": current_version,
+        "latest": latest_version
     })

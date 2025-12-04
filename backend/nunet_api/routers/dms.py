@@ -19,6 +19,7 @@ from modules.dms_utils import (
     get_cached_dms_status_info,
     invalidate_all_dms_caches,
 )
+from modules.utils import get_dms_updates, trigger_dms_update
 
 router = APIRouter()
 
@@ -100,6 +101,11 @@ def get_mgr():
 @router.get("/version", response_model=str)
 def version(mgr: DMSManager = Depends(get_mgr)):
     return mgr.get_dms_version()
+
+@router.get("/check-updates", response_model=str)
+def check_dms_updates():
+    """Check if a newer DMS version is available."""
+    return get_dms_updates()
 
 @router.get("/install", response_model=InstallStatus)
 def install_status(mgr: DMSManager = Depends(get_mgr)):
@@ -252,35 +258,13 @@ def init():
 @router.post("/update", response_model=CommandResult)
 def update():
     """
-    Captured DMS update (wget + apt). Returns the full logs.
+    Triggers the nunet-dms-updater systemd service to update DMS asynchronously.
+    This avoids blocking the API process and prevents the API from being killed
+    when the updater restarts services.
     """
-    env = os.environ.copy()
-    # Avoid apt interaction
-    env["DEBIAN_FRONTEND"] = env.get("DEBIAN_FRONTEND", "noninteractive")
-
-    update_script = r'''
-        set -euo pipefail
-        arch="$(uname -m | tr '[:upper:]' '[:lower:]')"
-        echo "Detected arch: $arch"
-        if echo "$arch" | grep -qi 'arm\|aarch'; then
-          url="https://d.nunet.io/nunet-dms-arm64-latest.deb"
-        elif echo "$arch" | grep -qi 'x86_64\|amd64\|amd'; then
-          url="https://d.nunet.io/nunet-dms-amd64-latest.deb"
-        else
-          echo "Unsupported architecture: $arch" >&2; exit 2
-        fi
-        echo "Downloading $url ..."
-        wget -N "$url" -O dms-latest.deb
-        echo "Installing ..."
-        sudo -n apt install ./dms-latest.deb -y --allow-downgrades
-        echo "Cleaning up ..."
-        rm -f dms-latest.deb || true
-        echo "Update complete."
-    '''
-    argv = ["bash", "-lc", update_script]
-    result = _run_captured(argv, env=env, label="dms update")
+    result = trigger_dms_update()
     invalidate_all_dms_caches()
-    return result
+    return CommandResult(**result)
 
 
 

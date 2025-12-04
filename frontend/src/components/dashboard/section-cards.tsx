@@ -32,6 +32,7 @@ import {
   offboardCompute,
   onboardCompute,
   triggerUpdate,
+  updateDms,
 } from "../../api/api";
 import {
   ArrowUp,
@@ -50,7 +51,7 @@ import { SectionCardsSkeleton } from "./DashboardSkeleton";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type ResourcePair = { label: string; value: string };
@@ -245,6 +246,94 @@ export function SectionCards() {
     }
   };
 
+  const [isPollingDmsVersion, setIsPollingDmsVersion] = useState(false);
+  const [targetDmsVersion, setTargetDmsVersion] = useState<string | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const {
+    mutateAsync: doTriggerDmsUpdate,
+    isPending: isUpdatingDms,
+  } = useMutation({
+    mutationFn: updateDms,
+    onSuccess: (res) => {
+      const targetVersion = sysinfo?.dmsUpdateInfo?.latest;
+      if (targetVersion) {
+        setTargetDmsVersion(targetVersion);
+        setIsPollingDmsVersion(true);
+        toast.success(res?.message || "DMS update started successfully");
+        
+        // Start polling for version update
+        pollingIntervalRef.current = setInterval(() => {
+          refetchInfo();
+          refetchSys();
+        }, 10000); // Poll every 10 seconds
+
+        // Stop polling after 60 seconds
+        pollingTimeoutRef.current = setTimeout(() => {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          setIsPollingDmsVersion(false);
+          setTargetDmsVersion(null);
+        }, 60000);
+      } else {
+        toast.success(res?.message || "DMS update started successfully");
+        // Fallback: just refetch once after delay
+        setTimeout(() => {
+          refetchInfo();
+          refetchSys();
+        }, 5000);
+      }
+    },
+    onError: (error) => {
+      toast.error(extractErrorMessage(error, "Failed to start DMS update"));
+    },
+  });
+
+  // Check if version has updated and stop polling
+  useEffect(() => {
+    if (isPollingDmsVersion && targetDmsVersion && info?.dms_version) {
+      if (info.dms_version === targetDmsVersion) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        if (pollingTimeoutRef.current) {
+          clearTimeout(pollingTimeoutRef.current);
+          pollingTimeoutRef.current = null;
+        }
+        setIsPollingDmsVersion(false);
+        setTargetDmsVersion(null);
+        toast.success(`DMS updated to version ${targetDmsVersion}`);
+        // Final refetch to ensure UI is up to date
+        refetchInfo();
+        refetchSys();
+      }
+    }
+  }, [info?.dms_version, targetDmsVersion, isPollingDmsVersion, refetchInfo, refetchSys]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+      if (pollingTimeoutRef.current) {
+        clearTimeout(pollingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleTriggerDmsUpdate = async () => {
+    try {
+      await doTriggerDmsUpdate();
+    } catch {
+      // Error handled via onError toast
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       queryClient.prefetchQuery({
@@ -389,9 +478,55 @@ export function SectionCards() {
                 </code>
                 <CopyButton text={info?.dms_did} className="ml-2" />
               </div>
-              <p>
-                <b>Version:</b> <code>{info?.dms_version}</code>
-              </p>
+              <div className="flex items-center gap-2">
+                <p>
+                  <b>Version:</b> <code>{info?.dms_version}</code>
+                </p>
+                <TooltipProvider>
+                  {sysinfo?.dmsUpdateInfo?.available ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          className="h-auto w-auto p-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={handleTriggerDmsUpdate}
+                          disabled={isUpdatingDms}
+                        >
+                          {isUpdatingDms ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <ArrowUp className="size-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Update to {sysinfo.dmsUpdateInfo.latest}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-auto w-auto p-1"
+                          onClick={() => refetchSys()}
+                          disabled={isRefetchingSys}
+                        >
+                          {isRefetchingSys ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="size-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Check for DMS updates</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </TooltipProvider>
+              </div>
               <p className="flex items-center gap-2 w-full">
                 <b>Peer ID:</b>{" "}
                 <code
