@@ -596,7 +596,7 @@ function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue
         <h3 className="text-sm font-semibold">Participants</h3>
         <div className="grid gap-3 md:grid-cols-2">
           <TextField
-            label="Solution enabler DID"
+            label="Contract host DID"
             value={formState.solutionEnablerDid}
             onChange={(value) => onChange({ solutionEnablerDid: value })}
             placeholder={detail.contract?.solution_enabler_did?.uri ?? "did:key:..."}
@@ -839,7 +839,7 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
       <section className="space-y-2">
         <h4 className="text-sm font-semibold">Participants</h4>
         <div className="grid gap-2 text-sm md:grid-cols-2">
-          <InfoRow label="Solution enabler DID" value={formState.solutionEnablerDid} />
+          <InfoRow label="Contract host DID" value={formState.solutionEnablerDid} />
           <InfoRow label="Payment validator DID" value={formState.paymentValidatorDid} />
           <InfoRow label="Provider DID" value={formState.providerDid} />
           <InfoRow label="Requestor DID" value={formState.requestorDid} />
