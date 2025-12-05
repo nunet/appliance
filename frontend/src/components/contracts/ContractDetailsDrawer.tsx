@@ -613,7 +613,7 @@ export function ContractDetailsDrawer({
                   <InfoRow label="Provider">
                     <DidDisplay value={mergedContract?.participants?.provider?.uri ?? null} muted />
                   </InfoRow>
-                  <InfoRow label="Solution enabler DID">
+                  <InfoRow label="Contract host DID">
                     <DidDisplay value={mergedContract?.solution_enabler_did?.uri ?? null} muted />
                   </InfoRow>
                   <InfoRow label="Payment validator DID">
