@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import {
   HashRouter,
@@ -8,10 +8,6 @@ import {
   Navigate,
   useLocation,
 } from "react-router-dom";
-import App from "./pages/App";
-import DMS from "./pages/DMS";
-import DeploymentsHistory from "./pages/DeploymentsHistory";
-import NewDeployment from "./pages/NewDeployment";
 import "./index.css";
 import { ThemeProvider } from "./components/theme-provider";
 import { Toaster } from "./components/ui/sonner";
@@ -19,20 +15,25 @@ import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { AppSidebar } from "./components/app-sidebar";
 import { SiteHeader } from "./components/site-header";
 import { QueryClientProvider } from "@tanstack/react-query";
-import DeploymentDetailsPage from "./pages/Deployment";
-import Ensembles from "./pages/Ensembles";
-import Wizzard from "./pages/Wizzard";
 import { useAppMode } from "./hooks/useAppMode";
-import NotFound from "./pages/NotFound";
-import Organizations from "./pages/Organizations";
-import Contracts from "./pages/Contracts";
-import NewContractPage from "./pages/Contracts/New";
-import PaymentsPage from "@/components/payments/PaymentsPage";
-import LoginPage from "./pages/Login";
-import SetupAdmin from "./pages/SetupAdmin";
-import UPnPPage from "./pages/UPnP";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { queryClient } from "./query-client";
+
+const App = lazy(() => import("./pages/App"));
+const DMS = lazy(() => import("./pages/DMS"));
+const DeploymentsHistory = lazy(() => import("./pages/DeploymentsHistory"));
+const NewDeployment = lazy(() => import("./pages/NewDeployment"));
+const DeploymentDetailsPage = lazy(() => import("./pages/Deployment"));
+const Ensembles = lazy(() => import("./pages/Ensembles"));
+const Wizzard = lazy(() => import("./pages/Wizzard"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const Organizations = lazy(() => import("./pages/Organizations"));
+const Contracts = lazy(() => import("./pages/Contracts"));
+const NewContractPage = lazy(() => import("./pages/Contracts/New"));
+const PaymentsPage = lazy(() => import("./components/payments/PaymentsPage"));
+const LoginPage = lazy(() => import("./pages/Login"));
+const SetupAdmin = lazy(() => import("./pages/SetupAdmin"));
+const UPnPPage = lazy(() => import("./pages/UPnP"));
 
 function Layout() {
   return (
@@ -130,32 +131,34 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
       <AuthProvider>
         <QueryClientProvider client={queryClient}>
-          <HashRouter>
-            <Routes>
-              <Route path="/setup" element={<SetupRoute />} />
-              <Route path="/login" element={<LoginRoute />} />
+          <Suspense fallback={<LoadingScreen />}>
+            <HashRouter>
+              <Routes>
+                <Route path="/setup" element={<SetupRoute />} />
+                <Route path="/login" element={<LoginRoute />} />
 
-              <Route element={<RequireAuthWrapper />}>
-                <Route path="/wizzard" element={<Wizzard />} />
+                <Route element={<RequireAuthWrapper />}>
+                  <Route path="/wizzard" element={<Wizzard />} />
 
-                <Route element={<ProtectedRoutes />}>
-                  <Route path="*" element={<NotFound />} />
-                  <Route path="/" element={<App />} />
-                  <Route path="/deploy/" element={<DeploymentsHistory />} />
-                  <Route path="/deploy/new" element={<NewDeployment />} />
-                  <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
-                  <Route path="/organizations" element={<Organizations />} />
-                  <Route path="/ensembles" element={<Ensembles />} />
-                  <Route path="/appliance/dms" element={<DMS />} />
-                  <Route path="/appliance/upnp" element={<UPnPPage />} />
-                  <Route path="/payments" element={<PaymentsPage />} />
-                  <Route path="/contracts" element={<Contracts />} />
-                  <Route path="/contracts/new" element={<NewContractPage />} />
-                  <Route path="/contracts/new" element={<Contracts.NewContractPage />} />
+                  <Route element={<ProtectedRoutes />}>
+                    <Route path="*" element={<NotFound />} />
+                    <Route path="/" element={<App />} />
+                    <Route path="/deploy/" element={<DeploymentsHistory />} />
+                    <Route path="/deploy/new" element={<NewDeployment />} />
+                    <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
+                    <Route path="/organizations" element={<Organizations />} />
+                    <Route path="/ensembles" element={<Ensembles />} />
+                    <Route path="/appliance/dms" element={<DMS />} />
+                    <Route path="/appliance/upnp" element={<UPnPPage />} />
+                    <Route path="/payments" element={<PaymentsPage />} />
+                    <Route path="/contracts" element={<Contracts />} />
+                    <Route path="/contracts/new" element={<NewContractPage />} />
+                    <Route path="/contracts/new" element={<Contracts.NewContractPage />} />
+                  </Route>
                 </Route>
-              </Route>
-            </Routes>
-          </HashRouter>
+              </Routes>
+            </HashRouter>
+          </Suspense>
         </QueryClientProvider>
         <Toaster />
       </AuthProvider>

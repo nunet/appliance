@@ -16,11 +16,13 @@ fi
 
 export APPLIANCE_ROOT=${APPLIANCE_ROOT:-$ROOT_DIR}
 export FRONTEND_PORT=${FRONTEND_PORT:-5173}
+PNPM_VERSION="${PNPM_VERSION:-10.4.0}"
+PNPM_CMD=(corepack pnpm)
 
 cd frontend
 
-if [ ! -d "node_modules" ]; then
-  npm install
-fi
+corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
-npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT"
+"${PNPM_CMD[@]}" install --frozen-lockfile
+
+"${PNPM_CMD[@]}" run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT"

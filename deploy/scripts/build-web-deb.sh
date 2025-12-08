@@ -24,7 +24,7 @@ fi
 
 # --- ensure frontend build exists ---
 if [ ! -f "$ROOT/frontend/dist/index.html" ]; then
-  echo "ERROR: frontend/dist not found. Run 'npm run build' in ./frontend first."
+  echo "ERROR: frontend/dist not found. Run 'pnpm run build' in ./frontend first."
   exit 1
 fi
 
