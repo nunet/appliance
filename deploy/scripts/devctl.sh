@@ -49,6 +49,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/nunet-appliance/devctl}"
 STATE_FILE="$STATE_DIR/web_install_state"
 PKG_NAME_WEBSVC="nunet-appliance-web"
 SYSTEMD_WEBSVC="nunet-appliance-web.service"
+PNPM_VERSION="${PNPM_VERSION:-10.4.0}"
 
 show_help() {
   cat <<EOF
@@ -206,15 +207,17 @@ prod_down() {
 
 dev_setup() {
   need python3
+  need corepack
 
   # Check Node.js version and install if needed
-  if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(20|22)"; then
-    echo "Installing Node.js 20+ for frontend development..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(22|24)"; then
+    echo "Installing Node.js 22+ for frontend development..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
   fi
 
-  need npm
+  corepack prepare "pnpm@${PNPM_VERSION}" --activate
+  corepack pnpm --version >/dev/null 2>&1 || { echo "pnpm unavailable via corepack"; exit 1; }
   python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
   # shellcheck disable=SC1090
   . "$VENV_DIR/bin/activate"
@@ -246,7 +249,7 @@ stop_pidfile() {
 
 dev_up_tmux() {
   tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
-  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT npm install && PORT=$FRONTEND_PORT npm run dev'"
+  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT corepack pnpm install --frozen-lockfile && PORT=$FRONTEND_PORT corepack pnpm run dev'"
   tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
     "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app --bind 0.0.0.0:$BACKEND_PORT --reload --workers 1\""
   echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
@@ -271,7 +274,7 @@ dev_down() {
   stop_pidfile "$DEV_FRONTEND_PIDFILE"
   pkill -f "gunicorn .*--bind 0.0.0.0:$BACKEND_PORT" 2>/dev/null || true
   pkill -f "uvicorn .*--port $BACKEND_PORT" 2>/dev/null || true
-  pkill -f "npm run dev" 2>/dev/null || true
+  pkill -f "pnpm run dev" 2>/dev/null || true
   pkill -f "vite" 2>/dev/null || true
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${FRONTEND_PORT}/tcp" 2>/dev/null || true
@@ -352,7 +355,7 @@ logs() {
 
 doctor() {
   echo "Checking dependencies and ports..."
-  for x in python3 npm ss systemctl dpkg-query; do need "$x"; done
+  for x in python3 corepack ss systemctl dpkg-query; do need "$x"; done
   if [ "$DEVCTL_USE_TMUX" = "1" ]; then need tmux; fi
   ss -ltn | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" && echo "Warning: dev ports busy" || true
   echo "OK"

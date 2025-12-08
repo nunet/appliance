@@ -32,13 +32,13 @@ If you are familiar with the legacy menu / Flask stack, note that almost all of 
 | `dev test` | Run backend unit tests (`pytest`) and any other configured checks. |
 | `dev lint` | Example placeholder for linting (add your linters or formatters here). |
 | `build backend` | Build backend distributables (e.g., wheel or PEX) – adjust to your packaging needs. |
-| `build frontend` | Run `npm install` and `npm run build` to produce the production bundle under `frontend/dist`. |
+| `build frontend` | Run `pnpm install` and `pnpm run build` to produce the production bundle under `frontend/dist`. |
 | `clean` | Remove temporary build artifacts, virtual environments, cached dependencies, etc. |
 
 Internally, the script performs a few key tasks:
 
 * Ensures the Python virtual environment exists and installs `backend/nunet_api/requirements.txt`
-* Ensures frontend dependencies are installed (`npm install`)
+* Ensures frontend dependencies are installed (`pnpm install`)
 * Starts/stops the appropriate processes depending on the subcommand
 * Provides a single entrypoint for CI/CD automation and local workflows
 
@@ -64,7 +64,7 @@ Internally, the script performs a few key tasks:
 
 ## Getting Started
 
-1. **Clone the repo** and make sure you have Python 3.10+ and Node.js ≥ 18 installed.
+1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.4.0` is available).
 2. **Bootstrap the dev environment** by running `./deploy/scripts/devctl.sh dev up` (this creates virtual envs, installs dependencies, and starts both backend and frontend).
 3. **Open the API** – once running, the backend exposes `http://127.0.0.1:8080` (default) and the frontend runs on `http://127.0.0.1:5173` (or whichever Vite port is configured).
 4. **Explore the documentation** linked above to understand module responsibilities and API endpoints.

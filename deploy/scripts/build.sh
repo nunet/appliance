@@ -85,16 +85,20 @@ mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 # Ensure proper permissions
 chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 
+PNPM_VERSION="${PNPM_VERSION:-10.4.0}"
+PNPM_CMD=(corepack pnpm)
+corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
 # Build frontend
 echo "Building frontend..."
 ( cd "$ROOT/frontend" && \
-    npm install && \
-    (npm audit fix || true) && \
-    if npm ls @swc/core >/dev/null 2>&1; then \
+    "${PNPM_CMD[@]}" install --frozen-lockfile && \
+    ("${PNPM_CMD[@]}" audit --prod || true) && \
+    if "${PNPM_CMD[@]}" ls @swc/core --depth -1 >/dev/null 2>&1; then \
       echo "Rebuilding @swc/core from source for host CPU..." && \
-      npm rebuild @swc/core --build-from-source; \
+      npm_config_build_from_source=true "${PNPM_CMD[@]}" rebuild @swc/core; \
     fi && \
-    npm run build )
+    "${PNPM_CMD[@]}" run build )
 
 # Build backend
 echo "Building backend for ${ARCH}..."
