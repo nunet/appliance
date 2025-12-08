@@ -1,42 +1,68 @@
 # nunet_api/routers/payments.py
 from typing import List, Dict, Any, Tuple
 from fastapi import APIRouter, Depends, HTTPException
+from pycardano.exception import TransactionFailedException
 from decimal import Decimal, InvalidOperation
 import re
 from ..schemas import (
-    TokenConfig,
+    CardanoBuildRequest,
+    CardanoBuildResponse,
+    CardanoSubmitRequest,
+    CardanoSubmitResponse,
+    CardanoTokenConfig,
     PaymentReportIn,
     PaymentReportOut,
+    PaymentsConfig,
+    TokenConfig,
 )
 from modules.dms_manager import DMSManager
+from ..utils.cardano_payments import CardanoPaymentsBuilder, CardanoTxBuildError
 
 router = APIRouter()
 
-# --------- hard-coded token config (Just for testing for now) ---------
-PAY_CHAIN_ID = 11155111  # Sepolia chain ID
-PAY_TOKEN_ADDRESS = "0xB37216b70a745129966E553cF8Ee2C51e1cB359A"  
-PAY_TOKEN_DECIMALS = 6
-PAY_TOKEN_SYMBOL = "TSTNTX"
-PAY_EXPLORER_BASE = "https://sepolia.etherscan.io/"
-PAY_NETWORK_NAME = "Ethereum Sepolia"
+# --------- hard-coded token configs (testing defaults) ---------
+ETH_TOKEN_CONFIG = TokenConfig(
+    chain_id=11155111,
+    token_address="0xB37216b70a745129966E553cF8Ee2C51e1cB359A",
+    token_symbol="TSTNTX",
+    token_decimals=6,
+    explorer_base_url="https://sepolia.etherscan.io/",
+    network_name="Ethereum Sepolia",
+)
+
+CARDANO_TOKEN_CONFIG = CardanoTokenConfig(
+    chain_id=1,
+    token_address="asset1tkxzxjklvs5gdkpuh26ex3re4rl8wjg3wmyxdr",
+    token_decimals=0,  # native asset units are indivisible
+    token_symbol="tNTX",
+    explorer_base_url="https://preprod.cexplorer.io/",
+    network_name="Cardano Preprod",
+    policy_id="88b60b51a3dcd3a6134bb1c0fdd2837d8cc87abd27dbd0c3a494869f",
+    asset_name_hex="4e754e657450726570726f64",  # "NuNetPreprod"
+    asset_name="NuNetPreprod",
+    asset_name_encoded="4e754e657450726570726f64",
+    asset_id="asset1tkxzxjklvs5gdkpuh26ex3re4rl8wjg3wmyxdr",
+)
+
+PAYMENTS_CONFIG = PaymentsConfig(ethereum=ETH_TOKEN_CONFIG, cardano=CARDANO_TOKEN_CONFIG)
 PAY_BLOCKCHAIN = "ETHEREUM"
 ALLOWED_BLOCKCHAINS = {"ETHEREUM", "CARDANO"}
+CARDANO_KOIOS_BASE = "https://preprod.koios.rest/api/v1"
+MAX_DECIMALS_BY_CHAIN = {
+    "ETHEREUM": ETH_TOKEN_CONFIG.token_decimals,
+    "CARDANO": CARDANO_TOKEN_CONFIG.token_decimals,
+}
 # --------------------------------------------------------------
 
 def get_mgr():
     return DMSManager()
 
-def _get_token_config() -> TokenConfig:
-    if not PAY_TOKEN_ADDRESS or not PAY_CHAIN_ID:
-        raise HTTPException(status_code=500, detail="Token config not set")
-    return TokenConfig(
-        chain_id=PAY_CHAIN_ID,
-        token_address=PAY_TOKEN_ADDRESS,
-        token_symbol=PAY_TOKEN_SYMBOL,
-        token_decimals=PAY_TOKEN_DECIMALS,
-        explorer_base_url=PAY_EXPLORER_BASE,
-        network_name=PAY_NETWORK_NAME,
-    )
+
+def _get_cardano_builder() -> CardanoPaymentsBuilder:
+    return CardanoPaymentsBuilder(CARDANO_TOKEN_CONFIG.model_dump(), CARDANO_KOIOS_BASE)
+
+def _get_payments_config() -> PaymentsConfig:
+    return PAYMENTS_CONFIG
 
 # --- Utilities ---
 
@@ -59,12 +85,24 @@ def _is_supported_address(addr: str) -> bool:
         return False
     return _is_evm_address(normalized) or _is_cardano_address(normalized)
 
+
+def _is_address_for_blockchain(addr: str, blockchain: str) -> bool:
+    bc = (blockchain or "").upper()
+    if bc == "CARDANO":
+        return _is_cardano_address(addr)
+    if bc == "ETHEREUM":
+        return _is_evm_address(addr)
+    return _is_supported_address(addr)
+
 def _valid_amount_str(amount: str, max_decimals: int) -> bool:
     try:
         d = Decimal(amount)
         if d < 0:
             return False
-        frac = -d.as_tuple().exponent if d.as_tuple().exponent < 0 else 0
+        quantized = d.quantize(Decimal(10) ** -max_decimals)
+        if quantized != d:
+            return False
+        frac = -quantized.as_tuple().exponent if quantized.as_tuple().exponent < 0 else 0
         return frac <= max_decimals
     except (InvalidOperation, TypeError):
         return False
@@ -93,6 +131,22 @@ def _coerce_first_address(value: Any) -> str:
         return ""
     return ""
 
+
+def _extract_blockchain(value: Any, default: str = PAY_BLOCKCHAIN) -> str:
+    """
+    Discover blockchain hint from nested DMS payloads.
+    """
+    if isinstance(value, dict):
+        bc = value.get("blockchain") or value.get("chain")
+        if isinstance(bc, str) and bc.strip():
+            return bc.strip().upper()
+    if isinstance(value, (list, tuple)):
+        for entry in value:
+            bc = _extract_blockchain(entry, "")
+            if bc:
+                return bc
+    return (default or PAY_BLOCKCHAIN).upper()
+
 def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize DMS transaction keys (handles TitleCase and snake_case).
@@ -100,6 +154,7 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(d, dict):
         return {}
     to_address_raw = d.get("to_address") or d.get("ToAddress") or d.get("toAddress") or ""
+    blockchain = _extract_blockchain(to_address_raw, d.get("blockchain") or PAY_BLOCKCHAIN)
 
     return {
         "unique_id": d.get("unique_id") or d.get("UniqueID") or d.get("uniqueId") or "",
@@ -109,6 +164,7 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         "amount": d.get("amount") or d.get("Amount") or "",
         "status": (d.get("status") or d.get("Status") or "").lower(),  # normalize to lower
         "tx_hash": d.get("tx_hash") or d.get("TxHash") or "",
+        "blockchain": blockchain,
     }
 
 
@@ -119,13 +175,17 @@ def _validate_tx(tx: Dict[str, Any]) -> Tuple[bool, List[str]]:
     status = tx.get("status")
     if status not in {"paid", "unpaid"}:
         reasons.append("invalid status")
+    blockchain = (tx.get("blockchain") or PAY_BLOCKCHAIN).upper()
+    if blockchain not in ALLOWED_BLOCKCHAINS:
+        reasons.append("unsupported blockchain")
+    max_decimals = MAX_DECIMALS_BY_CHAIN.get(blockchain, ETH_TOKEN_CONFIG.token_decimals)
     amount = tx.get("amount")
-    if not amount or not _valid_amount_str(str(amount), PAY_TOKEN_DECIMALS):
+    if not amount or not _valid_amount_str(str(amount), max_decimals):
         reasons.append("invalid amount")
     address = tx.get("to_address", "")
     if not address:
         reasons.append("missing destination address")
-    elif not _is_supported_address(str(address)):
+    elif not _is_address_for_blockchain(str(address), blockchain):
         reasons.append("unsupported address format")
     return (not reasons, reasons)
 
@@ -136,12 +196,12 @@ def _status_rank(status: str) -> int:
 
 # --- Routes ---
 
-@router.get("/config", response_model=TokenConfig)
+@router.get("/config", response_model=PaymentsConfig)
 def get_config():
     """
-    Static token/network config for the UI.
+    Static token/network config for the UI (EVM + Cardano).
     """
-    return _get_token_config()
+    return _get_payments_config()
 
 @router.get("/list_payments", response_model=Dict[str, Any])
 def list_payments(mgr: DMSManager = Depends(get_mgr)):
@@ -149,7 +209,7 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
     Fetch all transactions from DMS, normalize, validate lightly,
     sort by status (paid first, then unpaid), and return counts.
     """
-    out = mgr.list_transactions(blockchain=PAY_BLOCKCHAIN)
+    out = mgr.list_transactions(blockchain=None)
     if out.get("status") == "error":
         raise HTTPException(status_code=502, detail=out.get("message", "DMS list transactions failed"))
     raw = out.get("transactions", []) or []
@@ -188,6 +248,67 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
         "ignored_count": len(ignored),
         "ignored": ignored,
     }
+
+
+@router.post("/cardano/build", response_model=CardanoBuildResponse)
+def build_cardano_tx(body: CardanoBuildRequest):
+    """
+    Build an unsigned Cardano transaction server-side using Koios data.
+    """
+    builder = _get_cardano_builder()
+    try:
+        res = builder.build_unsigned_tx(
+            from_address=body.from_address,
+            to_address=body.to_address,
+            amount=body.amount,
+            change_address=body.change_address or body.from_address,
+        )
+    except CardanoTxBuildError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except TransactionFailedException as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc) or "Failed to build Cardano transaction")
+
+    return CardanoBuildResponse(
+        tx_cbor=res.tx.to_cbor().hex(),
+        tx_body_cbor=res.tx_body.to_cbor().hex(),
+        tx_hash=res.tx_hash,
+        fee_lovelace=str(res.fee_lovelace),
+        network=CARDANO_TOKEN_CONFIG.network_name or "Cardano",
+    )
+
+
+@router.post("/cardano/submit", response_model=CardanoSubmitResponse)
+def submit_cardano_tx(body: CardanoSubmitRequest, mgr: DMSManager = Depends(get_mgr)):
+    """
+    Accept a wallet-produced witness set, stitch the transaction, submit via Koios,
+    then confirm in DMS.
+    """
+    builder = _get_cardano_builder()
+    try:
+        tx_hash = builder.submit_signed_tx(body.tx_body_cbor, body.witness_set_cbor)
+    except (CardanoTxBuildError, TransactionFailedException) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=502, detail="Failed to submit Cardano transaction")
+
+    dms_res = mgr.confirm_transaction(
+        unique_id=body.payment_provider,
+        tx_hash=tx_hash,
+        blockchain="CARDANO",
+    )
+    if dms_res.get("status") != "success":
+        raise HTTPException(status_code=502, detail=dms_res.get("message", "DMS confirm failed"))
+
+    return CardanoSubmitResponse(
+        tx_hash=tx_hash,
+        to_address=body.to_address,
+        amount=body.amount,
+        payment_provider=body.payment_provider,
+        blockchain="CARDANO",
+        fee_lovelace=None,
+    )
 
 @router.post("/report_to_dms", response_model=PaymentReportOut)
 def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):

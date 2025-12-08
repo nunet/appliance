@@ -13,7 +13,9 @@ PyYAML>=6.0.1,<7.0
 python-multipart           # needed for Form/File uploads
 Jinja2>=3.1,<4.0          # templating used by your modules
 requests>=2.31,<3.0       # HTTP client
+pycardano>=0.11.0,<0.12.0
 qrcode[pil]>=8.0,<9.0     # QR generation (+ Pillow for PNGs)
 bcrypt>=4.0,<5.0
 PyJWT>=2.8,<3.0
 miniupnpc>=2.2,<3.0       # UPnP client for router discovery and port forwarding
+setuptools>=68,<75        # provides pkg_resources needed by blockfrost/pycardano

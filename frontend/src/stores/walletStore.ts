@@ -1,13 +1,15 @@
 ﻿import { create } from "zustand";
+import type { Cip30Api } from "@/lib/cardano";
 
 export type WalletType = "ethereum" | "cardano";
 
 export interface WalletConnection {
   address: string;
+  changeAddress?: string;
   label: string;
   provider: string;
   networkId?: number;
-  cardanoApi?: unknown;
+  cardanoApi?: Cip30Api;
 }
 
 interface WalletState {

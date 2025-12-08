@@ -6,7 +6,10 @@ import {
   getPaymentsConfig,
   getPaymentsList,
   DmsPaymentItem,
+  PaymentsConfig,
   reportToDms,
+  buildCardanoTx,
+  submitCardanoTx,
 } from "@/api/api";
 import {
   Card,
@@ -78,12 +81,14 @@ export default function PaymentsPage() {
   const listQ = useQuery({
     queryKey: ["payments", "list"],
     queryFn: getPaymentsList,
-    refetchInterval: autoRefresh ? 30000 : false,
+    refetchInterval: autoRefresh ? 300000 : false, // 5 minutes to avoid excessive polling
     refetchOnWindowFocus: false,
   });
 
-  const config = cfgQ.data;
+  const config = cfgQ.data as PaymentsConfig | undefined;
   const list = listQ.data;
+  const ethConfig = config?.ethereum;
+  const cardanoConfig = config?.cardano;
 
   const ignoredToastRef = useRef<number | null>(null);
 
@@ -115,15 +120,27 @@ export default function PaymentsPage() {
         !term ||
         p.unique_id.toLowerCase().includes(term) ||
         p.to_address.toLowerCase().includes(term) ||
-        p.status.toLowerCase().includes(term);
+        p.status.toLowerCase().includes(term) ||
+        (p.blockchain ?? "").toLowerCase().includes(term);
       const matchesStatus =
         statusFilter === "all" ? true : p.status === statusFilter;
       return matchesSearch && matchesStatus;
     });
   }, [items, search, statusFilter]);
 
+  function walletTypeForPayment(item: DmsPaymentItem): WalletType | null {
+    const bc = (item.blockchain || "").toUpperCase();
+    if (bc === "CARDANO") return "cardano";
+    if (bc === "ETHEREUM") return "ethereum";
+    return inferWalletType(item.to_address);
+  }
+
   async function handlePay(p: DmsPaymentItem) {
-    if (!config) {
+    const chain = (p.blockchain || "ETHEREUM").toUpperCase();
+    const isCardano = chain === "CARDANO";
+    const chainConfig = isCardano ? cardanoConfig : ethConfig;
+
+    if (!chainConfig) {
       toast.error("Missing token config", errorToastStyles);
       return;
     }
@@ -132,7 +149,7 @@ export default function PaymentsPage() {
       return;
     }
 
-    const requiredWallet = inferWalletType(p.to_address);
+    const requiredWallet = walletTypeForPayment(p);
     if (requiredWallet) {
       const connection = walletConnections[requiredWallet];
       if (!connection) {
@@ -143,44 +160,104 @@ export default function PaymentsPage() {
         toast.error(`Activate ${walletDisplayName(requiredWallet)} before paying`, errorToastStyles);
         return;
       }
-      if (requiredWallet === "cardano") {
-        toast.error("Cardano payments are not yet supported in this build", errorToastStyles);
-        return;
-      }
     }
 
     try {
       setSending((s) => ({ ...s, [p.unique_id]: true }));
-      const { token_address, token_decimals, chain_id, explorer_base_url } =
-        config;
 
-      const { hash } = await sendNTX({
-        tokenAddress: token_address,
-        to: p.to_address,
-        amountHuman: p.amount,
-        decimals: token_decimals,
-        chainIdWanted: chain_id,
-      });
+      if (isCardano) {
+        const connection = walletConnections.cardano;
+        const api = connection?.cardanoApi as { signTx?: (tx: string, partialSign?: boolean) => Promise<string> } | undefined;
+        if (!connection || !api?.signTx) {
+          throw new Error("Cardano wallet connection missing");
+        }
 
-      setSent((s) => ({ ...s, [p.unique_id]: hash }));
+        const build = await buildCardanoTx({
+          from_address: connection.address,
+          change_address: connection.changeAddress ?? connection.address,
+          to_address: p.to_address,
+          amount: p.amount,
+          payment_provider: p.unique_id,
+        });
 
-      await reportToDms({
-        tx_hash: hash,
-        to_address: p.to_address,
-        amount: p.amount,
-        payment_provider: p.unique_id,
-      });
+        const witness = await api.signTx(build.tx_cbor, true);
 
-      toast.success("Transaction sent", {
-        description: explorer_base_url ? `Tx: ${hash}` : undefined,
-      });
+        const submitRes = await submitCardanoTx({
+          tx_body_cbor: build.tx_body_cbor,
+          witness_set_cbor: witness,
+          payment_provider: p.unique_id,
+          to_address: p.to_address,
+          amount: p.amount,
+        });
+
+        const txHash = (submitRes as any).tx_hash ?? build.tx_hash;
+        setSent((s) => ({ ...s, [p.unique_id]: txHash }));
+
+        toast.success("Transaction sent", {
+          description: chainConfig.explorer_base_url ? `Tx: ${txHash}` : undefined,
+        });
+      } else {
+        const { hash } = await sendNTX({
+          tokenAddress: chainConfig.token_address,
+          to: p.to_address,
+          amountHuman: p.amount,
+          decimals: chainConfig.token_decimals,
+          chainIdWanted: chainConfig.chain_id,
+        });
+
+        setSent((s) => ({ ...s, [p.unique_id]: hash }));
+
+        await reportToDms({
+          tx_hash: hash,
+          to_address: p.to_address,
+          amount: p.amount,
+          payment_provider: p.unique_id,
+          blockchain: "ETHEREUM",
+        });
+
+        toast.success("Transaction sent", {
+          description: chainConfig.explorer_base_url ? `Tx: ${hash}` : undefined,
+        });
+      }
 
       listQ.refetch();
     } catch (err: any) {
+      const rawMessage =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        err?.message ||
+        "Something went wrong";
+
+      const toAda = (lovelace: number | string | null | undefined) => {
+        const n = Number(lovelace);
+        if (Number.isFinite(n) && n > 0) {
+          return `${(n / 1_000_000).toFixed(3)} ADA`;
+        }
+        return null;
+      };
+
+      const formatError = (msg: string): string => {
+        const lovelaceMatch = msg.match(/have\s+(\d+)\s+lovelace.*need\s*>=\s*(\d+).*min-utxo\s+(\d+)/i);
+        if (lovelaceMatch) {
+          const [, have, need, min] = lovelaceMatch;
+          const haveAda = toAda(have);
+          const needAda = toAda(need);
+          const minAda = toAda(min);
+          return `Not enough ADA to send. You have ${haveAda ?? have}, need at least ${needAda ?? need} (min-utxo ${minAda ?? min}).`;
+        }
+        const tokenMatch = msg.match(/Insufficient token balance.*have\s+(\d+),\s*need\s+(\d+)/i);
+        if (tokenMatch) {
+          const [, haveT, needT] = tokenMatch;
+          return `Not enough NTX to cover the payment (have ${haveT}, need ${needT}).`;
+        }
+        return msg;
+      };
+
+      const friendlyMessage = formatError(String(rawMessage));
       console.error(err);
       toast.error("Payment failed", {
         ...errorToastStyles,
-        description: err?.message ?? "Something went wrong",
+        description: friendlyMessage,
       });
     } finally {
       setSending((s) => ({ ...s, [p.unique_id]: false }));
@@ -315,32 +392,38 @@ export default function PaymentsPage() {
               {filtered.map((p) => {
                 const isSending = !!sending[p.unique_id];
                 const txHash = sent[p.unique_id];
+                const chain = (p.blockchain || "ETHEREUM").toUpperCase();
+                const chainConfig = chain === "CARDANO" ? cardanoConfig : ethConfig;
                 const explorer =
-                  config?.explorer_base_url && (txHash || p.tx_hash)
-                    ? `${config.explorer_base_url!.replace(/\/$/, "")}/tx/${txHash || p.tx_hash}`
+                  chainConfig?.explorer_base_url && (txHash || p.tx_hash)
+                    ? `${chainConfig.explorer_base_url!.replace(/\/$/, "")}/tx/${txHash || p.tx_hash}`
                     : null;
-                const requiredWallet = inferWalletType(p.to_address);
+                const requiredWallet = walletTypeForPayment(p);
                 const requiredConnection = requiredWallet
                   ? walletConnections[requiredWallet]
                   : undefined;
                 const walletRestriction =
-                  requiredWallet === "cardano"
-                    ? "Cardano payments are not yet supported"
+                  !chainConfig
+                    ? "Payment config missing"
                     : requiredWallet && !requiredConnection
                     ? `Connect ${walletDisplayName(requiredWallet)} to continue`
                     : requiredWallet && activeWalletType !== requiredWallet
                     ? `Activate ${walletDisplayName(requiredWallet)} from the wallet menu`
                     : null;
                 const buttonDisabled =
-                  isSending || p.status === "paid" || !config || Boolean(walletRestriction);
+                  isSending || p.status === "paid" || !chainConfig || Boolean(walletRestriction);
                 const buttonLabelOverride =
                   p.status === "unpaid" && walletRestriction
                     ? requiredWallet === "cardano"
-                      ? "Cardano soon"
-                      : requiredWallet === "ethereum"
-                      ? "Use MetaMask"
-                      : "Select wallet"
+                      ? "Use Eternl"
+                      : "Use MetaMask"
+                    : !chainConfig
+                    ? "Config missing"
                     : null;
+                const tokenSymbol =
+                  chain === "CARDANO"
+                    ? cardanoConfig?.token_symbol ?? "NTX"
+                    : ethConfig?.token_symbol ?? "NTX";
 
                 return (
                   <Card key={p.unique_id} className="rounded-lg border border-border/60 shadow-sm hover:shadow-md transition">
@@ -374,7 +457,7 @@ export default function PaymentsPage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-medium text-foreground">Amount:</span>
                                 <code className="bg-muted px-2 py-1 rounded text-green-500">
-                                  {config?.token_symbol ?? "NTX"} {p.amount}
+                                  {tokenSymbol} {p.amount}
                                 </code>
                               </div>
                               {requiredWallet && (
@@ -468,7 +551,7 @@ export default function PaymentsPage() {
                               Amount
                             </span>
                             <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
-                              {config?.token_symbol ?? "NTX"} {p.amount}
+                              {tokenSymbol} {p.amount}
                             </code>
                             {requiredWallet && (
                               <>
@@ -551,4 +634,3 @@ export default function PaymentsPage() {
     </div>
   );
 }
-

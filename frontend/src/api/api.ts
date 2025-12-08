@@ -276,6 +276,19 @@ export interface TokenConfig {
   network_name?: string | null;
 }
 
+export interface CardanoTokenConfig extends TokenConfig {
+  policy_id: string;
+  asset_name_hex: string;
+  asset_name: string;
+  asset_name_encoded?: string;
+  asset_id: string;
+}
+
+export interface PaymentsConfig {
+  ethereum: TokenConfig;
+  cardano: CardanoTokenConfig;
+}
+
 // Single transaction item from DMS
 export interface DmsPaymentItem {
   unique_id: string;
@@ -285,6 +298,7 @@ export interface DmsPaymentItem {
   amount: string;
   status: "paid" | "unpaid";
   tx_hash: string; // can be empty string when unpaid
+  blockchain?: string;
 }
 
 export interface DmsIgnoredPayment {
@@ -308,12 +322,37 @@ export interface PaymentReport {
   to_address: string;
   amount: string;
   payment_provider: string; // maps to unique_id
+  blockchain?: string;
+}
+
+export interface CardanoBuildPayload {
+  from_address: string;
+  to_address: string;
+  amount: string;
+  payment_provider: string;
+  change_address?: string;
+}
+
+export interface CardanoBuildResponse {
+  tx_cbor: string;
+  tx_body_cbor: string;
+  tx_hash: string;
+  fee_lovelace: string;
+  network: string;
+}
+
+export interface CardanoSubmitPayload {
+  tx_body_cbor: string;
+  witness_set_cbor: string;
+  payment_provider: string;
+  to_address: string;
+  amount: string;
 }
 
 // ==== PAYMENTS ENDPOINTS ====
 // Config
 export const getPaymentsConfig = () =>
-  api.get<TokenConfig>("/payments/config").then((res) => res.data);
+  api.get<PaymentsConfig>("/payments/config").then((res) => res.data);
 
 // New list endpoint (replaces old /payments/pending)
 export const getPaymentsList = () =>
@@ -322,3 +361,9 @@ export const getPaymentsList = () =>
 // Report endpoint (replaces old /payments/report)
 export const reportToDms = (payload: PaymentReport) =>
   api.post<PaymentReport>("/payments/report_to_dms", payload).then((res) => res.data);
+
+export const buildCardanoTx = (payload: CardanoBuildPayload) =>
+  api.post<CardanoBuildResponse>("/payments/cardano/build", payload).then((res) => res.data);
+
+export const submitCardanoTx = (payload: CardanoSubmitPayload) =>
+  api.post<PaymentReport>("/payments/cardano/submit", payload).then((res) => res.data);
