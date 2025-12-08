@@ -476,6 +476,7 @@ def test_payments_list_payments_normalizes_transactions(client):
     assert body["unpaid_count"] == 1
     assert body["ignored_count"] == 0
     assert body["items"][0]["unique_id"] == "1"
+    assert body["items"][0]["blockchain"] == "ETHEREUM"
 
 
 def test_payments_list_payments_handles_list_addresses(client):
@@ -510,6 +511,7 @@ def test_payments_list_payments_handles_list_addresses(client):
     body = response.json()
     assert body["ignored_count"] == 0
     assert body["items"][0]["to_address"] == addr
+    assert body["items"][0]["blockchain"] == "ETHEREUM"
 
 
 def test_payments_list_payments_ignores_invalid_payloads(client):
@@ -547,6 +549,41 @@ def test_payments_list_payments_ignores_invalid_payloads(client):
     assert body["total_count"] == 1
     assert body["ignored_count"] == 2
     assert body["items"][0]["unique_id"] == "2"
+
+
+def test_payments_list_payments_supports_cardano(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    cardano_addr = "addr_test1qqm9ehanrh5rkukd0jwrl4j4zhnlzhkutwcukxqjdr3yfwydfmfydwq78revg8sx3wf3aj9gwn5kqyg0l2485zrj3mvsktcw4k"
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None):
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "cardano-1",
+                        "status": "unpaid",
+                        "to_address": [{"blockchain": "CARDANO", "provider_addr": cardano_addr}],
+                        "amount": "5",
+                        "payment_validator_did": "did:validator:3",
+                        "contract_did": "did:contract:3",
+                        "tx_hash": "",
+                    }
+                ],
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get("/payments/list_payments")
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["blockchain"] == "CARDANO"
+    assert body["items"][0]["to_address"] == cardano_addr
 
 
 def test_organizations_status_includes_timeline(client, monkeypatch):

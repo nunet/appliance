@@ -28,10 +28,16 @@ __all__ = [
     "DownloadExamplesRequest",
     "SimpleStatusResponse",
     "TokenConfig",
+    "CardanoTokenConfig",
+    "PaymentsConfig",
     "PayableItem",
     "PayablesResponse",
     "PaymentReportIn",
     "PaymentReportOut",
+    "CardanoBuildRequest",
+    "CardanoBuildResponse",
+    "CardanoSubmitRequest",
+    "CardanoSubmitResponse",
     "DmsTransaction",
     "DmsTransactionsList",
     "FormFieldOption", "FormField", "FormSchema",
@@ -61,6 +67,25 @@ class TokenConfig(BaseModel):
     explorer_base_url: Optional[str] = None
     network_name: Optional[str] = None
 
+
+class CardanoTokenConfig(BaseModel):
+    chain_id: int
+    token_address: str
+    token_symbol: str = "NTX"
+    token_decimals: int = 0
+    explorer_base_url: Optional[str] = None
+    network_name: Optional[str] = None
+    policy_id: str
+    asset_name_hex: str
+    asset_name: str
+    asset_name_encoded: Optional[str] = None
+    asset_id: str
+
+
+class PaymentsConfig(BaseModel):
+    ethereum: TokenConfig
+    cardano: CardanoTokenConfig
+
 class PayableItem(BaseModel):
     payment_id: str
     toAddress: str
@@ -85,6 +110,34 @@ class PaymentReportOut(BaseModel):
     amount: str
     payment_provider: str
     blockchain: str
+
+
+class CardanoBuildRequest(BaseModel):
+    from_address: str
+    to_address: str
+    amount: str
+    payment_provider: str
+    change_address: Optional[str] = None
+
+
+class CardanoBuildResponse(BaseModel):
+    tx_cbor: str
+    tx_body_cbor: str
+    tx_hash: str
+    fee_lovelace: str
+    network: str
+
+
+class CardanoSubmitRequest(BaseModel):
+    tx_body_cbor: str
+    witness_set_cbor: str
+    payment_provider: str
+    to_address: str
+    amount: str
+
+
+class CardanoSubmitResponse(PaymentReportOut):
+    fee_lovelace: Optional[str] = None
 
 class DmsTransaction(BaseModel):
     unique_id: str

@@ -24,7 +24,7 @@ from .dms_utils import (
     contract_terminate,
     contract_state,
 )
-from .path_constants import BACKEND_DIR, DMS_DEPLOYMENTS_LOGS
+from .path_constants import BACKEND_DIR, DMS_DEPLOYMENTS_DIR, DMS_DEPLOYMENTS_LOGS
 
 logger = logging.getLogger(__name__)
 
@@ -992,6 +992,7 @@ class DMSManager:
         if alloc_dir:
             base = DMS_DEPLOYMENTS_LOGS
             alloc_path = Path(alloc_dir)
+            base, alloc_path = _rebase_allocation_path(base, alloc_path)
             if not _safe_under(base, alloc_path):
                 message = f"alloc_dir must live under {base}"
                 logger.error(message)
@@ -1067,6 +1068,61 @@ def _safe_under(base: Path, child: Path) -> bool:
         return str(child.resolve()).startswith(str(base.resolve()))
     except Exception:
         return False
+
+
+def _rebase_allocation_path(base: Path, alloc_path: Path) -> Tuple[Path, Path]:
+    """
+    If alloc_dir points to an old location, remap to a known deployments base that exists.
+    Keeps path_constants minimal while still resolving the live DMS path.
+    """
+    candidates: List[Path] = []
+    seen: set[str] = set()
+    for candidate in (base, DMS_DEPLOYMENTS_DIR, Path("/home/nunet/nunet/deployments")):
+        try:
+            p = Path(candidate)
+        except Exception:
+            continue
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(p)
+
+    alloc_exists = False
+    try:
+        alloc_exists = alloc_path.exists()
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        if _safe_under(candidate, alloc_path) and alloc_exists:
+            return candidate, alloc_path
+
+    try:
+        rel = alloc_path.relative_to(base)
+    except Exception:
+        rel = None
+
+    if rel is not None:
+        for candidate in candidates:
+            mapped = candidate / rel
+            try:
+                if mapped.exists():
+                    return candidate, mapped
+            except Exception:
+                continue
+
+    parts = alloc_path.parts[-2:]
+    if len(parts) == 2:
+        for candidate in candidates:
+            mapped = candidate / parts[0] / parts[1]
+            try:
+                if mapped.exists():
+                    return candidate, mapped
+            except Exception:
+                continue
+
+    return base, alloc_path
 
 
 def _stat_file_with_sudo(path: Path) -> Tuple[Optional[int], Optional[str], Optional[str]]:

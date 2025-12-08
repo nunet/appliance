@@ -74,8 +74,11 @@ export async function resolveEternlAddress(api: Cip30Api): Promise<string> {
 export async function buildCardanoConnection(api: Cip30Api): Promise<WalletConnection> {
   const address = await resolveEternlAddress(api);
   const networkId = api.getNetworkId ? await api.getNetworkId() : undefined;
+  const changeHex = api.getChangeAddress ? await api.getChangeAddress() : null;
+  const changeAddress = changeHex ? hexAddressToBech32(changeHex) : address;
   return {
     address,
+    changeAddress,
     label: networkId === 1 ? "Cardano Mainnet" : "Cardano Testnet",
     provider: "Eternl",
     networkId,
