@@ -930,11 +930,22 @@ class DMSManager:
         argv = base_argv + ["--blockchain", normalized_blockchain]
         supports_blockchain_flag = True
         last_error: Optional[str] = None
-        for attempt in range(1, 4):
+        max_attempts = 6  # allow longer for Cardano block times
+        retry_delay_sec = 10
+        for attempt in range(1, max_attempts + 1):
             cp = run_dms_command_with_passphrase(argv, capture_output=True, text=True, check=False)
             stdout = (cp.stdout or "").strip()
             stderr = (cp.stderr or "").strip()
             error_text_lower = f"{stderr}\n{stdout}".lower()
+
+            # If the CLI returns JSON with {"error": ""}, treat it as success even if rc != 0.
+            try:
+                parsed = json.loads(stdout) if stdout else {}
+            except Exception:
+                parsed = {}
+            if isinstance(parsed, dict) and parsed.get("error") == "":
+                return {"status": "success", "stdout": stdout, "stderr": stderr}
+
             if cp.returncode == 0:
                 error_message = self._extract_error(stdout, stderr)
                 if not error_message:
@@ -946,12 +957,14 @@ class DMSManager:
                     logger.warning("confirm_transaction: CLI does not support --blockchain flag, retrying without it")
                     supports_blockchain_flag = False
                     argv = list(base_argv)
-                    if attempt < 4:
+                    if attempt < max_attempts:
                         continue
                 last_error = stderr or stdout or f"Command failed with return code {cp.returncode}"
                 logger.debug("Confirm transaction failed (attempt %s): %s", attempt, last_error)
-            if attempt < 3:
-                time.sleep(2)
+            if attempt < max_attempts:
+                # For transient validation responses (e.g., "not verified" while waiting for block),
+                # back off before retrying.
+                time.sleep(retry_delay_sec)
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
 
     def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
