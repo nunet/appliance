@@ -1,5 +1,6 @@
 // src/api.ts
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import { AuthResponse } from "./auth";
 
 
 // ==== TYPES ====
@@ -80,19 +81,60 @@ export const api = axios.create({
 
 let authToken: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
+let onTokenRefreshedHandler: ((response: AuthResponse) => void) | null = null;
+let refreshPromise: Promise<string | null> | null = null;
 
-const attachToken = (config: InternalAxiosRequestConfig) => {
-  if (authToken) {
-    config.headers = config.headers ?? {};
-    config.headers.Authorization = `Bearer ${authToken}`;
-    console.log('🚀 Adding Authorization header to request:', config.url);
-  } else {
-    console.log('⚠️ No auth token available for request:', config.url);
+const TOKEN_EXPIRY_KEY = "nunet-admin-expiry";
+const REFRESH_THRESHOLD_MS = 60 * 1000; // 1 minute
+
+api.interceptors.request.use(async (config) => {
+  // Do not intercept refresh requests
+  if (config.url?.endsWith("/auth/refresh")) {
+    if (authToken) {
+      config.headers.Authorization = `Bearer ${authToken}`;
+    }
+    return config;
   }
-  return config;
-};
 
-api.interceptors.request.use(attachToken);
+  const expiryStr = localStorage.getItem(TOKEN_EXPIRY_KEY);
+  const expiresAt = expiryStr ? Number.parseInt(expiryStr, 10) : 0;
+  const shouldRefresh = authToken && expiresAt && expiresAt - Date.now() < REFRESH_THRESHOLD_MS;
+
+  if (shouldRefresh) {
+    if (!refreshPromise) {
+      console.log("🚀 Kicking off token refresh...");
+      refreshPromise = api
+        .post<AuthResponse>("/auth/refresh")
+        .then((res) => {
+          const newAuthData = res.data;
+          console.log("✅ Token refreshed successfully via interceptor.");
+          onTokenRefreshedHandler?.(newAuthData);
+          return newAuthData.access_token;
+        })
+        .catch((err) => {
+          console.error("Token refresh failed in interceptor", err);
+          unauthorizedHandler?.();
+          return Promise.reject(err);
+        })
+        .finally(() => {
+          refreshPromise = null;
+        });
+    }
+
+    try {
+      const newToken = await refreshPromise;
+      if (newToken && config.headers) {
+        config.headers.Authorization = `Bearer ${newToken}`;
+      }
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  } else if (authToken) {
+    config.headers.Authorization = `Bearer ${authToken}`;
+  }
+
+  return config;
+});
 
 api.interceptors.response.use(
   (response) => response,
@@ -111,6 +153,10 @@ export const setAuthToken = (token: string | null) => {
 
 export const setUnauthorizedHandler = (handler: (() => void) | null) => {
   unauthorizedHandler = handler;
+};
+
+export const setOnTokenRefreshedHandler = (handler: (response: AuthResponse) => void) => {
+  onTokenRefreshedHandler = handler;
 };
 
 // ==== DMS ENDPOINTS ====

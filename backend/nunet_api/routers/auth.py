@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..security import (
@@ -10,6 +10,7 @@ from ..security import (
     create_access_token,
     is_password_set,
     load_credentials,
+    require_auth,
     set_admin_password,
     validate_reset_token,
     validate_setup_token,
@@ -130,3 +131,9 @@ def login(payload: LoginPayload) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
 
     return _token_response(ADMIN_USERNAME)
+
+
+@router.post("/refresh")
+def refresh_token(username: str = Depends(require_auth)) -> dict:
+    """Refresh an access token. Requires a valid, non-expired token."""
+    return _token_response(username)
