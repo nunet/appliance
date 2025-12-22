@@ -5,7 +5,7 @@
         "public_port": {
             "label": "Public Port",
             "type": "number",
-            "default": 17000
+            "default": 17000,
             "min": 1024,
             "max": 65535,
             "required": true,
