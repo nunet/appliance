@@ -303,8 +303,8 @@ function isTerminationAllowed(contract?: ContractMetadata | null): boolean {
 function getDefaultHostDid(contract?: ContractMetadata | null): string {
   if (!contract) return "";
   return (
-    contract.payment_validator_did?.uri ??
     contract.solution_enabler_did?.uri ??
+    contract.payment_validator_did?.uri ??
     contract.participants?.provider?.uri ??
     ""
   );
