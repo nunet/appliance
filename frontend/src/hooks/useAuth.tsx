@@ -8,6 +8,7 @@ import {
 } from "../api/auth";
 import {
   setAuthToken,
+  setOnTokenRefreshedHandler,
   setUnauthorizedHandler,
   allInfo,
   allSysInfo,
@@ -82,7 +83,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setUnauthorizedHandler(() => logout());
-    return () => setUnauthorizedHandler(null);
+
+    // Provide the interceptor with a way to update our auth state
+    setOnTokenRefreshedHandler((response) => {
+      applyTokenState(response, setToken, setExpiresAt);
+    });
+
+    return () => {
+      setUnauthorizedHandler(null);
+      setOnTokenRefreshedHandler(() => {});
+    };
   }, [logout]);
 
   useEffect(() => {
@@ -139,6 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const id = window.setTimeout(() => logout(), delta);
     return () => window.clearTimeout(id);
   }, [token, expiresAt, logout]);
+
 
   useEffect(() => {
     if (!token) {
