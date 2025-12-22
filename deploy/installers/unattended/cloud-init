@@ -16,6 +16,9 @@ packages:
   - acl
   - lnav
   - python3-qrcode
+  - make
+  - virtualbox-guest-utils
+  - rustup
 
 users:
   - name: ubuntu
@@ -224,6 +227,16 @@ runcmd:
 
     # Make sure first-boot script is executable
     - chmod +x /var/lib/cloud/instance/run-on-appliance-boot.sh
+
+    # log viewer deps (d2, fblog, vbox sharing)
+    - curl -fsSL https://d2lang.com/install.sh | sh -s --
+    - sudo mv ~/.local/bin/d2 /usr/local/bin/
+    - rustup default stable
+	  - cargo install fblog
+    - sudo mv /home/ubuntu/.cargo/bin/fblog /usr/local/bin/
+    - sudo usermod -aG vboxsf ubuntu
+    - sudo usermod -aG vboxsf nunet
+    - ln -s /home/nunet/config/dms_config.json /home/ubuntu/
 
     # Reload units & enable first-boot
     - systemctl daemon-reload

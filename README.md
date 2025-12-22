@@ -69,6 +69,17 @@ Internally, the script performs a few key tasks:
 3. **Open the API** – once running, the backend exposes `http://127.0.0.1:8080` (default) and the frontend runs on `http://127.0.0.1:5173` (or whichever Vite port is configured).
 4. **Explore the documentation** linked above to understand module responsibilities and API endpoints.
 
+## VirtualBox Log Sharing
+
+In VirtualBox, go to `Settings -> Shared Folders -> Add Share` and fill out the form:
+
+- Folder Path: *user's choice*
+- Mount Point: `/home/nunet/logs`
+- Check Auto-mount
+- Check Make Machine-permanent
+
+File `nunet-dms.log` will appear in the *user's choice* folder.
+
 ---
 
 ## Runtime Paths & Config
