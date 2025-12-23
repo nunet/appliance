@@ -19,3 +19,4 @@ nodes:
     node1:
         allocations:
             - alloc1
+        peer: {{peer_id}} # required for targeted deployments
