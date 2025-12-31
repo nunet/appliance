@@ -178,7 +178,9 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
     }
     return typeText;
   })();
-  const timestampText = pickString(deployment.timestamp) ?? "N/A";
+  const timestampText = ((ts) => (ts ? new Date(ts).toLocaleString() : "N/A"))(
+    pickString(deployment.timestamp)
+  );
   const ensembleText = pickString(
     deployment.ensemble_file,
     manifestData?.ensemble_file,

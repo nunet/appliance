@@ -156,7 +156,8 @@ export default function DeploymentsCards() {
                         </span>
                       </p>
                       <p>
-                        <b>Timestamp:</b> {d.timestamp}
+                        <b>Timestamp:</b>{" "}
+                        {new Date(d.timestamp).toLocaleString()}
                       </p>
                     </div>
                   </div>
