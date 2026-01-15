@@ -136,6 +136,53 @@
       }
     ]
   },
+  "did:key:z6MkmrJZqjwUQ5yy1Q8FMs9FXcX7kAsYNMr8wUWBPR8A4BRw": {
+    "name": "Gaimin Testnet",
+    "onboarding_api_url": "https://gaimin.nunet.network/api",
+    "tokenomics": {
+      "enabled": false,
+      "chain": "ethereum"
+    },
+    "join_fields": [
+      {
+        "name": "email",
+        "label": "Email",
+        "type": "email",
+        "required": true
+      },
+      {
+        "name": "location",
+        "label": "Location (City, Country)",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "discord",
+        "label": "Discord Username (Optional)",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "roles": [
+      {
+        "id": "compute_provider",
+        "label": "Compute Provider",
+        "description": "",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      }
+    ]
+  },
   "did:key:z6MknaPMu6ju2PNYWQ3wnshnLA8erLb5sauVgTtY7Ni18VyR": {
     "name": "NuTestNet",
     "onboarding_api_url": "https://onboarding.nunet.network/api",
