@@ -18,11 +18,14 @@ export APPLIANCE_ROOT=${APPLIANCE_ROOT:-$ROOT_DIR}
 export NUNET_STATIC_DIR=${NUNET_STATIC_DIR:-"$APPLIANCE_ROOT/frontend/dist"}
 export BACKEND_PORT=${BACKEND_PORT:-8080}
 
-cd backend
-
-if [ -d ".venv" ]; then
-  . .venv/bin/activate
+VENV_DIR=${VENV_DIR:-"$ROOT_DIR/.venv"}
+if [ -d "$VENV_DIR" ]; then
+  . "$VENV_DIR/bin/activate"
+else
+  echo "Warning: venv not found at $VENV_DIR; using system Python" >&2
 fi
+
+cd backend
 
 gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app \
   --bind "0.0.0.0:${BACKEND_PORT}" \

@@ -94,8 +94,10 @@ def process_yaml_template(
         return None
 
     values = dict(form_values or {})
-    if deployment_type == "non_targeted":
-        values.pop("peer_id", None)
+    if deployment_type == "non_targeted" and not values.get("peer_id"):
+        # Provide a dummy peer_id to satisfy templates using StrictUndefined.
+        # Will be removed from the rendered YAML below.
+        values["peer_id"] = "__DUMMY_PEER__"
 
     try:
         template = jinja2.Environment(undefined=jinja2.StrictUndefined).from_string(template_text)
@@ -107,9 +109,61 @@ def process_yaml_template(
         logger.error("Failed to render %s: %s", yaml_path, exc)
         return None
 
-    if deployment_type == "non_targeted":
-        rendered = re.sub(r"^\s*peer:\s*.*?$", "", rendered, flags=re.MULTILINE)
-        rendered = re.sub(r"\n{3,}", "\n\n", rendered)
+    # Post-render mutation of 'peer' based on deployment type.
+    # Prefer YAML-aware mutation; fallback to regex if YAML parsing is unavailable or fails.
+    try:
+        import yaml  # type: ignore
+        use_yaml = True
+    except Exception:
+        use_yaml = False
+
+    if use_yaml:
+        try:
+            # Single-document YAML expected
+            doc = yaml.safe_load(rendered)
+
+            if isinstance(doc, dict):
+                nodes = doc.get("nodes")
+                target_peer = values.get("peer_id")
+
+                if isinstance(nodes, dict):
+                    for node in nodes.values():
+                        if isinstance(node, dict):
+                            if deployment_type == "non_targeted":
+                                node.pop("peer", None)
+                            elif deployment_type in ("local", "targeted") and target_peer:
+                                node["peer"] = target_peer
+
+                elif isinstance(nodes, list):
+                    for node in nodes:
+                        if isinstance(node, dict):
+                            if deployment_type == "non_targeted":
+                                node.pop("peer", None)
+                            elif deployment_type in ("local", "targeted") and target_peer:
+                                node["peer"] = target_peer
+
+            rendered = yaml.safe_dump(doc, sort_keys=False).strip() + "\n"
+
+        except Exception as exc:
+            logger.warning(
+                "YAML post-processing failed for %s (%s); falling back to regex: %s",
+                yaml_path, deployment_type, exc
+            )
+            if deployment_type == "non_targeted":
+                rendered = re.sub(r"^\s*peer:\s*.*?$", "", rendered, flags=re.MULTILINE)
+                rendered = re.sub(r"\n{3,}", "\n\n", rendered)
+            elif deployment_type in ("local", "targeted"):
+                peer = values.get("peer_id")
+                if peer:
+                    rendered = re.sub(r"^(\s*)peer:\s*.*?$", rf"\1peer: {peer}", rendered, flags=re.MULTILINE)
+    else:
+        if deployment_type == "non_targeted":
+            rendered = re.sub(r"^\s*peer:\s*.*?$", "", rendered, flags=re.MULTILINE)
+            rendered = re.sub(r"\n{3,}", "\n\n", rendered)
+        elif deployment_type in ("local", "targeted"):
+            peer = values.get("peer_id")
+            if peer:
+                rendered = re.sub(r"^(\s*)peer:\s*.*?$", rf"\1peer: {peer}", rendered, flags=re.MULTILINE)
 
     return rendered
 
