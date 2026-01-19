@@ -1,9 +1,11 @@
 import json, subprocess, os
+import logging
 from modules.dms_manager import DMSManager
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks, Request
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+import time
 from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from modules.path_constants import DMS_DEPLOYMENTS_DIR
@@ -25,6 +27,7 @@ from modules.ensemble_utils import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 def _resolve_deploy_permission() -> Tuple[bool, Optional[str], str]:
     """
@@ -218,9 +221,34 @@ def _resolve_allocation_choice(
         status_code=400,
         detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
     )
+
 @router.get("/deployments", response_model=DeploymentsWebResponse)
-def list_deployments(mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    res = mgr.get_deployments_for_web()
+def list_deployments(
+    request: Request,
+    status: Optional[List[str]] = Query(default=None),
+    created_after: Optional[str] = Query(default=None),
+    limit: Optional[int] = Query(default=None, ge=1),
+    offset: Optional[int] = Query(default=None, ge=0),
+    sort: Optional[str] = Query(default=None),
+    filter: Optional[str] = Query(default=None),
+    include_manifest: bool = Query(default=False),
+    status_ordered: bool = Query(default=False),
+    mgr: EnsembleManagerV2 = Depends(get_mgr),
+):
+    if created_after is None:
+        created_after = request.query_params.get("created-after")
+
+    res = mgr.get_deployments_for_web(
+        statuses=status,
+        created_after=created_after,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+        metadata_filter=filter,
+        include_manifest=include_manifest,
+        status_ordered=status_ordered,
+        refresh_status=False,
+    )
     if res.get("status") != "success":
         raise HTTPException(status_code=500, detail=res.get("message", "Failed to get deployments"))
 
@@ -392,6 +420,15 @@ def _extract_dms_content(bundle: dict | None) -> str:
         return f"{prefix}{stderr}"
     return ""
 
+
+def _prefer_filtered_dms(
+    fallback: dict | None,
+    candidate: dict | None,
+) -> dict | None:
+    if candidate is not None:
+        return candidate
+    return fallback
+
 @router.post("/deployments/{deployment_id}/logs/request", response_model=SimpleStatusResponse)
 def request_deployment_logs(
     deployment_id: str,
@@ -399,6 +436,11 @@ def request_deployment_logs(
         default=None,
         description="Optional allocation name if multiple exist",
     ),
+    wait: bool = Query(
+        default=False,
+        description="Wait for DMS to finish the log request",
+    ),
+    background_tasks: BackgroundTasks = None,
     mgr: EnsembleManagerV2 = Depends(get_mgr),
 ):
     selected_alloc, allocs = _resolve_allocation_choice(mgr, deployment_id, allocation)
@@ -429,29 +471,71 @@ def request_deployment_logs(
         selected_alloc,
     ]
 
-    try:
-        result = run_dms_command_with_passphrase(
+    if not wait:
+        if background_tasks is None:
+            return SimpleStatusResponse(
+                status="warning",
+                message="Background task support unavailable; retry with wait=true.",
+            )
+        background_tasks.add_task(
+            _run_log_request_background,
             cmd,
-            capture_output=True,
-            text=True,
-            check=True,
         )
-    except subprocess.CalledProcessError as exc:
-        message = (exc.stderr or exc.stdout or str(exc)).strip() or "Failed to request logs."
+        return SimpleStatusResponse(
+            status="success",
+            message=f"Log request queued for allocation {selected_alloc}.",
+        )
+
+    max_attempts = 2
+    timeout_sec = 30
+    last_error = None
+    result = None
+    timed_out = False
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = run_dms_command_with_passphrase(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_error = f"log request timed out: {exc}"
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "nunet_not_found", "message": "nunet CLI not available"},
+            ) from exc
+        except Exception as exc:
+            last_error = str(exc)
+        else:
+            stdout = (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
+            if result.returncode == 0:
+                break
+            error_text = f"{stderr}\n{stdout}".lower()
+            last_error = stderr or stdout or f"Command failed with return code {result.returncode}"
+            if "request timeout" in error_text or "status 408" in error_text:
+                timed_out = True
+            if not timed_out:
+                break
+        if attempt < max_attempts:
+            time.sleep(2)
+
+    if not result or result.returncode != 0:
+        if timed_out:
+            return SimpleStatusResponse(
+                status="warning",
+                message=(
+                    "Log request timed out; logs may appear after a short delay. "
+                    "Try refreshing the logs view."
+                ),
+            )
         raise HTTPException(
             status_code=502,
-            detail={"error": "log_request_failed", "message": message},
-        ) from exc
-    except FileNotFoundError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "nunet_not_found", "message": "nunet CLI not available"},
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "log_request_error", "message": str(exc)},
-        ) from exc
+            detail={"error": "log_request_failed", "message": last_error or "Failed to request logs."},
+        )
 
     message = f"Log request triggered for allocation {selected_alloc}."
     stdout = (result.stdout or "").strip()
@@ -471,25 +555,68 @@ def request_deployment_logs(
 
     return SimpleStatusResponse(status="success", message=message)
 
+
+def _run_log_request_background(cmd: list[str]) -> None:
+    try:
+        run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
+        )
+    except Exception as exc:
+        logger.warning("Background log request failed: %s", exc)
+
 @router.get("/deployments/{deployment_id}/logs", response_model=LogsTextResponse)
 def deployment_logs_text(
     deployment_id: str,
     allocation: str | None = Query(default=None, description="Optional allocation name if multiple exist"),
+    dms_query: str | None = Query(default=None, description="Optional jq filter for DMS logs"),
+    refresh_alloc: bool = Query(default=True, description="Refresh allocation logs via DMS before reading files"),
+    dms_lines: int = Query(
+        default=2000,
+        ge=1,
+        le=10000,
+        description="Number of DMS log lines to scan for filtered output",
+    ),
+    dms_view: str = Query(
+        default="compact",
+        description="DMS log view: compact, folded, expanded, map, raw",
+    ),
+    include_alloc: bool = Query(
+        default=True,
+        description="Include allocation stdout/stderr logs in response",
+    ),
     mgr: EnsembleManagerV2 = Depends(get_mgr)
 ):
     """
     Non-interactive logs endpoint. If a deployment has multiple allocations and none is given,
     return 400 with available choices (so the API never blocks on input()).
     """
-    selected_alloc, _ = _resolve_allocation_choice(mgr, deployment_id, allocation)
+    selected_alloc = None
+    if include_alloc:
+        selected_alloc, _ = _resolve_allocation_choice(mgr, deployment_id, allocation)
 
     alloc_dir = None
-    if selected_alloc:
+    if include_alloc and selected_alloc:
         alloc_dir = DMS_DEPLOYMENTS_DIR / deployment_id / selected_alloc
 
     try:
         dm = DMSManager()
-        structured = dm.get_structured_logs(alloc_dir, lines=400)
+        alloc_lines_limit = 400
+        structured = dm.get_structured_logs(
+            alloc_dir if include_alloc else None,
+            lines=alloc_lines_limit,
+            refresh_alloc_logs=refresh_alloc,
+            include_dms_logs=False,
+        )
+        filtered_dms = dm.get_filtered_dms_logs(
+            deployment_id,
+            query=dms_query,
+            max_lines=dms_lines,
+            view=dms_view,
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -519,8 +646,10 @@ def deployment_logs_text(
     lines_out.append(_format_log_section("STDOUT", stdout_section))
     lines_out.append("")
     lines_out.append(_format_log_section("STDERR", stderr_section))
+    dms_bundle = _prefer_filtered_dms(structured.get("dms_logs"), filtered_dms)
+
     lines_out.append("")
-    lines_out.append(_format_dms_section(structured.get("dms_logs")))
+    lines_out.append(_format_dms_section(dms_bundle))
 
     log_message = "\n".join(lines_out).strip()
     return LogsTextResponse(
@@ -528,9 +657,9 @@ def deployment_logs_text(
         message=log_message,
         stdout=_extract_log_content(stdout_section),
         stderr=_extract_log_content(stderr_section),
-        dms=_extract_dms_content(structured.get("dms_logs")),
+        dms=_extract_dms_content(dms_bundle),
         allocation=structured.get("allocation"),
-        dms_logs=structured.get("dms_logs"),
+        dms_logs=dms_bundle,
     )
 
 @router.post("/deployments", response_model=DeployResponse)
@@ -558,6 +687,28 @@ def shutdown_deployment(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get
     if res.get("status") != "success":
         raise HTTPException(status_code=500, detail=res.get("message", "Shutdown failed"))
     return ShutdownResponse(status="success", message=res.get("message", ""))
+
+
+@router.delete("/deployments/{deployment_id}", response_model=SimpleStatusResponse)
+def delete_deployment(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
+    res = mgr.delete_deployment(deployment_id)
+    if res.get("status") != "success":
+        raise HTTPException(status_code=500, detail=res.get("message", "Delete failed"))
+    return SimpleStatusResponse(status=res.get("status", "error"), message=res.get("message", ""))
+
+
+@router.post("/deployments/prune", response_model=SimpleStatusResponse)
+def prune_deployments(
+    before: Optional[str] = Query(default=None),
+    all: bool = Query(default=False),
+    mgr: EnsembleManagerV2 = Depends(get_mgr),
+):
+    if not before and not all:
+        raise HTTPException(status_code=400, detail="Provide before or all to prune deployments")
+    res = mgr.prune_deployments(before=before, all=all)
+    if res.get("status") != "success":
+        raise HTTPException(status_code=500, detail=res.get("message", "Prune failed"))
+    return SimpleStatusResponse(status=res.get("status", "error"), message=res.get("message", ""))
 
 
 @router.get("/templates", response_model=TemplatesListResponse)

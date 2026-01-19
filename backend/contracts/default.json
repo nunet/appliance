@@ -44,9 +44,21 @@
                 "blockchain": "ETHEREUM"
             }
         ],
+        "payment_type": "blockchain",
+        "payment_model": "pay_per_allocation",
         "fees_per_allocation": "500",
-        "timestamp": "0001-01-01T00:00:00Z",
-        "payment_type": "blockchain"
+        "fee_per_deployment": "",
+        "fee_per_time_unit": "",
+        "time_unit": "hour",
+        "fee_per_cpu_core_per_time_unit": "",
+        "fee_per_ram_gb_per_time_unit": "",
+        "fee_per_disk_gb_per_time_unit": "",
+        "fee_per_gpu_per_time_unit": "",
+        "resource_time_unit": "hour",
+        "fixed_rental_amount": "",
+        "payment_period": "hour",
+        "payment_period_count": "1",
+        "timestamp": "0001-01-01T00:00:00Z"
     },
     "contract_terms": "Standard contract terms",
     "contract_participants": {

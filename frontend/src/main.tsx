@@ -15,7 +15,6 @@ import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { AppSidebar } from "./components/app-sidebar";
 import { SiteHeader } from "./components/site-header";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { useAppMode } from "./hooks/useAppMode";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { queryClient } from "./query-client";
 
@@ -25,7 +24,6 @@ const DeploymentsHistory = lazy(() => import("./pages/DeploymentsHistory"));
 const NewDeployment = lazy(() => import("./pages/NewDeployment"));
 const DeploymentDetailsPage = lazy(() => import("./pages/Deployment"));
 const Ensembles = lazy(() => import("./pages/Ensembles"));
-const Wizzard = lazy(() => import("./pages/Wizzard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const Organizations = lazy(() => import("./pages/Organizations"));
 const Contracts = lazy(() => import("./pages/Contracts"));
@@ -56,12 +54,6 @@ function Layout() {
 
 // eslint-disable-next-line react-refresh/only-export-components
 function ProtectedRoutes() {
-  const { mode } = useAppMode();
-
-  if (mode === "") {
-    return <Navigate to="/wizzard" replace />;
-  }
-
   return <Layout />;
 }
 
@@ -138,8 +130,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <Route path="/login" element={<LoginRoute />} />
 
                 <Route element={<RequireAuthWrapper />}>
-                  <Route path="/wizzard" element={<Wizzard />} />
-
                   <Route element={<ProtectedRoutes />}>
                     <Route path="*" element={<NotFound />} />
                     <Route path="/" element={<App />} />

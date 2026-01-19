@@ -37,8 +37,30 @@ export interface DeploymentLogsResponse {
 }
 
 // deployments
-export async function getDeployments() {
-  const res = await api.get(`/ensemble/deployments`);
+export interface GetDeploymentsParams {
+  status?: string | string[];
+  created_after?: string;
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  filter?: string;
+  status_ordered?: boolean;
+}
+
+export async function getDeployments(params: GetDeploymentsParams = {}) {
+  const query: Record<string, string | number> = {};
+  if (params.status !== undefined) {
+    query.status = Array.isArray(params.status)
+      ? params.status.join(",")
+      : params.status;
+  }
+  if (params.created_after) query.created_after = params.created_after;
+  if (params.limit !== undefined) query.limit = params.limit;
+  if (params.offset !== undefined) query.offset = params.offset;
+  if (params.sort) query.sort = params.sort;
+  if (params.filter) query.filter = params.filter;
+  if (params.status_ordered) query.status_ordered = "true";
+  const res = await api.get(`/ensemble/deployments`, { params: query });
   return res.data;
 }
 
@@ -59,16 +81,38 @@ export async function getDeploymentFile(id) {
   return res.data;
 }
 
-export async function getDeploymentLogs(id, allocation: string | null = null): Promise<DeploymentLogsResponse> {
+export async function getDeploymentLogs(
+  id,
+  allocation: string | null = null,
+  dmsQuery: string | null = null,
+  refreshAlloc: boolean | null = null,
+  dmsLines: number | null = null,
+  dmsView: string | null = null,
+  includeAlloc: boolean | null = null
+): Promise<DeploymentLogsResponse> {
+  const params: Record<string, string> = {};
+  if (allocation) params.allocation = allocation;
+  if (dmsQuery) params.dms_query = dmsQuery;
+  if (refreshAlloc !== null) params.refresh_alloc = refreshAlloc ? "true" : "false";
+  if (dmsLines) params.dms_lines = `${dmsLines}`;
+  if (dmsView) params.dms_view = dmsView;
+  if (includeAlloc === false) params.include_alloc = "false";
   const res = await api.get(`/ensemble/deployments/${id}/logs`, {
-    params: allocation ? { allocation } : {},
+    params,
   });
   return res.data;
 }
 
-export async function requestDeploymentLogs(id, allocation: string | null = null) {
+export async function requestDeploymentLogs(
+  id,
+  allocation: string | null = null,
+  wait: boolean = false
+) {
+  const params: Record<string, string> = {};
+  if (allocation) params.allocation = allocation;
+  if (wait) params.wait = "true";
   const res = await api.post(`/ensemble/deployments/${id}/logs/request`, null, {
-    params: allocation ? { allocation } : {},
+    params,
   });
   return res.data;
 }
@@ -85,6 +129,16 @@ export async function shutdownDeployment(id) {
   const res = await api.post(
     `/ensemble/deployments/${id}/shutdown`
   );
+  return res.data;
+}
+
+export async function deleteDeployment(id: string) {
+  const res = await api.delete(`/ensemble/deployments/${id}`);
+  return res.data;
+}
+
+export async function pruneDeployments(params: { before?: string; all?: boolean } = {}) {
+  const res = await api.post(`/ensemble/deployments/prune`, null, { params });
   return res.data;
 }
 

@@ -18,6 +18,7 @@ __all__ = [
     "RunningListResponse",
     "ManifestTextResponse",
     "LogsTextResponse",
+    "DmsLogsResponse",
     "DeployRequest",
     "DeployResponse",
     "ShutdownResponse",
@@ -550,11 +551,17 @@ class FileLog(BaseModel):
     error: Optional[str] = None
 
 class DmsLogBundle(BaseModel):
-    source: Literal["journalctl", "file"] = "journalctl"
+    source: Literal["journalctl", "file", "nunet-logs"] = "journalctl"
     lines: Optional[int] = None
     stdout: str = ""
     stderr: str = ""
     returncode: Optional[int] = None
+
+class DmsLogsResponse(BaseModel):
+    status: Literal["success", "error", "warning"] = "success"
+    message: Optional[str] = None
+    dms: Optional[str] = None
+    dms_logs: Optional[DmsLogBundle] = None
 
 class AllocationLogs(BaseModel):
     dir: Optional[str] = None

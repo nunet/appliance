@@ -88,7 +88,13 @@ def stub_external_modules(tmp_path_factory):
         def list_transactions(self, blockchain: str | None = None) -> dict[str, Any]:
             return {"status": "success", "transactions": []}
 
-        def get_structured_logs(self, alloc_dir=None, lines: int = 200) -> dict[str, Any]:
+        def get_structured_logs(
+            self,
+            alloc_dir=None,
+            lines: int = 200,
+            refresh_alloc_logs: bool = True,
+            include_dms_logs: bool = True,
+        ) -> dict[str, Any]:
             return {
                 "status": "success",
                 "message": "ok",
@@ -114,6 +120,23 @@ def stub_external_modules(tmp_path_factory):
                     "stderr": "",
                     "returncode": 0,
                 },
+            }
+
+        def get_filtered_dms_logs(
+            self,
+            deployment_id: str,
+            *,
+            query: str | None = None,
+            max_lines: int = 400,
+            last_run: bool = True,
+            view: str = "compact",
+        ) -> dict[str, Any]:
+            return {
+                "source": "nunet-logs",
+                "lines": max_lines,
+                "stdout": "",
+                "stderr": "",
+                "returncode": 0,
             }
 
         def __getattr__(self, attr: str):
@@ -142,7 +165,7 @@ def stub_external_modules(tmp_path_factory):
         def get_ensemble_files(self):
             return []
 
-        def get_deployments_for_web(self):
+        def get_deployments_for_web(self, *args, **kwargs):
             return {"status": "success", "deployments": [], "count": 0}
 
         def view_running_ensembles(self):

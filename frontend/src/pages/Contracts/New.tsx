@@ -5,7 +5,6 @@ import {
   ContractCreatePayload,
   ContractTemplateDetail,
   ContractTemplateSummary,
-  ContractBlockchain,
   contractsApi,
 } from "@/api/contracts";
 import { getDmsStatus } from "@/api/api";
@@ -39,9 +38,21 @@ interface ContractFormState {
   paymentRequesterAddr: string;
   paymentProviderAddr: string;
   paymentCurrency: string;
-  paymentFeesPerAllocation: string;
-  paymentType: string;
   paymentBlockchain: string;
+  paymentType: string;
+  paymentModel: string;
+  paymentFeesPerAllocation: string;
+  paymentFeePerDeployment: string;
+  paymentFeePerTimeUnit: string;
+  paymentTimeUnit: string;
+  paymentFeePerCpuCorePerTimeUnit: string;
+  paymentFeePerRamGbPerTimeUnit: string;
+  paymentFeePerDiskGbPerTimeUnit: string;
+  paymentFeePerGpuPerTimeUnit: string;
+  paymentResourceTimeUnit: string;
+  paymentFixedRentalAmount: string;
+  paymentPeriod: string;
+  paymentPeriodCount: string;
   contractTerms: string;
   durationStart: string;
   durationEnd: string;
@@ -49,12 +60,56 @@ interface ContractFormState {
 }
 
 const PAYMENT_TYPE_OPTIONS = [
-  { value: "unknown", label: "Unknown" },
   { value: "blockchain", label: "Blockchain" },
   { value: "fiat", label: "Fiat" },
 ] as const;
 
 const BLOCKCHAIN_OPTIONS = ["UNKNOWN", "ETHEREUM", "POLYGON", "BSC", "CARDANO"] as const;
+
+const TIME_UNIT_OPTIONS = ["second", "minute", "hour"] as const;
+const PAYMENT_PERIOD_OPTIONS = ["minute", "hour", "day", "week", "month"] as const;
+
+const PAYMENT_MODEL_OPTIONS = [
+  { value: "pay_per_allocation", label: "Pay per allocation" },
+  { value: "pay_per_deployment", label: "Pay per deployment" },
+  { value: "pay_per_time_utilization", label: "Pay per time utilization" },
+  { value: "pay_per_resource_utilization", label: "Pay per resource utilization" },
+  { value: "fixed_rental", label: "Fixed rental" },
+  { value: "periodic", label: "Periodic" },
+] as const;
+
+const DEFAULT_PAYMENT_MODEL = PAYMENT_MODEL_OPTIONS[0].value;
+
+type PaymentModelConfig = {
+  feesPerAllocation?: boolean;
+  feePerDeployment?: boolean;
+  feePerTimeUnit?: boolean;
+  timeUnit?: boolean;
+  resourceFees?: boolean;
+  resourceTimeUnit?: boolean;
+  fixedRentalAmount?: boolean;
+};
+
+const PAYMENT_MODEL_CONFIG: Record<string, PaymentModelConfig> = {
+  pay_per_allocation: { feesPerAllocation: true },
+  pay_per_deployment: { feePerDeployment: true },
+  pay_per_time_utilization: { feePerTimeUnit: true, timeUnit: true },
+  pay_per_resource_utilization: { resourceFees: true, resourceTimeUnit: true },
+  fixed_rental: { fixedRentalAmount: true },
+  periodic: { feePerTimeUnit: true, timeUnit: true },
+};
+
+function getPaymentModelConfig(value: string): PaymentModelConfig | null {
+  const trimmed = value.trim().toLowerCase();
+  return PAYMENT_MODEL_CONFIG[trimmed] ?? null;
+}
+
+function getPaymentModelLabel(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const model = String(value);
+  const match = PAYMENT_MODEL_OPTIONS.find((option) => option.value === model);
+  return match ? match.label : model;
+}
 
 function extractErrorMessage(error: unknown): string {
   if (error && typeof error === "object") {
@@ -115,6 +170,45 @@ function parseExtraArgs(value: string): string[] | undefined {
   return trimmed.split(/\s+/);
 }
 
+function toFormString(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+function placeholderValue(value: unknown, fallback: string): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string" && value.trim().length === 0) return fallback;
+  return String(value);
+}
+
+function normalizeWithDefault(value: unknown, fallback: string): string {
+  const normalized = toFormString(value).trim();
+  return normalized.length ? normalized : fallback;
+}
+
+const DECIMAL_PATTERN = /^(?:\d+)(?:\.\d+)?$/;
+
+function isStrictDecimal(value: string): boolean {
+  return DECIMAL_PATTERN.test(value.trim());
+}
+
+function isPositiveIntegerString(value: string): boolean {
+  const trimmed = value.trim();
+  return /^\d+$/.test(trimmed) && Number(trimmed) > 0;
+}
+
+function coerceIsoTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? null : text;
+}
+
 function extractFormState(detail: ContractTemplateDetail): ContractFormState {
   const contract = (detail.contract as Record<string, any>) ?? {};
   const participants =
@@ -128,8 +222,36 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
   const termination = (contract.termination_option as Record<string, any>) || {};
   const payment = (contract.payment_details as Record<string, any>) || {};
   const duration = (contract.duration as Record<string, any>) || {};
-  const paymentAddressesRaw = Array.isArray(payment.addresses) ? (payment.addresses as Array<Record<string, any>>) : [];
+  const paymentAddressesRaw = Array.isArray(payment.addresses)
+    ? (payment.addresses as Array<Record<string, any>>)
+    : payment.addresses && typeof payment.addresses === "object"
+      ? [payment.addresses as Record<string, any>]
+      : [];
   const primaryAddress = paymentAddressesRaw[0];
+
+  const rawPaymentModel = toFormString(payment.payment_model).trim().toLowerCase();
+  const paymentTypeValue = normalizeWithDefault(payment.payment_type, "blockchain").toLowerCase();
+  const paymentPeriodValue = normalizeWithDefault(payment.payment_period, "hour").toLowerCase();
+  const paymentPeriodCount = normalizeWithDefault(payment.payment_period_count, "1");
+  const paymentTimeUnitValue = normalizeWithDefault(payment.time_unit, "hour").toLowerCase();
+  const paymentResourceTimeUnitValue = normalizeWithDefault(payment.resource_time_unit, "hour").toLowerCase();
+  const paymentPeriod = PAYMENT_PERIOD_OPTIONS.includes(
+    paymentPeriodValue as (typeof PAYMENT_PERIOD_OPTIONS)[number]
+  )
+    ? paymentPeriodValue
+    : "hour";
+  const paymentTimeUnit = TIME_UNIT_OPTIONS.includes(paymentTimeUnitValue as (typeof TIME_UNIT_OPTIONS)[number])
+    ? paymentTimeUnitValue
+    : "hour";
+  const paymentResourceTimeUnit = TIME_UNIT_OPTIONS.includes(
+    paymentResourceTimeUnitValue as (typeof TIME_UNIT_OPTIONS)[number]
+  )
+    ? paymentResourceTimeUnitValue
+    : "hour";
+
+  const normalizedPaymentModel = PAYMENT_MODEL_OPTIONS.some((option) => option.value === rawPaymentModel)
+    ? rawPaymentModel
+    : DEFAULT_PAYMENT_MODEL;
 
   return {
     solutionEnablerDid: contract.solution_enabler_did?.uri ?? "",
@@ -142,17 +264,40 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
     diskSize: disk.size != null ? String(disk.size) : "",
     terminationAllowed: Boolean(termination.allowed),
     terminationNotice: termination.notice_period != null ? String(termination.notice_period) : "",
-    paymentRequesterAddr: payment.requester_addr ?? primaryAddress?.requester_addr ?? "",
-    paymentProviderAddr: payment.provider_addr ?? primaryAddress?.provider_addr ?? "",
-    paymentCurrency: payment.currency ?? primaryAddress?.currency ?? "",
-    paymentFeesPerAllocation: payment.fees_per_allocation ?? "",
-    paymentType: payment.payment_type ?? "unknown",
-    paymentBlockchain: payment.blockchain ?? (primaryAddress?.blockchain as ContractBlockchain | "") ?? "UNKNOWN",
+    paymentRequesterAddr: toFormString(payment.requester_addr ?? primaryAddress?.requester_addr),
+    paymentProviderAddr: toFormString(payment.provider_addr ?? primaryAddress?.provider_addr),
+    paymentCurrency: toFormString(payment.currency ?? primaryAddress?.currency),
+    paymentBlockchain: normalizeWithDefault(payment.blockchain ?? primaryAddress?.blockchain, "ETHEREUM").toUpperCase(),
+    paymentType: PAYMENT_TYPE_OPTIONS.some((option) => option.value === paymentTypeValue)
+      ? paymentTypeValue
+      : "blockchain",
+    paymentModel: normalizedPaymentModel,
+    paymentFeesPerAllocation: toFormString(payment.fees_per_allocation),
+    paymentFeePerDeployment: toFormString(payment.fee_per_deployment),
+    paymentFeePerTimeUnit: toFormString(payment.fee_per_time_unit),
+    paymentTimeUnit: paymentTimeUnit,
+    paymentFeePerCpuCorePerTimeUnit: toFormString(payment.fee_per_cpu_core_per_time_unit),
+    paymentFeePerRamGbPerTimeUnit: toFormString(payment.fee_per_ram_gb_per_time_unit),
+    paymentFeePerDiskGbPerTimeUnit: toFormString(payment.fee_per_disk_gb_per_time_unit),
+    paymentFeePerGpuPerTimeUnit: toFormString(payment.fee_per_gpu_per_time_unit),
+    paymentResourceTimeUnit: paymentResourceTimeUnit,
+    paymentFixedRentalAmount: toFormString(payment.fixed_rental_amount),
+    paymentPeriod: paymentPeriod,
+    paymentPeriodCount: paymentPeriodCount,
     contractTerms: contract.contract_terms ?? "",
     durationStart: toDateInput(duration.start_date),
     durationEnd: toDateInput(duration.end_date),
     extraArgs: "",
   };
+}
+
+function applyStringField(target: Record<string, any>, key: string, value: string) {
+  const normalized = value.trim();
+  if (normalized) {
+    target[key] = normalized;
+  } else {
+    delete target[key];
+  }
 }
 
 function buildContractPayload(detail: ContractTemplateDetail, form: ContractFormState) {
@@ -232,20 +377,66 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   const normalizedRequesterAddr = form.paymentRequesterAddr.trim();
   const normalizedProviderAddr = form.paymentProviderAddr.trim();
   const normalizedCurrency = form.paymentCurrency.trim();
-  const normalizedFeesPerAllocation = form.paymentFeesPerAllocation.trim();
   const normalizedBlockchain = (form.paymentBlockchain ?? "").trim().toUpperCase();
 
-  payment.requester_addr = normalizedRequesterAddr;
-  payment.provider_addr = normalizedProviderAddr;
-  payment.currency = normalizedCurrency;
-  payment.fees_per_allocation = normalizedFeesPerAllocation;
-  payment.payment_type = form.paymentType;
-  payment.blockchain = normalizedBlockchain || undefined;
-  if (!payment.requester_addr) delete payment.requester_addr;
-  if (!payment.provider_addr) delete payment.provider_addr;
-  if (!payment.currency) delete payment.currency;
-  if (!payment.fees_per_allocation) delete payment.fees_per_allocation;
-  if (!payment.blockchain) delete payment.blockchain;
+  applyStringField(payment, "requester_addr", form.paymentRequesterAddr);
+  applyStringField(payment, "provider_addr", form.paymentProviderAddr);
+  applyStringField(payment, "currency", form.paymentCurrency);
+  applyStringField(payment, "payment_model", form.paymentModel.toLowerCase());
+  applyStringField(payment, "payment_type", form.paymentType.toLowerCase());
+  applyStringField(payment, "payment_period", form.paymentPeriod.toLowerCase());
+  applyStringField(payment, "payment_period_count", form.paymentPeriodCount);
+  if (normalizedBlockchain) {
+    payment.blockchain = normalizedBlockchain;
+  } else {
+    delete payment.blockchain;
+  }
+
+  const paymentFieldKeys = [
+    "fees_per_allocation",
+    "fee_per_deployment",
+    "fee_per_time_unit",
+    "time_unit",
+    "fee_per_cpu_core_per_time_unit",
+    "fee_per_ram_gb_per_time_unit",
+    "fee_per_disk_gb_per_time_unit",
+    "fee_per_gpu_per_time_unit",
+    "resource_time_unit",
+    "fixed_rental_amount",
+  ];
+  for (const key of paymentFieldKeys) {
+    delete payment[key];
+  }
+
+  const paymentModel = form.paymentModel.trim().toLowerCase();
+  switch (paymentModel) {
+    case "pay_per_allocation":
+      applyStringField(payment, "fees_per_allocation", form.paymentFeesPerAllocation);
+      break;
+    case "pay_per_deployment":
+      applyStringField(payment, "fee_per_deployment", form.paymentFeePerDeployment);
+      break;
+    case "pay_per_time_utilization":
+      applyStringField(payment, "fee_per_time_unit", form.paymentFeePerTimeUnit);
+      applyStringField(payment, "time_unit", form.paymentTimeUnit.toLowerCase());
+      break;
+    case "pay_per_resource_utilization":
+      applyStringField(payment, "fee_per_cpu_core_per_time_unit", form.paymentFeePerCpuCorePerTimeUnit);
+      applyStringField(payment, "fee_per_ram_gb_per_time_unit", form.paymentFeePerRamGbPerTimeUnit);
+      applyStringField(payment, "fee_per_disk_gb_per_time_unit", form.paymentFeePerDiskGbPerTimeUnit);
+      applyStringField(payment, "fee_per_gpu_per_time_unit", form.paymentFeePerGpuPerTimeUnit);
+      applyStringField(payment, "resource_time_unit", form.paymentResourceTimeUnit.toLowerCase());
+      break;
+    case "fixed_rental":
+      applyStringField(payment, "fixed_rental_amount", form.paymentFixedRentalAmount);
+      break;
+    case "periodic":
+      applyStringField(payment, "fee_per_time_unit", form.paymentFeePerTimeUnit);
+      applyStringField(payment, "time_unit", form.paymentTimeUnit.toLowerCase());
+      break;
+    default:
+      break;
+  }
   const addressPayload: Record<string, string> = {};
   if (normalizedBlockchain) {
     addressPayload.blockchain = normalizedBlockchain;
@@ -264,6 +455,8 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   } else {
     delete payment.addresses;
   }
+  const timestamp = coerceIsoTimestamp(payment.timestamp);
+  payment.timestamp = timestamp ?? new Date().toISOString();
 
   if (form.contractTerms.trim()) {
     base.contract_terms = form.contractTerms.trim();
@@ -301,6 +494,125 @@ function buildCreatePayload(detail: ContractTemplateDetail, form: ContractFormSt
 
   return payload;
 }
+
+function validatePaymentDetails(form: ContractFormState): string[] {
+  const errors: string[] = [];
+  const modelConfig = getPaymentModelConfig(form.paymentModel.trim());
+  const requiresFeesPerAllocation = Boolean(modelConfig?.feesPerAllocation);
+  const requiresFeePerDeployment = Boolean(modelConfig?.feePerDeployment);
+  const requiresFeePerTimeUnit = Boolean(modelConfig?.feePerTimeUnit);
+  const requiresTimeUnit = Boolean(modelConfig?.timeUnit);
+  const requiresResourceFees = Boolean(modelConfig?.resourceFees);
+  const requiresResourceTimeUnit = Boolean(modelConfig?.resourceTimeUnit);
+  const requiresFixedRentalAmount = Boolean(modelConfig?.fixedRentalAmount);
+
+  if (!modelConfig) {
+    errors.push("Select a payment model.");
+  }
+
+  const paymentType = form.paymentType.trim().toLowerCase();
+  if (!["fiat", "blockchain"].includes(paymentType)) {
+    errors.push("Select a payment type.");
+  }
+
+  if (!form.paymentRequesterAddr.trim()) {
+    errors.push("Enter a requester address.");
+  }
+  if (!form.paymentProviderAddr.trim()) {
+    errors.push("Enter a provider address.");
+  }
+  if (!form.paymentCurrency.trim()) {
+    errors.push("Enter a currency.");
+  }
+  if (!form.paymentBlockchain.trim()) {
+    errors.push("Select a blockchain.");
+  }
+
+  const paymentPeriod = form.paymentPeriod.trim().toLowerCase();
+  if (!paymentPeriod) {
+    errors.push("Select a payment period.");
+  } else if (!PAYMENT_PERIOD_OPTIONS.includes(paymentPeriod as (typeof PAYMENT_PERIOD_OPTIONS)[number])) {
+    errors.push("Payment period must be minute, hour, day, week, or month.");
+  }
+
+  const paymentPeriodCount = form.paymentPeriodCount.trim();
+  if (!paymentPeriodCount) {
+    errors.push("Enter a payment period count.");
+  } else if (!isPositiveIntegerString(paymentPeriodCount)) {
+    errors.push("Payment period count must be a positive integer.");
+  }
+
+  const feesPerAllocation = form.paymentFeesPerAllocation.trim();
+  if (requiresFeesPerAllocation && !feesPerAllocation) {
+    errors.push("Enter fees per allocation.");
+  }
+
+  const feePerDeployment = form.paymentFeePerDeployment.trim();
+  if (requiresFeePerDeployment && !feePerDeployment) {
+    errors.push("Enter a fee per deployment.");
+  }
+
+  const feePerTimeUnit = form.paymentFeePerTimeUnit.trim();
+  if (requiresFeePerTimeUnit && !feePerTimeUnit) {
+    errors.push("Enter a fee per time unit.");
+  }
+
+  const timeUnit = form.paymentTimeUnit.trim().toLowerCase();
+  if (requiresTimeUnit && !timeUnit) {
+    errors.push("Select a time unit.");
+  } else if (
+    requiresTimeUnit &&
+    !TIME_UNIT_OPTIONS.includes(timeUnit as (typeof TIME_UNIT_OPTIONS)[number])
+  ) {
+    errors.push("Time unit must be second, minute, or hour.");
+  }
+
+  const fixedRentalAmount = form.paymentFixedRentalAmount.trim();
+  if (requiresFixedRentalAmount && !fixedRentalAmount) {
+    errors.push("Enter a fixed rental amount.");
+  }
+
+  if (requiresResourceFees) {
+    if (!form.paymentFeePerCpuCorePerTimeUnit.trim()) {
+      errors.push("Enter a CPU core fee per time unit.");
+    }
+    if (!form.paymentFeePerRamGbPerTimeUnit.trim()) {
+      errors.push("Enter a RAM GB fee per time unit.");
+    }
+    if (!form.paymentFeePerDiskGbPerTimeUnit.trim()) {
+      errors.push("Enter a disk GB fee per time unit.");
+    }
+  }
+
+  const resourceTimeUnit = form.paymentResourceTimeUnit.trim().toLowerCase();
+  if (requiresResourceTimeUnit && !resourceTimeUnit) {
+    errors.push("Select a resource time unit.");
+  } else if (
+    requiresResourceTimeUnit &&
+    !TIME_UNIT_OPTIONS.includes(resourceTimeUnit as (typeof TIME_UNIT_OPTIONS)[number])
+  ) {
+    errors.push("Resource time unit must be second, minute, or hour.");
+  }
+
+  const numericFields = [
+    { value: feesPerAllocation, label: "Fees per allocation" },
+    { value: feePerDeployment, label: "Fee per deployment" },
+    { value: feePerTimeUnit, label: "Fee per time unit" },
+    { value: fixedRentalAmount, label: "Fixed rental amount" },
+    { value: form.paymentFeePerCpuCorePerTimeUnit.trim(), label: "CPU core fee per time unit" },
+    { value: form.paymentFeePerRamGbPerTimeUnit.trim(), label: "RAM GB fee per time unit" },
+    { value: form.paymentFeePerDiskGbPerTimeUnit.trim(), label: "Disk GB fee per time unit" },
+    { value: form.paymentFeePerGpuPerTimeUnit.trim(), label: "GPU fee per time unit" },
+  ];
+
+  for (const field of numericFields) {
+    if (field.value.length > 0 && !isStrictDecimal(field.value)) {
+      errors.push(`${field.label} must be a decimal number.`);
+    }
+  }
+
+  return Array.from(new Set(errors));
+}
 export default function NewContractPage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -309,6 +621,7 @@ export default function NewContractPage(): JSX.Element {
   const [selectedTemplateId, setSelectedTemplateId] = React.useState<string | null>(null);
   const [formState, setFormState] = React.useState<ContractFormState | null>(null);
   const [reviewPayload, setReviewPayload] = React.useState<ContractCreatePayload | null>(null);
+  const [paymentErrors, setPaymentErrors] = React.useState<string[]>([]);
   const shouldPrefillRequestor = React.useRef(true);
 
   const dmsStatusQuery = useQuery({
@@ -351,6 +664,7 @@ export default function NewContractPage(): JSX.Element {
     if (templateDetailQuery.data) {
       shouldPrefillRequestor.current = true;
       setFormState(extractFormState(templateDetailQuery.data));
+      setPaymentErrors([]);
     }
   }, [templateDetailQuery.data]);
 
@@ -389,6 +703,7 @@ export default function NewContractPage(): JSX.Element {
     if (Object.prototype.hasOwnProperty.call(update, "requestorDid")) {
       shouldPrefillRequestor.current = false;
     }
+    setPaymentErrors([]);
     setFormState((prev) => (prev ? { ...prev, ...update } : prev));
   }, []);
 
@@ -397,6 +712,7 @@ export default function NewContractPage(): JSX.Element {
     setSelectedTemplateId(null);
     setFormState(null);
     setReviewPayload(null);
+    setPaymentErrors([]);
     shouldPrefillRequestor.current = true;
   }, []);
 
@@ -405,6 +721,15 @@ export default function NewContractPage(): JSX.Element {
       toast.error("Template details are still loading. Try again in a moment.");
       return;
     }
+    const validationErrors = validatePaymentDetails(formState);
+    if (validationErrors.length > 0) {
+      setPaymentErrors(validationErrors);
+      toast.error("Payment details need attention.", {
+        description: validationErrors.join(" "),
+      });
+      return;
+    }
+    setPaymentErrors([]);
     const payload = buildCreatePayload(templateDetailQuery.data, formState);
     setReviewPayload(payload);
     setWizardStep("review");
@@ -467,6 +792,7 @@ export default function NewContractPage(): JSX.Element {
               <ConfigureTemplateStep
                 detail={templateDetailQuery.data}
                 formState={formState}
+                paymentErrors={paymentErrors}
                 onChange={handleFormChange}
                 onBack={handleReset}
                 onContinue={handleGenerateReview}
@@ -578,17 +904,59 @@ function TemplateSelectionStep({
 interface ConfigureTemplateStepProps {
   detail: ContractTemplateDetail;
   formState: ContractFormState;
+  paymentErrors: string[];
   onChange: (update: Partial<ContractFormState>) => void;
   onBack: () => void;
   onContinue: () => void;
 }
 
-function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue }: ConfigureTemplateStepProps) {
+function ConfigureTemplateStep({
+  detail,
+  formState,
+  paymentErrors,
+  onChange,
+  onBack,
+  onContinue,
+}: ConfigureTemplateStepProps) {
   const cpu = detail.contract?.resource_configuration?.cpu ?? {};
   const ram = detail.contract?.resource_configuration?.ram ?? {};
   const disk = detail.contract?.resource_configuration?.disk ?? {};
   const termination = detail.contract?.termination_option ?? {};
   const payment = detail.contract?.payment_details ?? {};
+  const paymentAddressesRaw = Array.isArray(payment.addresses)
+    ? (payment.addresses as Array<Record<string, any>>)
+    : payment.addresses && typeof payment.addresses === "object"
+      ? [payment.addresses as Record<string, any>]
+      : [];
+  const paymentAddress = paymentAddressesRaw[0];
+  const [paymentModelSearch, setPaymentModelSearch] = React.useState("");
+  const filteredPaymentModels = React.useMemo(() => {
+    const term = paymentModelSearch.trim().toLowerCase();
+    if (!term) return PAYMENT_MODEL_OPTIONS;
+    return PAYMENT_MODEL_OPTIONS.filter(
+      (option) => option.label.toLowerCase().includes(term) || option.value.toLowerCase().includes(term)
+    );
+  }, [paymentModelSearch]);
+  const modelConfig =
+    getPaymentModelConfig(formState.paymentModel) ?? {
+      feesPerAllocation: true,
+      feePerDeployment: true,
+      feePerTimeUnit: true,
+      timeUnit: true,
+      resourceFees: true,
+      resourceTimeUnit: true,
+      fixedRentalAmount: true,
+    };
+  const showFeesPerAllocation = Boolean(modelConfig.feesPerAllocation);
+  const showFeePerDeployment = Boolean(modelConfig.feePerDeployment);
+  const showFeePerTimeUnit = Boolean(modelConfig.feePerTimeUnit);
+  const showTimeUnit = Boolean(modelConfig.timeUnit);
+  const showResourceFees = Boolean(modelConfig.resourceFees);
+  const showResourceTimeUnit = Boolean(modelConfig.resourceTimeUnit);
+  const showFixedRentalAmount = Boolean(modelConfig.fixedRentalAmount);
+  const showAllocationDeploymentFees = showFeesPerAllocation || showFeePerDeployment;
+  const showTimeUtilization = showFeePerTimeUnit || showTimeUnit;
+  const showResourceSection = showResourceFees || showResourceTimeUnit;
   const duration = detail.contract?.duration ?? {};
   return (
     <div className="space-y-6">
@@ -658,31 +1026,51 @@ function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue
 
       <section className="space-y-4">
         <h3 className="text-sm font-semibold">Payment details</h3>
+        {paymentErrors.length > 0 ? (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <p className="font-medium">Payment details need attention:</p>
+            <ul className="list-disc space-y-1 pl-4">
+              {paymentErrors.map((error) => (
+                <li key={error}>{error}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="grid gap-3 md:grid-cols-2">
-          <TextField
-            label="Requester address"
-            value={formState.paymentRequesterAddr}
-            onChange={(value) => onChange({ paymentRequesterAddr: value })}
-            placeholder={payment.requester_addr ?? "0x..."}
-          />
-          <TextField
-            label="Provider address"
-            value={formState.paymentProviderAddr}
-            onChange={(value) => onChange({ paymentProviderAddr: value })}
-            placeholder={payment.provider_addr ?? "0x..."}
-          />
-          <TextField
-            label="Currency"
-            value={formState.paymentCurrency}
-            onChange={(value) => onChange({ paymentCurrency: value })}
-            placeholder={payment.currency ?? "NTX"}
-          />
-          <TextField
-            label="Fees per allocation"
-            value={formState.paymentFeesPerAllocation}
-            onChange={(value) => onChange({ paymentFeesPerAllocation: value })}
-            placeholder={payment.fees_per_allocation ?? "500"}
-          />
+          <div className="space-y-2">
+            <Label>Payment model</Label>
+            <Input
+              value={paymentModelSearch}
+              onChange={(event) => setPaymentModelSearch(event.target.value)}
+              placeholder="Search payment models..."
+              className="h-8"
+              aria-label="Search payment models"
+            />
+            <Select
+              value={formState.paymentModel}
+              onValueChange={(value) => {
+                onChange({ paymentModel: value as ContractFormState["paymentModel"] });
+                setPaymentModelSearch("");
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {filteredPaymentModels.length ? (
+                  filteredPaymentModels.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value="__no_results__" disabled>
+                    No matching models
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-2">
             <Label>Payment type</Label>
             <Select
@@ -701,23 +1089,205 @@ function ConfigureTemplateStep({ detail, formState, onChange, onBack, onContinue
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-2">
-            <Label>Blockchain</Label>
-            <Select
-              value={formState.paymentBlockchain}
-              onValueChange={(value) => onChange({ paymentBlockchain: value as ContractFormState["paymentBlockchain"] })}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select a network" />
-              </SelectTrigger>
-              <SelectContent>
-                {BLOCKCHAIN_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+        </div>
+
+        <div className="space-y-3 rounded-md border border-border/60 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Addresses</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <TextField
+              label="Requester address"
+              value={formState.paymentRequesterAddr}
+              onChange={(value) => onChange({ paymentRequesterAddr: value })}
+              placeholder={placeholderValue(payment.requester_addr ?? paymentAddress?.requester_addr, "0x...")}
+            />
+            <TextField
+              label="Provider address"
+              value={formState.paymentProviderAddr}
+              onChange={(value) => onChange({ paymentProviderAddr: value })}
+              placeholder={placeholderValue(payment.provider_addr ?? paymentAddress?.provider_addr, "0x...")}
+            />
+            <TextField
+              label="Currency"
+              value={formState.paymentCurrency}
+              onChange={(value) => onChange({ paymentCurrency: value })}
+              placeholder={placeholderValue(payment.currency ?? paymentAddress?.currency, "NTX")}
+            />
+            <div className="space-y-2">
+              <Label>Blockchain</Label>
+              <Select
+                value={formState.paymentBlockchain}
+                onValueChange={(value) =>
+                  onChange({ paymentBlockchain: value as ContractFormState["paymentBlockchain"] })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a network" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BLOCKCHAIN_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {showAllocationDeploymentFees ? (
+          <div className="space-y-3 rounded-md border border-border/60 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Allocation & deployment fees
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              {showFeesPerAllocation ? (
+                <TextField
+                  label="Fees per allocation"
+                  value={formState.paymentFeesPerAllocation}
+                  onChange={(value) => onChange({ paymentFeesPerAllocation: value })}
+                  placeholder={placeholderValue(payment.fees_per_allocation, "500")}
+                />
+              ) : null}
+              {showFeePerDeployment ? (
+                <TextField
+                  label="Fee per deployment"
+                  value={formState.paymentFeePerDeployment}
+                  onChange={(value) => onChange({ paymentFeePerDeployment: value })}
+                  placeholder={placeholderValue(payment.fee_per_deployment, "e.g. 25")}
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {showTimeUtilization ? (
+          <div className="space-y-3 rounded-md border border-border/60 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Time utilization
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <TextField
+                label="Fee per time unit"
+                value={formState.paymentFeePerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_time_unit, "e.g. 0.01")}
+              />
+              <div className="space-y-2">
+                <Label>Time unit</Label>
+                <Select
+                  value={formState.paymentTimeUnit}
+                  onValueChange={(value) => onChange({ paymentTimeUnit: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a time unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIME_UNIT_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showResourceSection ? (
+          <div className="space-y-3 rounded-md border border-border/60 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Resource-based pricing
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <TextField
+                label="CPU core fee per time unit"
+                value={formState.paymentFeePerCpuCorePerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerCpuCorePerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_cpu_core_per_time_unit, "e.g. 0.10")}
+              />
+              <TextField
+                label="RAM GB fee per time unit"
+                value={formState.paymentFeePerRamGbPerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerRamGbPerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_ram_gb_per_time_unit, "e.g. 0.05")}
+              />
+              <TextField
+                label="Disk GB fee per time unit"
+                value={formState.paymentFeePerDiskGbPerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerDiskGbPerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_disk_gb_per_time_unit, "e.g. 0.01")}
+              />
+              <TextField
+                label="GPU fee per time unit (optional)"
+                value={formState.paymentFeePerGpuPerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerGpuPerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_gpu_per_time_unit, "e.g. 5.00")}
+              />
+              <div className="space-y-2">
+                <Label>Resource time unit</Label>
+                <Select
+                  value={formState.paymentResourceTimeUnit}
+                  onValueChange={(value) => onChange({ paymentResourceTimeUnit: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a time unit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIME_UNIT_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showFixedRentalAmount ? (
+          <div className="space-y-3 rounded-md border border-border/60 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Fixed rental</div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <TextField
+                label="Fixed rental amount"
+                value={formState.paymentFixedRentalAmount}
+                onChange={(value) => onChange({ paymentFixedRentalAmount: value })}
+                placeholder={placeholderValue(payment.fixed_rental_amount, "e.g. 20.00")}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        <div className="space-y-3 rounded-md border border-border/60 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Payment period</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Payment period</Label>
+              <Select
+                value={formState.paymentPeriod}
+                onValueChange={(value) => onChange({ paymentPeriod: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a period" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_PERIOD_OPTIONS.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <TextField
+              label="Payment period count"
+              value={formState.paymentPeriodCount}
+              onChange={(value) => onChange({ paymentPeriodCount: value })}
+              placeholder={placeholderValue(payment.payment_period_count, "1")}
+            />
           </div>
         </div>
       </section>
@@ -815,8 +1385,44 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
   const ram = (resource.ram as Record<string, any>) || {};
   const disk = (resource.disk as Record<string, any>) || {};
   const payment = (contract.payment_details as Record<string, any>) || {};
+  const paymentAddressesRaw = Array.isArray(payment.addresses)
+    ? (payment.addresses as Array<Record<string, any>>)
+    : payment.addresses && typeof payment.addresses === "object"
+      ? [payment.addresses as Record<string, any>]
+      : [];
+  const paymentAddress = paymentAddressesRaw[0];
   const duration = (contract.duration as Record<string, any>) || {};
   const termination = (contract.termination_option as Record<string, any>) || {};
+  const paymentRows: Array<{ label: string; value: unknown }> = [];
+  const addPaymentRow = (label: string, value: unknown) => {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (typeof value === "string" && value.trim().length === 0) {
+      return;
+    }
+    paymentRows.push({ label, value });
+  };
+
+  addPaymentRow("Payment model", getPaymentModelLabel(payment.payment_model));
+  addPaymentRow("Payment type", payment.payment_type);
+  addPaymentRow("Requester address", payment.requester_addr ?? paymentAddress?.requester_addr);
+  addPaymentRow("Provider address", payment.provider_addr ?? paymentAddress?.provider_addr);
+  addPaymentRow("Currency", payment.currency ?? paymentAddress?.currency);
+  addPaymentRow("Blockchain", payment.blockchain ?? paymentAddress?.blockchain);
+  addPaymentRow("Fees per allocation", payment.fees_per_allocation);
+  addPaymentRow("Fee per deployment", payment.fee_per_deployment);
+  addPaymentRow("Fee per time unit", payment.fee_per_time_unit);
+  addPaymentRow("Time unit", payment.time_unit);
+  addPaymentRow("CPU core fee per time unit", payment.fee_per_cpu_core_per_time_unit);
+  addPaymentRow("RAM GB fee per time unit", payment.fee_per_ram_gb_per_time_unit);
+  addPaymentRow("Disk GB fee per time unit", payment.fee_per_disk_gb_per_time_unit);
+  addPaymentRow("GPU fee per time unit", payment.fee_per_gpu_per_time_unit);
+  addPaymentRow("Resource time unit", payment.resource_time_unit);
+  addPaymentRow("Fixed rental amount", payment.fixed_rental_amount);
+  addPaymentRow("Payment period", payment.payment_period);
+  addPaymentRow("Payment period count", payment.payment_period_count);
+  addPaymentRow("Timestamp", payment.timestamp);
 
   return (
     <div className="space-y-5">
@@ -858,14 +1464,15 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
 
       <section className="space-y-2">
         <h4 className="text-sm font-semibold">Payment</h4>
-        <div className="grid gap-2 text-sm md:grid-cols-2">
-          <InfoRow label="Requester address" value={payment.requester_addr ?? formState.paymentRequesterAddr} />
-          <InfoRow label="Provider address" value={payment.provider_addr ?? formState.paymentProviderAddr} />
-          <InfoRow label="Currency" value={payment.currency ?? formState.paymentCurrency} />
-          <InfoRow label="Fees per allocation" value={payment.fees_per_allocation ?? formState.paymentFeesPerAllocation} />
-          <InfoRow label="Payment type" value={payment.payment_type ?? formState.paymentType} />
-          <InfoRow label="Blockchain" value={payment.blockchain ?? formState.paymentBlockchain} />
-        </div>
+        {paymentRows.length ? (
+          <div className="grid gap-2 text-sm md:grid-cols-2">
+            {paymentRows.map((row) => (
+              <InfoRow key={row.label} label={row.label} value={row.value} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No payment details set.</p>
+        )}
       </section>
 
       <section className="space-y-2">

@@ -1,4 +1,4 @@
-import { RotateCw, Plus, Loader2 } from "lucide-react";
+import { RotateCw, Plus, Loader2, Trash2 } from "lucide-react";
 import { useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import DeploymentsTable from "../components/deployments/DeploymentsTable";
@@ -10,10 +10,27 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../components/ui/tooltip";
+import { pruneDeployments } from "@/api/deployments";
+import { toast } from "sonner";
+import { useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 export default function Page() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [isPruning, setIsPruning] = useState(false);
+  const [isPruneDialogOpen, setIsPruneDialogOpen] = useState(false);
+  const toastStyles = {
+    className: "text-white [&_*]:!text-white",
+    descriptionClassName: "text-white/90",
+  };
 
   // 👇 tracks whether ["deployments"] is fetching
   const isFetchingDeployments =
@@ -21,6 +38,25 @@ export default function Page() {
 
   const handleRefresh = () => {
     queryClient.refetchQueries({ queryKey: ["deployments"] });
+  };
+
+  const handlePruneAll = async () => {
+    setIsPruning(true);
+    try {
+      const res = await pruneDeployments({ all: true });
+      toast.success("Deployments purged", {
+        description: res.message || "Completed/failed deployments removed.",
+        ...toastStyles,
+      });
+      queryClient.refetchQueries({ queryKey: ["deployments"] });
+    } catch (error: any) {
+      toast.error("Purge failed", {
+        description: error?.response?.data?.message || "An unexpected error occurred",
+      });
+    } finally {
+      setIsPruning(false);
+      setIsPruneDialogOpen(false);
+    }
   };
 
   return (
@@ -54,6 +90,29 @@ export default function Page() {
                     </Tooltip>
                   </TooltipProvider>
 
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="destructive"
+                          className="flex items-center gap-2"
+                          onClick={() => setIsPruneDialogOpen(true)}
+                          disabled={isPruning}
+                        >
+                          {isPruning ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                          Purge
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">
+                        Purge completed/failed deployments
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+
                   <Button
                     variant="outline"
                     className="border-green-500 text-green-500 hover:bg-green-50 hover:text-green-600 flex items-center gap-2"
@@ -69,6 +128,40 @@ export default function Page() {
           </div>
         </div>
       </div>
+
+      <Dialog
+        open={isPruneDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !isPruning) {
+            setIsPruneDialogOpen(false);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Purge deployments?</DialogTitle>
+            <DialogDescription>
+              This will delete all completed/failed deployments from DMS.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsPruneDialogOpen(false)}
+              disabled={isPruning}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handlePruneAll}
+              disabled={isPruning}
+            >
+              {isPruning ? "Purging..." : "Purge"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

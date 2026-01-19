@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardHeader,
@@ -18,30 +18,76 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
-import { getDeployments } from "@/api/deployments";
+import { deleteDeployment, getDeployments } from "@/api/deployments";
 import { useNavigate } from "react-router-dom";
 import { CopyButton } from "../ui/CopyButton";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+
+const STATUS_QUERY_MAP: Record<string, string> = {
+  submitted: "Submitted",
+  running: "Running",
+  completed: "Completed",
+  failed: "Failed",
+};
+const TIME_FILTER_MAP: Record<string, string | undefined> = {
+  all: undefined,
+  "24h": "1d",
+  "7d": "7d",
+  "30d": "30d",
+};
 
 export default function DeploymentsCards() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const toastStyles = {
+    className: "text-white [&_*]:!text-white",
+    descriptionClassName: "text-white/90",
+  };
+
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [timeFilter, setTimeFilter] = useState<string>("all");
+  const [timeOrder, setTimeOrder] = useState<"newest" | "oldest">("newest");
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(6); // cards per page
+
+  const statusParam =
+    statusFilter === "all"
+      ? undefined
+      : STATUS_QUERY_MAP[statusFilter] ?? statusFilter;
+  const createdAfter = TIME_FILTER_MAP[timeFilter];
+  const sortParam = timeOrder === "oldest" ? "created_at" : "-created_at";
+  const offset = (page - 1) * pageSize;
 
   const {
     data,
     isLoading,
-    refetch, // 👈 grab refetch function
   } = useQuery({
-    queryKey: ["deployments"],
-    queryFn: getDeployments,
+    queryKey: ["deployments", page, pageSize, statusParam, timeFilter, timeOrder],
+    queryFn: () =>
+      getDeployments({
+        limit: pageSize,
+        offset,
+        sort: sortParam,
+        status: statusParam,
+        created_after: createdAfter,
+        status_ordered: statusFilter === "all",
+      }),
     staleTime: Infinity, // cache forever
     gcTime: Infinity, // never garbage collect
     refetchInterval: 0, // no auto refetch
     refetchOnWindowFocus: false, // no refresh when tab focuses
   });
-
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(6); // cards per page
 
   const deployments = data?.deployments || [];
 
@@ -49,6 +95,35 @@ export default function DeploymentsCards() {
     if (!value || typeof value !== "string") return "";
     const parts = value.split(/[\\/]/);
     return parts.pop() || value;
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTargetId) return;
+    setDeletingId(deleteTargetId);
+    try {
+      const res = await deleteDeployment(deleteTargetId);
+      toast.success("Deployment deleted", {
+        description: res.message || "Deployment removed from DMS.",
+        ...toastStyles,
+      });
+      queryClient.refetchQueries({ queryKey: ["deployments"] });
+    } catch (error: any) {
+      toast.error("Delete failed", {
+        description: error?.response?.data?.message || "An unexpected error occurred",
+      });
+    } finally {
+      setDeletingId(null);
+      setDeleteTargetId(null);
+    }
+  };
+
+  const getStatusRank = (status?: string) => {
+    const normalized = (status || "").toLowerCase();
+    if (normalized === "submitted") return 0;
+    if (normalized === "running") return 1;
+    if (normalized === "completed" || normalized === "complete" || normalized === "success") return 2;
+    if (normalized === "failed" || normalized === "error") return 3;
+    return 4;
   };
 
   // Apply search + filter
@@ -65,24 +140,19 @@ export default function DeploymentsCards() {
         return matchesSearch && matchesStatus;
       })
       .sort((a: any, b: any) => {
-        // 1️⃣ Running always comes first
-        if (a.status === "running" && b.status !== "running") return -1;
-        if (b.status === "running" && a.status !== "running") return 1;
+        // submitted -> running -> completed -> failed
+        const rankDiff = getStatusRank(a.status) - getStatusRank(b.status);
+        if (rankDiff !== 0) return rankDiff;
 
-        // 2️⃣ Then sort by timestamp (descending)
-        return (
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-        );
+        // Then sort by timestamp within status
+        const aTime = new Date(a.timestamp).getTime();
+        const bTime = new Date(b.timestamp).getTime();
+        return timeOrder === "oldest" ? aTime - bTime : bTime - aTime;
       });
-  }, [deployments, search, statusFilter]);
+  }, [deployments, search, statusFilter, timeOrder]);
 
-  // Pagination
-  const totalItems = filteredData.length;
-  const totalPages = Math.ceil(totalItems / pageSize);
-  const paginatedData = filteredData.slice(
-    (page - 1) * pageSize,
-    page * pageSize
-  );
+  const paginatedData = filteredData;
+  const hasNextPage = deployments.length === pageSize;
 
   // Status badge color mapping
   const statusColors: Record<string, string> = {
@@ -121,6 +191,38 @@ export default function DeploymentsCards() {
             <SelectItem value="running">Running</SelectItem>
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="failed">Failed</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={timeFilter}
+          onValueChange={(val) => {
+            setTimeFilter(val);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="Time range" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All time</SelectItem>
+            <SelectItem value="24h">Last 24h</SelectItem>
+            <SelectItem value="7d">Last 7 days</SelectItem>
+            <SelectItem value="30d">Last 30 days</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={timeOrder}
+          onValueChange={(val) => {
+            setTimeOrder(val as "newest" | "oldest");
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[150px]">
+            <SelectValue placeholder="Order" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -179,6 +281,15 @@ export default function DeploymentsCards() {
                     >
                       View Details
                     </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="w-full md:w-auto"
+                      onClick={() => setDeleteTargetId(d.id)}
+                      disabled={deletingId === d.id}
+                    >
+                      {deletingId === d.id ? "Deleting..." : "Delete"}
+                    </Button>
                   </div>
                 </div>
               </Card>
@@ -197,20 +308,58 @@ export default function DeploymentsCards() {
             </Button>
 
             <span className="text-sm text-gray-600">
-              Page {page} of {totalPages}
+              Page {page}
             </span>
 
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setPage((old) => Math.min(old + 1, totalPages))}
-              disabled={page === totalPages}
+              onClick={() => setPage((old) => old + 1)}
+              disabled={!hasNextPage}
             >
               Next
             </Button>
           </div>
         </>
       )}
+
+      <Dialog
+        open={Boolean(deleteTargetId)}
+        onOpenChange={(open) => {
+          if (!open && !deletingId) {
+            setDeleteTargetId(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete deployment?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove the deployment from DMS.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Deployment ID:{" "}
+            <span className="font-mono break-all">{deleteTargetId}</span>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTargetId(null)}
+              disabled={Boolean(deletingId)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteConfirm}
+              disabled={Boolean(deletingId)}
+            >
+              {deletingId ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

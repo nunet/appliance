@@ -89,8 +89,65 @@ class EnsembleManagerV2:
 
         return dt_value.isoformat(), dt_value
 
-    def _fetch_deployments(self) -> List[_DeploymentEntry]:
-        cp = self._run_dms(["/dms/node/deployment/list"])
+    @staticmethod
+    def _split_status_filters(statuses: Optional[Iterable[str]]) -> List[str]:
+        values: List[str] = []
+        for status in statuses or []:
+            if status is None:
+                continue
+            for part in str(status).split(","):
+                cleaned = part.strip()
+                if cleaned:
+                    values.append(cleaned)
+
+        seen = set()
+        unique_values: List[str] = []
+        for value in values:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_values.append(value)
+        return unique_values
+
+    @staticmethod
+    def _status_rank(status_value: str) -> int:
+        normalized = (status_value or "").strip().lower()
+        if normalized in {"submitted"}:
+            return 0
+        if normalized in {"running"}:
+            return 1
+        if normalized in _STATUS_COMPLETE:
+            return 2
+        if normalized in _STATUS_FAILED:
+            return 3
+        return 4
+
+    def _fetch_deployments(
+        self,
+        *,
+        statuses: Optional[Iterable[str]] = None,
+        created_after: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort: Optional[str] = None,
+        metadata_filter: Optional[str] = None,
+    ) -> List[_DeploymentEntry]:
+        args = ["/dms/node/deployment/list"]
+        if limit is not None:
+            args.extend(["--limit", str(limit)])
+        if offset is not None:
+            args.extend(["--offset", str(offset)])
+        if sort:
+            args.extend(["--sort", sort])
+        if created_after:
+            args.extend(["--created-after", created_after])
+        if metadata_filter:
+            args.extend(["--filter", metadata_filter])
+        for status in self._split_status_filters(statuses):
+            args.extend(["--status", status])
+
+        cp = self._run_dms(args)
         payload = self._parse_json(cp.stdout)
 
         deployments_section = (
@@ -109,7 +166,10 @@ class EnsembleManagerV2:
                     or item.get("Id")
                     or item.get("id")
                     or item.get("EnsembleID")
-                    or item.get("ensemble_id"),
+                    or item.get("ensemble_id")
+                    or item.get("OrchestratorID")
+                    or item.get("orchestrator_id")
+                    or item.get("OrchestratorId"),
                     item,
                 )
                 for item in deployments_section
@@ -124,7 +184,9 @@ class EnsembleManagerV2:
             info = raw if isinstance(raw, dict) else {}
             status = self._extract_status(info)
             timestamp = (
-                info.get("Timestamp")
+                info.get("CreatedAt")
+                or info.get("created_at")
+                or info.get("Timestamp")
                 or info.get("timestamp")
                 or info.get("UpdatedAt")
                 or info.get("updated_at")
@@ -172,14 +234,87 @@ class EnsembleManagerV2:
                 return alt
         return None
 
-    def get_deployments_for_web(self) -> Dict[str, Any]:
+    def get_deployments_for_web(
+        self,
+        *,
+        statuses: Optional[Iterable[str]] = None,
+        created_after: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort: Optional[str] = None,
+        metadata_filter: Optional[str] = None,
+        include_manifest: bool = True,
+        status_ordered: bool = False,
+        refresh_status: bool = False,
+    ) -> Dict[str, Any]:
         try:
-            entries = self._fetch_deployments()
+            if status_ordered and not statuses:
+                entries = []
+                seen = set()
+                target_count = None
+                if limit is not None:
+                    target_count = max((offset or 0) + limit, 0)
+
+                running_entries = self._fetch_deployments(
+                    statuses=["Running"],
+                    created_after=created_after,
+                    metadata_filter=metadata_filter,
+                    limit=target_count,
+                    offset=0,
+                    sort=sort,
+                )
+                for entry in running_entries:
+                    if entry.deployment_id in seen:
+                        continue
+                    seen.add(entry.deployment_id)
+                    entries.append(entry)
+
+                remaining = None
+                if target_count is not None:
+                    remaining = max(target_count - len(entries), 0)
+                base_entries = self._fetch_deployments(
+                    created_after=created_after,
+                    metadata_filter=metadata_filter,
+                    limit=remaining,
+                    offset=0,
+                    sort=sort,
+                )
+                for entry in base_entries:
+                    if entry.deployment_id in seen:
+                        continue
+                    seen.add(entry.deployment_id)
+                    entries.append(entry)
+            else:
+                entries = self._fetch_deployments(
+                    statuses=statuses,
+                    created_after=created_after,
+                    limit=limit,
+                    offset=offset,
+                    sort=sort,
+                    metadata_filter=metadata_filter,
+                )
             deployment_log = self._parse_deployment_log()
         except Exception as exc:  # pragma: no cover - defensive
             return {"status": "error", "message": str(exc), "deployments": [], "count": 0}
 
-        self._refresh_transient_statuses(entries)
+        if refresh_status:
+            self._refresh_transient_statuses(entries)
+
+        if status_ordered and not statuses:
+            desc = True
+            if isinstance(sort, str) and sort.strip():
+                desc = sort.strip().startswith("-")
+            entries = sorted(
+                entries,
+                key=lambda entry: (
+                    self._status_rank(entry.status),
+                    -entry.timestamp_dt.timestamp() if desc else entry.timestamp_dt.timestamp(),
+                ),
+            )
+            if offset is not None or limit is not None:
+                start = max(offset or 0, 0)
+                end = start + limit if limit is not None else None
+                entries = entries[start:end]
 
         deployments: List[Dict[str, Any]] = []
         for entry in entries:
@@ -194,11 +329,16 @@ class EnsembleManagerV2:
             elif not status_text:
                 status_text = "running"
 
-            manifest_data, manifest_path_str, manifest_path = self._load_manifest_info(deployment_id)
-            allocations_map = manifest_data.get("allocations") if isinstance(manifest_data, dict) else {}
+            manifest_data: Dict[str, Any] = {}
+            manifest_path_str: Optional[str] = None
+            manifest_path: Optional[Path] = None
+            allocations_map: Any = {}
             allocation_names: List[str] = []
-            if isinstance(allocations_map, dict):
-                allocation_names = [str(name) for name in allocations_map.keys()]
+            if include_manifest:
+                manifest_data, manifest_path_str, manifest_path = self._load_manifest_info(deployment_id)
+                allocations_map = manifest_data.get("allocations") if isinstance(manifest_data, dict) else {}
+                if isinstance(allocations_map, dict):
+                    allocation_names = [str(name) for name in allocations_map.keys()]
 
             ensemble_info, ensemble_path = self._load_ensemble_config(deployment_id, deployment_log)
 
@@ -209,12 +349,13 @@ class EnsembleManagerV2:
                 template_env_map = self._env_to_dict(ensemble_info.get("environment"))
                 template_env_map.update(self._env_to_dict(ensemble_info.get("env")))
 
-            self._apply_ddns_details(
-                manifest_data,
-                allocations_map,
-                template_alloc_cfg,
-                template_env_map,
-            )
+            if include_manifest:
+                self._apply_ddns_details(
+                    manifest_data,
+                    allocations_map,
+                    template_alloc_cfg,
+                    template_env_map,
+                )
 
             deployment_type = ""
             if isinstance(template_alloc_cfg, dict):
@@ -291,12 +432,14 @@ class EnsembleManagerV2:
                 else:
                     ensemble_file_relative = ensemble_file_name
 
-            deployment_url = self._extract_deployment_url(
-                manifest_data,
-                allocations_map,
-                template_alloc_cfg,
-                template_env_map,
-            )
+            deployment_url = None
+            if include_manifest:
+                deployment_url = self._extract_deployment_url(
+                    manifest_data,
+                    allocations_map,
+                    template_alloc_cfg,
+                    template_env_map,
+                )
 
             deployments.append(
                 {
@@ -977,6 +1120,49 @@ class EnsembleManagerV2:
             return {"status": "error", "message": cp.stderr or cp.stdout or "Shutdown failed"}
 
         return {"status": "success", "message": cp.stdout or "Deployment shutdown requested"}
+
+    def delete_deployment(self, deployment_id: str) -> Dict[str, str]:
+        try:
+            cp = self._run_dms(
+                ["/dms/node/deployment/delete", "--id", deployment_id],
+                check=False,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"status": "error", "message": f"Failed to delete deployment: {exc}"}
+
+        if cp.returncode != 0:
+            return {"status": "error", "message": cp.stderr or cp.stdout or "Delete failed"}
+
+        message = (cp.stdout or "").strip()
+        if not message:
+            message = f"Deployment {deployment_id} deleted"
+        return {"status": "success", "message": message}
+
+    def prune_deployments(self, *, before: Optional[str] = None, all: bool = False) -> Dict[str, str]:
+        if not before and not all:
+            return {"status": "error", "message": "Provide before or all to prune deployments"}
+
+        args = ["/dms/node/deployment/prune"]
+        if before:
+            args.extend(["--before", before])
+        if all:
+            args.append("--all")
+
+        try:
+            cp = self._run_dms(args, check=False)
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"status": "error", "message": f"Failed to prune deployments: {exc}"}
+
+        if cp.returncode != 0:
+            return {"status": "error", "message": cp.stderr or cp.stdout or "Prune failed"}
+
+        message = (cp.stdout or "").strip()
+        if not message:
+            if all:
+                message = "Pruned completed/failed deployments"
+            else:
+                message = f"Pruned deployments before {before}"
+        return {"status": "success", "message": message}
 
     def get_ensemble_files(self) -> List[Tuple[int, Path]]:
         files = sorted(p for p in self.base_dir.rglob("*") if p.is_file())

@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import platform
+import shutil
 import subprocess
 import time
 from datetime import datetime
@@ -24,7 +25,13 @@ from .dms_utils import (
     contract_terminate,
     contract_state,
 )
-from .path_constants import BACKEND_DIR, DMS_DEPLOYMENTS_DIR, DMS_DEPLOYMENTS_LOGS
+from .path_constants import (
+    BACKEND_DIR,
+    DMS_DEPLOYMENTS_DIR,
+    DMS_DEPLOYMENTS_LOGS,
+    DMS_LOG_PATH,
+    NUNET_CONFIG_PATH,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -992,7 +999,14 @@ class DMSManager:
         transactions = data.get("transactions", [])
         return {"status": "success", "transactions": transactions}
 
-    def get_structured_logs(self, alloc_dir: Optional[Path] = None, *, lines: int = 200) -> Dict[str, Any]:
+    def get_structured_logs(
+        self,
+        alloc_dir: Optional[Path] = None,
+        *,
+        lines: int = 200,
+        refresh_alloc_logs: bool = True,
+        include_dms_logs: bool = True,
+    ) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "status": "success",
             "message": "Structured logs fetched",
@@ -1000,7 +1014,7 @@ class DMSManager:
             "dms_logs": None,
         }
 
-        result["dms_logs"] = _journalctl_dms(lines)
+        result["dms_logs"] = _journalctl_dms(lines) if include_dms_logs else None
 
         if alloc_dir:
             base = DMS_DEPLOYMENTS_LOGS
@@ -1018,22 +1032,23 @@ class DMSManager:
 
             try:
                 # Request fresh stdout/stderr logs via the DMS CLI before reading files from disk.
-                parts = _extract_deployment_allocation(base, alloc_path)
-                if parts:
-                    dep_id, allocation_name = parts
-                    ok, req_message = _request_allocation_logs(dep_id, allocation_name)
-                    if not ok:
-                        logger.warning(
-                            "Failed to request logs for deployment %s allocation %s: %s",
-                            dep_id,
-                            allocation_name,
-                            req_message or "no message",
+                if refresh_alloc_logs:
+                    parts = _extract_deployment_allocation(base, alloc_path)
+                    if parts:
+                        dep_id, allocation_name = parts
+                        ok, req_message = _request_allocation_logs(dep_id, allocation_name)
+                        if not ok:
+                            logger.warning(
+                                "Failed to request logs for deployment %s allocation %s: %s",
+                                dep_id,
+                                allocation_name,
+                                req_message or "no message",
+                            )
+                    else:
+                        logger.debug(
+                            "Unable to determine deployment/allocation from path: %s",
+                            alloc_path,
                         )
-                else:
-                    logger.debug(
-                        "Unable to determine deployment/allocation from path: %s",
-                        alloc_path,
-                    )
             except Exception as exc:  # defensive: log request failures shouldn't abort log collection
                 logger.warning("Error requesting allocation logs: %s", exc)
 
@@ -1049,6 +1064,39 @@ class DMSManager:
                 result["message"] = "Structured logs fetched (allocation files not found)"
 
         return result
+
+    def get_filtered_dms_logs(
+        self,
+        deployment_id: str,
+        *,
+        query: Optional[str] = None,
+        max_lines: int = 400,
+        last_run: bool = True,
+        view: str = "compact",
+    ) -> Dict[str, Any]:
+        return _filtered_dms_logs_from_file(
+            deployment_id,
+            query=query,
+            max_lines=max_lines,
+            last_run=last_run,
+            view=view,
+        )
+
+    def get_filtered_dms_logs_general(
+        self,
+        *,
+        query: Optional[str] = None,
+        max_lines: int = 400,
+        last_run: bool = True,
+        view: str = "compact",
+    ) -> Dict[str, Any]:
+        return _filtered_dms_logs_from_file(
+            None,
+            query=query,
+            max_lines=max_lines,
+            last_run=last_run,
+            view=view,
+        )
 
 
 def _to_iso(ts: float) -> Optional[str]:
@@ -1235,6 +1283,199 @@ def _journalctl_dms(lines: int) -> Dict[str, Any]:
         "stderr": cp.stderr or "",
         "returncode": cp.returncode,
     }
+
+
+def _filtered_dms_logs_from_file(
+    deployment_id: Optional[str],
+    *,
+    query: Optional[str] = None,
+    max_lines: int = 400,
+    last_run: bool = True,
+    view: str = "compact",
+) -> Dict[str, Any]:
+    deployment_id = (deployment_id or "").strip()
+
+    if not shutil.which("jq"):
+        return {
+            "source": "file",
+            "stdout": "",
+            "stderr": "jq not available",
+            "returncode": 127,
+        }
+
+    log_path = _resolve_dms_log_path()
+    if not log_path:
+        return {
+            "source": "file",
+            "stdout": "",
+            "stderr": "DMS log file not found",
+            "returncode": 1,
+        }
+
+    deployment_query = None
+    if deployment_id:
+        deployment_value = json.dumps(deployment_id)
+        deployment_query = (
+            f"(.orchestratorID == {deployment_value}) or "
+            f"((.allocationID // \"\") | startswith({deployment_value}))"
+        )
+
+    final_query = None
+    if deployment_query and query:
+        final_query = f"({deployment_query}) and ({query})"
+    elif deployment_query:
+        final_query = deployment_query
+    elif query:
+        final_query = query
+
+    tail_cmd = ["tail", "-n", str(max_lines), str(log_path)] if max_lines > 0 else ["cat", str(log_path)]
+    tail_cp = _run_capture(tail_cmd, timeout=30)
+    if tail_cp.returncode != 0:
+        return {
+            "source": "file",
+            "lines": max_lines if max_lines > 0 else None,
+            "stdout": "",
+            "stderr": tail_cp.stderr or f"Failed to read {log_path}",
+            "returncode": tail_cp.returncode,
+        }
+
+    raw_lines = tail_cp.stdout or ""
+    if not raw_lines.strip():
+        return {
+            "source": "file",
+            "lines": max_lines if max_lines > 0 else None,
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+        }
+
+    base_expr = "fromjson? | select(. != null)"
+    jq_expr = f"{base_expr} | select({final_query})" if final_query else base_expr
+    jq_cp = subprocess.run(
+        ["jq", "-R", "-c", jq_expr],
+        input=raw_lines,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if jq_cp.returncode != 0:
+        return {
+            "source": "file",
+            "lines": max_lines if max_lines > 0 else None,
+            "stdout": "",
+            "stderr": jq_cp.stderr or "jq filtering failed",
+            "returncode": jq_cp.returncode,
+        }
+
+    view = _normalize_dms_view(view)
+    formatted = []
+    for line in (jq_cp.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if view == "raw":
+            formatted.append(line)
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            formatted.append(line)
+            continue
+        if view == "expanded":
+            formatted.append(_format_dms_log_entry_expanded(entry))
+        elif view == "folded":
+            formatted.append(_format_dms_log_entry_folded(entry))
+        elif view == "map":
+            formatted.append(_format_dms_log_entry_map(entry))
+        else:
+            formatted.append(_format_dms_log_entry(entry))
+
+    return {
+        "source": "file",
+        "lines": max_lines if max_lines > 0 else None,
+        "stdout": ("\n\n" if view == "expanded" else "\n").join(formatted),
+        "stderr": "",
+        "returncode": 0,
+    }
+
+
+def _resolve_dms_log_path() -> Optional[Path]:
+    candidates: list[str] = []
+    if NUNET_CONFIG_PATH.exists():
+        try:
+            cfg = json.loads(NUNET_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            cfg = {}
+        if isinstance(cfg, dict):
+            observability = cfg.get("observability") or {}
+            logging_cfg = observability.get("logging") or {}
+            candidates.extend(
+                [
+                    logging_cfg.get("file"),
+                    observability.get("log_file"),
+                    cfg.get("log_file"),
+                ]
+            )
+            if "logging" in cfg and isinstance(cfg.get("logging"), dict):
+                candidates.append(cfg["logging"].get("file"))
+
+    candidates.append(str(DMS_LOG_PATH))
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.exists():
+            return path
+    return None
+
+
+def _format_dms_log_entry(entry: Dict[str, Any]) -> str:
+    timestamp = entry.get("timestamp") or entry.get("time")
+    level = entry.get("level")
+    msg = entry.get("msg") or entry.get("message")
+
+    parts = [p for p in (timestamp, level, msg) if p]
+    extras = []
+    for key in ("orchestratorID", "deploymentID", "allocationID", "behavior", "did"):
+        value = entry.get(key)
+        if value:
+            extras.append(f"{key}={value}")
+    if entry.get("error"):
+        extras.append(f"error={entry.get('error')}")
+
+    line = " ".join(parts).strip()
+    if extras:
+        line = f"{line} | {' '.join(extras)}".strip()
+    return line or json.dumps(entry, separators=(",", ":"))
+
+
+def _format_dms_log_entry_folded(entry: Dict[str, Any]) -> str:
+    timestamp = entry.get("timestamp") or entry.get("time")
+    level = entry.get("level")
+    msg = entry.get("msg") or entry.get("message")
+    parts = [p for p in (timestamp, level, msg) if p]
+    return " ".join(parts).strip() or json.dumps(entry, separators=(",", ":"))
+
+
+def _format_dms_log_entry_map(entry: Dict[str, Any]) -> str:
+    msg = entry.get("msg") or entry.get("message")
+    if msg:
+        return str(msg)
+    return _format_dms_log_entry_folded(entry)
+
+
+def _format_dms_log_entry_expanded(entry: Dict[str, Any]) -> str:
+    try:
+        return json.dumps(entry, indent=2, sort_keys=True, ensure_ascii=True)
+    except Exception:
+        return json.dumps(entry, separators=(",", ":"), ensure_ascii=True)
+
+
+def _normalize_dms_view(view: Optional[str]) -> str:
+    allowed = {"compact", "folded", "expanded", "map", "raw"}
+    if not view or view not in allowed:
+        return "compact"
+    return view
 
 
 def _extract_deployment_allocation(base: Path, alloc_path: Path) -> Optional[Tuple[str, str]]:
