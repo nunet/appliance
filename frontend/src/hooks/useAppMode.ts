@@ -13,13 +13,18 @@ interface AppModeState {
 export const useAppMode = create<AppModeState>()(
   persist(
     (set, get) => ({
-      mode: "", // default
+      mode: "simple", // default
       setMode: (mode) => set({ mode }),
       toggleMode: () =>
         set({ mode: get().mode === "simple" ? "advanced" : "simple" }),
     }),
     {
       name: "app-mode-storage",
+      onRehydrateStorage: () => (state) => {
+        if (state?.mode === "") {
+          state.setMode("simple");
+        }
+      },
     }
   )
 );

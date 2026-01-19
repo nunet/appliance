@@ -38,7 +38,9 @@ export function AdvancedModeToggle() {
       aria-disabled={isAdvancedModeDisabled}
       title={isAdvancedModeDisabled ? "Advanced mode is temporarily unavailable" : undefined}
     >
-      <span className="text-xs font-medium text-gray-300">Advanced</span>
+      <span className="text-xs font-medium text-gray-300">
+        Advanced{mode === "advanced" ? " (experimental)" : ""}
+      </span>
       <Switch
         checked={enabled}
         onCheckedChange={isAdvancedModeDisabled ? undefined : handleToggle}

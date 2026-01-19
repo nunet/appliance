@@ -20,12 +20,6 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "../ui/tooltip";
-import {
   allInfo,
   allSysInfo,
   getDockerContainer,
@@ -35,13 +29,11 @@ import {
   updateDms,
 } from "../../api/api";
 import {
-  ArrowUp,
   CircleMinusIcon,
   CirclePlusIcon,
   DownloadCloudIcon,
   Loader2,
   LoaderPinwheelIcon,
-  RefreshCw,
   XIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -72,6 +64,52 @@ const parseResourcePairs = (input?: string): ResourcePair[] => {
       };
     })
     .filter((pair) => pair.label.length > 0);
+};
+
+const normalizeVersion = (value?: string | null) =>
+  (value ?? "").trim().replace(/^v/i, "").toLowerCase();
+
+const parseVersionParts = (value?: string | null) => {
+  if (!value) return null;
+  const match = value.trim().match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!match) return null;
+  return [
+    Number(match[1] ?? 0),
+    Number(match[2] ?? 0),
+    Number(match[3] ?? 0),
+  ];
+};
+
+const compareVersionParts = (current: number[], latest: number[]) => {
+  for (let i = 0; i < 3; i += 1) {
+    if (current[i] !== latest[i]) {
+      return current[i] - latest[i];
+    }
+  }
+  return 0;
+};
+
+const parseUpdateAvailable = (value: unknown) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  if (typeof value === "number") return value > 0;
+  return false;
+};
+
+const compareVersions = (current?: string | null, latest?: string | null) => {
+  const currentParts = parseVersionParts(current);
+  const latestParts = parseVersionParts(latest);
+  if (currentParts && latestParts) {
+    return compareVersionParts(currentParts, latestParts);
+  }
+  if (current && latest) {
+    return normalizeVersion(current) === normalizeVersion(latest) ? 0 : null;
+  }
+  return null;
 };
 
 const renderResourceGroup = (
@@ -218,12 +256,36 @@ export function SectionCards() {
     }
   };
 
+  const [isPollingApplianceVersion, setIsPollingApplianceVersion] = useState(false);
+  const [targetApplianceVersion, setTargetApplianceVersion] = useState<string | null>(null);
+  const appliancePollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const appliancePollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const {
     mutateAsync: doTriggerUpdate,
     isPending: isUpdating,
   } = useMutation({
     mutationFn: triggerUpdate,
     onSuccess: () => {
+      if (appliancePollingIntervalRef.current) {
+        clearInterval(appliancePollingIntervalRef.current);
+      }
+      if (appliancePollingTimeoutRef.current) {
+        clearTimeout(appliancePollingTimeoutRef.current);
+      }
+      setIsPollingApplianceVersion(true);
+      setTargetApplianceVersion(sysinfo?.updateInfo?.latest ?? null);
+      appliancePollingIntervalRef.current = setInterval(() => {
+        refetchSys();
+      }, 10000);
+      appliancePollingTimeoutRef.current = setTimeout(() => {
+        if (appliancePollingIntervalRef.current) {
+          clearInterval(appliancePollingIntervalRef.current);
+          appliancePollingIntervalRef.current = null;
+        }
+        setIsPollingApplianceVersion(false);
+        setTargetApplianceVersion(null);
+      }, 600000);
       toast.info("Appliance is being updated. Please refresh the page.", {
         duration: Infinity,
         closeButton: true,
@@ -326,6 +388,18 @@ export function SectionCards() {
     };
   }, []);
 
+  // Cleanup appliance polling on unmount
+  useEffect(() => {
+    return () => {
+      if (appliancePollingIntervalRef.current) {
+        clearInterval(appliancePollingIntervalRef.current);
+      }
+      if (appliancePollingTimeoutRef.current) {
+        clearTimeout(appliancePollingTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleTriggerDmsUpdate = async () => {
     try {
       await doTriggerDmsUpdate();
@@ -350,6 +424,72 @@ export function SectionCards() {
       setConfirmOffboardOpen(false);
     }
   }, [isOnboarded, confirmOffboardOpen]);
+
+  const currentDmsVersion = sysinfo?.dmsUpdateInfo?.current ?? info?.dms_version;
+  const latestDmsVersion = sysinfo?.dmsUpdateInfo?.latest;
+  const dmsVersionComparison = compareVersions(currentDmsVersion, latestDmsVersion);
+  const dmsUpdateAvailable =
+    dmsVersionComparison === null
+      ? parseUpdateAvailable(sysinfo?.dmsUpdateInfo?.available)
+      : dmsVersionComparison < 0;
+  const isDmsUpdateInProgress = isUpdatingDms || isPollingDmsVersion;
+  const dmsUpdateLabel = isDmsUpdateInProgress
+    ? "Updating..."
+    : dmsUpdateAvailable
+      ? "Update your DMS"
+      : "DMS up to date";
+
+  const currentApplianceVersion =
+    sysinfo?.updateInfo?.current ?? sysinfo?.applianceVersion;
+  const latestApplianceVersion = sysinfo?.updateInfo?.latest;
+  const applianceVersionComparison = compareVersions(
+    currentApplianceVersion,
+    latestApplianceVersion
+  );
+  const applianceUpdateAvailable =
+    applianceVersionComparison === null
+      ? parseUpdateAvailable(sysinfo?.updateInfo?.available)
+      : applianceVersionComparison < 0;
+  const isApplianceUpdateInProgress = isUpdating || isPollingApplianceVersion;
+  const applianceUpdateLabel = isApplianceUpdateInProgress
+    ? "Updating..."
+    : applianceUpdateAvailable
+      ? "Update appliance"
+      : "Appliance up to date";
+
+  useEffect(() => {
+    if (!isPollingApplianceVersion) {
+      return;
+    }
+    const targetReached =
+      targetApplianceVersion &&
+      compareVersions(currentApplianceVersion, targetApplianceVersion) === 0;
+    if (targetReached || (!targetApplianceVersion && !applianceUpdateAvailable)) {
+      if (appliancePollingIntervalRef.current) {
+        clearInterval(appliancePollingIntervalRef.current);
+        appliancePollingIntervalRef.current = null;
+      }
+      if (appliancePollingTimeoutRef.current) {
+        clearTimeout(appliancePollingTimeoutRef.current);
+        appliancePollingTimeoutRef.current = null;
+      }
+      setIsPollingApplianceVersion(false);
+      setTargetApplianceVersion(null);
+      const resolvedVersion = targetApplianceVersion ?? currentApplianceVersion;
+      toast.success(
+        resolvedVersion
+          ? `Appliance updated to version ${resolvedVersion}`
+          : "Appliance update completed"
+      );
+      refetchSys();
+    }
+  }, [
+    isPollingApplianceVersion,
+    targetApplianceVersion,
+    currentApplianceVersion,
+    applianceUpdateAvailable,
+    refetchSys,
+  ]);
 
   const {
     data: docker,
@@ -478,54 +618,31 @@ export function SectionCards() {
                 </code>
                 <CopyButton text={info?.dms_did} className="ml-2" />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <p>
                   <b>Version:</b> <code>{info?.dms_version}</code>
                 </p>
-                <TooltipProvider>
-                  {sysinfo?.dmsUpdateInfo?.available ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          size="sm"
-                          className="h-auto w-auto p-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                          onClick={handleTriggerDmsUpdate}
-                          disabled={isUpdatingDms}
-                        >
-                          {isUpdatingDms ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <ArrowUp className="size-4" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Update to {sysinfo.dmsUpdateInfo.latest}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-auto w-auto p-1"
-                          onClick={() => refetchSys()}
-                          disabled={isRefetchingSys}
-                        >
-                          {isRefetchingSys ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="size-4" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Check for DMS updates</p>
-                      </TooltipContent>
-                    </Tooltip>
+                <Button
+                  size="sm"
+                  variant={dmsUpdateAvailable || isDmsUpdateInProgress ? "default" : "outline"}
+                  className={cn(
+                    "h-7 px-3 text-xs",
+                    dmsUpdateAvailable || isDmsUpdateInProgress
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-100"
+                      : "text-muted-foreground"
                   )}
-                </TooltipProvider>
+                  onClick={handleTriggerDmsUpdate}
+                  disabled={!dmsUpdateAvailable || isDmsUpdateInProgress}
+                >
+                  {isDmsUpdateInProgress ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {dmsUpdateLabel}
+                    </>
+                  ) : (
+                    dmsUpdateLabel
+                  )}
+                </Button>
               </div>
               <p className="flex items-center gap-2 w-full">
                 <b>Peer ID:</b>{" "}
@@ -609,53 +726,39 @@ export function SectionCards() {
 
                 <div className="flex main_board_info">
                   <span className="font-bold">Appliance Version</span>
-                  <TooltipProvider>
-                    <div className="flex items-center gap-2">
-                      <span>{sysinfo?.applianceVersion}</span>
-                      {sysinfo?.updateInfo?.available ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="sm"
-                              className="h-auto w-auto p-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                              onClick={handleTriggerUpdate}
-                              disabled={isUpdating}
-                            >
-                              {isUpdating ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <ArrowUp className="size-4" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Update to {sysinfo.updateInfo.latest}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-auto w-auto p-1"
-                              onClick={() => refetchSys()}
-                              disabled={isRefetchingSys}
-                            >
-                              {isRefetchingSys ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <RefreshCw className="size-4" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Check for updates</p>
-                          </TooltipContent>
-                        </Tooltip>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>{sysinfo?.applianceVersion}</span>
+                    <Button
+                      size="sm"
+                      variant={
+                        applianceUpdateAvailable || isApplianceUpdateInProgress
+                          ? "default"
+                          : "outline"
+                      }
+                      className={cn(
+                        "h-7 px-3 text-xs",
+                        applianceUpdateAvailable || isApplianceUpdateInProgress
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-100"
+                          : "text-muted-foreground"
                       )}
-                    </div>
-                  </TooltipProvider>
+                      onClick={handleTriggerUpdate}
+                      disabled={!applianceUpdateAvailable || isApplianceUpdateInProgress}
+                      title={
+                        applianceUpdateAvailable && latestApplianceVersion
+                          ? `Update to ${latestApplianceVersion}`
+                          : undefined
+                      }
+                    >
+                      {isApplianceUpdateInProgress ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          {applianceUpdateLabel}
+                        </>
+                      ) : (
+                        applianceUpdateLabel
+                      )}
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="flex main_board_info">

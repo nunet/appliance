@@ -74,10 +74,22 @@ export interface ContractPaymentAddress {
 
 export interface ContractPaymentDetails {
   payment_type: ContractPaymentType;
+  payment_model?: string | null;
   requester_addr?: string | null;
   provider_addr?: string | null;
   currency?: string | null;
   fees_per_allocation?: string | null;
+  fee_per_deployment?: string | null;
+  fee_per_time_unit?: string | null;
+  time_unit?: string | null;
+  fee_per_cpu_core_per_time_unit?: string | null;
+  fee_per_ram_gb_per_time_unit?: string | null;
+  fee_per_disk_gb_per_time_unit?: string | null;
+  fee_per_gpu_per_time_unit?: string | null;
+  resource_time_unit?: string | null;
+  fixed_rental_amount?: string | null;
+  payment_period?: string | null;
+  payment_period_count?: string | null;
   timestamp?: string | null;
   blockchain?: ContractBlockchain | null;
   addresses?: ContractPaymentAddress[] | null;

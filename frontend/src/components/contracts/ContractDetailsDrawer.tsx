@@ -236,10 +236,22 @@ type PaymentAddressView = {
 
 type PaymentDetailsView = {
   payment_type?: string | null;
+  payment_model?: string | null;
   requester_addr?: string | null;
   provider_addr?: string | null;
   currency?: string | null;
   fees_per_allocation?: string | null;
+  fee_per_deployment?: string | null;
+  fee_per_time_unit?: string | null;
+  time_unit?: string | null;
+  fee_per_cpu_core_per_time_unit?: string | null;
+  fee_per_ram_gb_per_time_unit?: string | null;
+  fee_per_disk_gb_per_time_unit?: string | null;
+  fee_per_gpu_per_time_unit?: string | null;
+  resource_time_unit?: string | null;
+  fixed_rental_amount?: string | null;
+  payment_period?: string | null;
+  payment_period_count?: string | null;
   blockchain?: string | null;
   timestamp?: string | number | Date | bigint | null;
   addresses?: PaymentAddressView[];
@@ -382,20 +394,69 @@ function toPaymentDetailsView(detailsSource: unknown): PaymentDetailsView | null
   }
   const details = detailsSource as Record<string, unknown>;
   const addresses = extractPaymentAddresses(details);
-  if (addresses.length === 0) {
-    return null;
-  }
   const primary = addresses[0];
   const paymentType = pickFirstValue(details, "payment_type", "paymentType");
+  const paymentModel = pickFirstValue(details, "payment_model", "paymentModel");
+  const requester = pickFirstValue(details, "requester_addr", "requesterAddress", "requestor_addr", "requestorAddress");
+  const provider = pickFirstValue(details, "provider_addr", "providerAddress");
+  const currency = pickFirstValue(details, "currency", "token");
+  const blockchain = pickFirstValue(details, "blockchain", "chain");
   const feesPerAllocation = pickFirstValue(details, "fees_per_allocation", "fee_per_allocation", "feesPerAllocation");
+  const feePerDeployment = pickFirstValue(details, "fee_per_deployment", "feePerDeployment");
+  const feePerTimeUnit = pickFirstValue(details, "fee_per_time_unit", "feePerTimeUnit");
+  const timeUnit = pickFirstValue(details, "time_unit", "timeUnit");
+  const feePerCpuCore = pickFirstValue(details, "fee_per_cpu_core_per_time_unit", "feePerCpuCorePerTimeUnit");
+  const feePerRamGb = pickFirstValue(details, "fee_per_ram_gb_per_time_unit", "feePerRamGbPerTimeUnit");
+  const feePerDiskGb = pickFirstValue(details, "fee_per_disk_gb_per_time_unit", "feePerDiskGbPerTimeUnit");
+  const feePerGpu = pickFirstValue(details, "fee_per_gpu_per_time_unit", "feePerGpuPerTimeUnit");
+  const resourceTimeUnit = pickFirstValue(details, "resource_time_unit", "resourceTimeUnit");
+  const fixedRentalAmount = pickFirstValue(details, "fixed_rental_amount", "fixedRentalAmount");
+  const paymentPeriod = pickFirstValue(details, "payment_period", "paymentPeriod");
+  const paymentPeriodCount = pickFirstValue(details, "payment_period_count", "paymentPeriodCount");
   const timestamp = pickFirstValue(details, "timestamp", "payment_timestamp", "time");
+  const hasDetails = [
+    paymentType,
+    paymentModel,
+    requester,
+    provider,
+    currency,
+    blockchain,
+    feesPerAllocation,
+    feePerDeployment,
+    feePerTimeUnit,
+    timeUnit,
+    feePerCpuCore,
+    feePerRamGb,
+    feePerDiskGb,
+    feePerGpu,
+    resourceTimeUnit,
+    fixedRentalAmount,
+    paymentPeriod,
+    paymentPeriodCount,
+    timestamp,
+  ].some((value) => value !== undefined && value !== null);
+  if (!hasDetails && addresses.length === 0) {
+    return null;
+  }
   return {
     payment_type: normalizeDisplayValue(paymentType),
-    requester_addr: primary?.requester_addr ?? null,
-    provider_addr: primary?.provider_addr ?? null,
-    currency: primary?.currency ?? null,
+    payment_model: normalizeDisplayValue(paymentModel),
+    requester_addr: normalizeDisplayValue(requester) ?? primary?.requester_addr ?? null,
+    provider_addr: normalizeDisplayValue(provider) ?? primary?.provider_addr ?? null,
+    currency: normalizeDisplayValue(currency) ?? primary?.currency ?? null,
     fees_per_allocation: normalizeDisplayValue(feesPerAllocation),
-    blockchain: primary?.blockchain ?? null,
+    fee_per_deployment: normalizeDisplayValue(feePerDeployment),
+    fee_per_time_unit: normalizeDisplayValue(feePerTimeUnit),
+    time_unit: normalizeDisplayValue(timeUnit),
+    fee_per_cpu_core_per_time_unit: normalizeDisplayValue(feePerCpuCore),
+    fee_per_ram_gb_per_time_unit: normalizeDisplayValue(feePerRamGb),
+    fee_per_disk_gb_per_time_unit: normalizeDisplayValue(feePerDiskGb),
+    fee_per_gpu_per_time_unit: normalizeDisplayValue(feePerGpu),
+    resource_time_unit: normalizeDisplayValue(resourceTimeUnit),
+    fixed_rental_amount: normalizeDisplayValue(fixedRentalAmount),
+    payment_period: normalizeDisplayValue(paymentPeriod),
+    payment_period_count: normalizeDisplayValue(paymentPeriodCount),
+    blockchain: normalizeDisplayValue(blockchain) ?? primary?.blockchain ?? null,
     timestamp,
     addresses,
   };
@@ -643,8 +704,17 @@ export function ContractDetailsDrawer({
               <Section title="Payment details">
                 {paymentDetails ? (
                   <div className="grid gap-3 md:grid-cols-2">
+                    <InfoRow label="Payment model">
+                      {paymentDetails.payment_model ?? "--"}
+                    </InfoRow>
                     <InfoRow label="Payment type">
                       {paymentDetails.payment_type ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Payment period">
+                      {paymentDetails.payment_period ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Payment period count">
+                      {paymentDetails.payment_period_count ?? "--"}
                     </InfoRow>
                     <InfoRow label="Currency">
                       {paymentDetails.currency ?? "--"}
@@ -657,6 +727,33 @@ export function ContractDetailsDrawer({
                     </InfoRow>
                     <InfoRow label="Fees per allocation">
                       {paymentDetails.fees_per_allocation ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Fee per deployment">
+                      {paymentDetails.fee_per_deployment ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Fee per time unit">
+                      {paymentDetails.fee_per_time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Time unit">
+                      {paymentDetails.time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Fixed rental amount">
+                      {paymentDetails.fixed_rental_amount ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="CPU fee per time unit">
+                      {paymentDetails.fee_per_cpu_core_per_time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="RAM fee per time unit">
+                      {paymentDetails.fee_per_ram_gb_per_time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Disk fee per time unit">
+                      {paymentDetails.fee_per_disk_gb_per_time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="GPU fee per time unit">
+                      {paymentDetails.fee_per_gpu_per_time_unit ?? "--"}
+                    </InfoRow>
+                    <InfoRow label="Resource time unit">
+                      {paymentDetails.resource_time_unit ?? "--"}
                     </InfoRow>
                     <InfoRow label="Blockchain">
                       {paymentDetails.blockchain ?? "--"}

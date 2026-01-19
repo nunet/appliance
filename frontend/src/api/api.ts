@@ -52,6 +52,21 @@ export interface UpdateInfo {
   latest: string;
 }
 
+export interface DmsLogBundleResponse {
+  source?: string | null;
+  lines?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  returncode?: number | null;
+}
+
+export interface DmsLogsResponse {
+  status: string;
+  message?: string;
+  dms?: string | null;
+  dms_logs?: DmsLogBundleResponse | null;
+}
+
 // ==== AXIOS INSTANCE ====
 // In development, Vite runs on 5173 and backend on 8080
 // In production, both frontend and backend serve from the same port
@@ -211,6 +226,18 @@ export const checkDmsUpdates = () =>
     const result: UpdateInfo = JSON.parse(res.data);
     return result;
   });
+
+export const getFilteredDmsLogs = (
+  dmsQuery: string | null = null,
+  dmsLines: number | null = null,
+  dmsView: string | null = null
+) => {
+  const params: Record<string, string> = {};
+  if (dmsQuery) params.dms_query = dmsQuery;
+  if (dmsLines) params.dms_lines = `${dmsLines}`;
+  if (dmsView) params.dms_view = dmsView;
+  return api.get<DmsLogsResponse>("/dms/logs/filtered", { params }).then((res) => res.data);
+};
 
 // ==== SYSINFO ENDPOINTS ====
 export const getLocalIp = () =>

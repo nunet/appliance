@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Depends
 import os
 import logging
 from ..schemas import (
-    InstallStatus, StructuredLogs, DmsStatus, CommandResult, PeerInfo, ResourcesInfo,ConnectedPeers, ConnectedPeer, FullStatusCombined
+    InstallStatus, StructuredLogs, DmsStatus, CommandResult, PeerInfo, ResourcesInfo,
+    ConnectedPeers, ConnectedPeer, FullStatusCombined, DmsLogsResponse
 )
 from fastapi import Query
 from pathlib import Path
@@ -340,6 +341,33 @@ def dms_logs(lines: int = 200):
     """
     argv = ["sudo", "-n", "journalctl", "-u", "nunetdms", "-n", str(lines), "--no-pager", "--output=short-iso"]
     return _run_captured(argv, label="dms logs")
+
+@router.get("/logs/filtered", response_model=DmsLogsResponse)
+def dms_logs_filtered(
+    dms_query: str | None = Query(default=None, description="Optional jq filter for DMS logs"),
+    dms_lines: int = Query(5000, ge=1, le=10000, description="Number of DMS log lines to scan"),
+    dms_view: str = Query(default="compact", description="DMS log view: compact, folded, expanded, map, raw"),
+):
+    mgr = DMSManager()
+    query = dms_query.strip() if isinstance(dms_query, str) else None
+    filtered = mgr.get_filtered_dms_logs_general(
+        query=query if query else None,
+        max_lines=dms_lines,
+        view=dms_view,
+    )
+    rc = filtered.get("returncode")
+    status = "success" if rc in (0, None) else "error"
+    stderr = (filtered.get("stderr") or "").strip()
+    stdout = (filtered.get("stdout") or "").strip()
+    dms_text = stdout
+    if not dms_text and status != "success" and stderr:
+        dms_text = f"[stderr]\n{stderr}"
+    return DmsLogsResponse(
+        status=status,
+        message=stderr if status != "success" else "",
+        dms=dms_text,
+        dms_logs=filtered,
+    )
 
 @router.get("/logs/structured", response_model=StructuredLogs, response_model_exclude_none=True)
 def logs_structured(

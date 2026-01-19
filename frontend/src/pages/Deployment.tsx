@@ -41,6 +41,14 @@ import { RefreshButton } from "../components/ui/RefreshButton";
 import { Skeleton } from "../components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { YamlViewer } from "../components/ui/YamlViewer";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -588,24 +596,133 @@ function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: str
 function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
   const allocKey = alloc ?? "__default__";
   const [isRequesting, setIsRequesting] = useState(false);
+  const dmsFilters = [
+    {
+      value: "all",
+      label: "All",
+      query: null,
+      hint: "All logs for this deployment",
+    },
+    {
+      value: "errors",
+      label: "Errors",
+      query: '.error and .level == "ERROR"',
+      hint: "Error-level lines with error details",
+    },
+    {
+      value: "errors-all",
+      label: "Errors (All)",
+      query: ".error",
+      hint: "Errors across all log levels",
+    },
+    {
+      value: "bids",
+      label: "Bids",
+      query: '.msg | IN("deployment_bid", "bid_request")',
+      hint: "Bid requests and bid responses",
+    },
+    {
+      value: "dispatch",
+      label: "Dispatch",
+      query: '.msg == "dispatching_message"',
+      hint: "Message dispatch activity",
+    },
+    {
+      value: "sandbox",
+      label: "Sandbox",
+      query: '.msg == "dispatching_message" and (.msg_from != null or .from != null)',
+      hint: "Dispatch lines with message sender info",
+    },
+  ];
+  const dmsViewOptions = [
+    {
+      value: "compact",
+      label: "Compact",
+      hint: "Timestamp, level, msg, key IDs",
+    },
+    {
+      value: "folded",
+      label: "Folded",
+      hint: "Timestamp, level, msg only",
+    },
+    {
+      value: "expanded",
+      label: "Expanded",
+      hint: "Pretty JSON per entry",
+    },
+    {
+      value: "map",
+      label: "Map",
+      hint: "Message only",
+    },
+    {
+      value: "raw",
+      label: "Raw",
+      hint: "Single-line JSON per entry",
+    },
+  ];
+  const dmsLineOptions = [
+    { value: "400", label: "400" },
+    { value: "1000", label: "1k" },
+    { value: "2000", label: "2k" },
+    { value: "5000", label: "5k" },
+  ];
+  const [dmsFilter, setDmsFilter] = useState(dmsFilters[0].value);
+  const [dmsView, setDmsView] = useState(dmsViewOptions[0].value);
+  const [dmsLines, setDmsLines] = useState("2000");
+  const activeDmsFilter =
+    dmsFilters.find((filter) => filter.value === dmsFilter) ?? dmsFilters[0];
+  const dmsQuery = activeDmsFilter.query;
+  const dmsLinesValue = Number(dmsLines) || 2000;
+  const activeDmsView =
+    dmsViewOptions.find((option) => option.value === dmsView) ?? dmsViewOptions[0];
+
   const {
-    data: logsData,
-    refetch,
-    isFetching,
+    data: baseLogsData,
+    refetch: refetchBaseLogs,
+    isFetching: isFetchingBaseLogs,
   } = useQuery({
-    queryKey: ["deployment-logs", deploymentId, allocKey],
-    queryFn: () => getDeploymentLogs(deploymentId, alloc ?? null),
+    queryKey: ["deployment-logs-base", deploymentId, allocKey],
+    queryFn: () =>
+      getDeploymentLogs(deploymentId, alloc ?? null, null, false, 400, "compact", true),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
     gcTime: Infinity,
+    keepPreviousData: true,
+  });
+
+  const {
+    data: dmsLogsData,
+    refetch: refetchDmsLogs,
+    isFetching: isFetchingDmsLogs,
+  } = useQuery({
+    queryKey: ["deployment-logs-dms", deploymentId, allocKey, dmsFilter, dmsLinesValue, dmsView],
+    queryFn: () =>
+      getDeploymentLogs(
+        deploymentId,
+        alloc ?? null,
+        dmsQuery,
+        false,
+        dmsLinesValue,
+        dmsView,
+        false
+      ),
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    keepPreviousData: true,
   });
 
   const handleRefresh = async () => {
     setIsRequesting(true);
     try {
-      await requestDeploymentLogs(deploymentId, alloc ?? null);
-      await refetch({ throwOnError: true });
+      await requestDeploymentLogs(deploymentId, alloc ?? null, false);
+      await Promise.all([
+        refetchBaseLogs({ throwOnError: true }),
+        refetchDmsLogs({ throwOnError: true }),
+      ]);
     } catch (error) {
       throw error;
     } finally {
@@ -614,8 +731,18 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
   };
 
   const handleDownload = () => {
-    if (!logsData?.message) return;
-    const blob = new Blob([logsData.message], { type: "text/plain" });
+    const content = [
+      "=== STDOUT ===",
+      stdout || "No STDOUT logs available.",
+      "",
+      "=== STDERR ===",
+      stderr || "No STDERR logs available.",
+      "",
+      "=== DMS LOGS ===",
+      dms || dmsPlaceholderText,
+      "",
+    ].join("\n");
+    const blob = new Blob([content], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -673,31 +800,64 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     };
   }
 
-  const parsedLogs = useMemo(() => {
-    if (!logsData) return { stdout: "", stderr: "", dms: "" };
-    if (
-      logsData.stdout !== undefined ||
-      logsData.stderr !== undefined ||
-      logsData.dms !== undefined
-    ) {
+  const parsedStdLogs = useMemo(() => {
+    if (!baseLogsData) return { stdout: "", stderr: "" };
+    if (baseLogsData.stdout !== undefined || baseLogsData.stderr !== undefined) {
       return {
-        stdout: logsData.stdout ?? "",
-        stderr: logsData.stderr ?? "",
-        dms: logsData.dms ?? "",
+        stdout: baseLogsData.stdout ?? "",
+        stderr: baseLogsData.stderr ?? "",
       };
     }
-    return parseLogs(logsData.message || "");
-  }, [logsData]);
+    const parsed = parseLogs(baseLogsData.message || "");
+    return {
+      stdout: parsed.stdout,
+      stderr: parsed.stderr,
+    };
+  }, [baseLogsData]);
 
-  const { stdout, stderr, dms } = parsedLogs;
+  const parsedDmsLogs = useMemo(() => {
+    if (!dmsLogsData) return { dms: "", hasFilteredDms: false };
+    const source = dmsLogsData.dms_logs?.source ?? "";
+    const hasFilteredDms = source !== "" && source !== "journalctl";
+    if (dmsLogsData.dms !== undefined) {
+      return {
+        dms: hasFilteredDms ? dmsLogsData.dms ?? "" : "",
+        hasFilteredDms,
+      };
+    }
+    const parsed = parseLogs(dmsLogsData.message || "");
+    return {
+      dms: hasFilteredDms ? parsed.dms : "",
+      hasFilteredDms,
+    };
+  }, [dmsLogsData]);
+
+  const { stdout, stderr } = parsedStdLogs;
+  const { dms, hasFilteredDms } = parsedDmsLogs;
+  const dmsPlaceholderText = isFetchingDmsLogs
+    ? "Loading DMS logs..."
+    : hasFilteredDms
+      ? "No DMS logs available yet."
+      : "Filtered DMS logs unavailable. Refresh to retry.";
 
   const logSections = useMemo(
     () => [
-      { key: "stdout", title: "STDOUT", color: "green", log: stdout },
-      { key: "stderr", title: "STDERR", color: "red", log: stderr },
-      { key: "dms", title: "DMS Logs", color: "blue", log: dms },
+      {
+        key: "stdout",
+        title: "STDOUT",
+        color: "green",
+        log: stdout,
+        placeholder: isFetchingBaseLogs ? "Loading STDOUT logs..." : "No STDOUT logs available yet.",
+      },
+      {
+        key: "stderr",
+        title: "STDERR",
+        color: "red",
+        log: stderr,
+        placeholder: isFetchingBaseLogs ? "Loading STDERR logs..." : "No STDERR logs available yet.",
+      },
     ],
-    [stdout, stderr, dms]
+    [stdout, stderr, isFetchingBaseLogs]
   );
 
   return (
@@ -709,7 +869,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
             <div className="flex gap-2">
               <RefreshButton
                 onClick={handleRefresh}
-                isLoading={isFetching || isRequesting}
+                isLoading={isFetchingBaseLogs || isFetchingDmsLogs || isRequesting}
                 tooltip="Refresh Logs"
               />
               <Button
@@ -730,8 +890,95 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
               title={section.title}
               log={section.log}
               color={section.color}
+              placeholder={section.placeholder}
+              isLoading={isFetchingBaseLogs}
             />
           ))}
+
+          <div className="mt-4">
+            <div className="rounded-xl border border-border/50 bg-gradient-to-br from-muted/60 via-muted/30 to-background/80 px-4 py-3 shadow-sm backdrop-blur-sm">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+                    <span>DMS Controls</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground/85">{activeDmsFilter.hint}</div>
+                  <div className="text-[11px] text-muted-foreground/70">
+                    View: {activeDmsView.label} — {activeDmsView.hint}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <ToggleGroup
+                    type="single"
+                    value={dmsFilter}
+                    onValueChange={(value) => value && setDmsFilter(value)}
+                    variant="default"
+                    size="sm"
+                    className="flex flex-wrap gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-xs"
+                    aria-label="DMS log filter"
+                  >
+                    {dmsFilters.map((filter) => (
+                      <Tooltip key={filter.value}>
+                        <TooltipTrigger asChild>
+                          <ToggleGroupItem
+                            value={filter.value}
+                            className={`text-[11px] whitespace-nowrap !rounded-full !first:rounded-l-full !last:rounded-r-full data-[state=on]:bg-primary/15 data-[state=on]:text-primary ${
+                              filter.value === "errors-all" ? "px-4 min-w-[110px]" : "px-3"
+                            }`}
+                          >
+                            {filter.label}
+                          </ToggleGroupItem>
+                        </TooltipTrigger>
+                        <TooltipContent>{filter.hint}</TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </ToggleGroup>
+                  <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      View
+                    </span>
+                    <Select value={dmsView} onValueChange={setDmsView}>
+                      <SelectTrigger className="h-7 w-[110px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
+                        <SelectValue placeholder="View" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {dmsViewOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Lines
+                    </span>
+                    <Select value={dmsLines} onValueChange={setDmsLines}>
+                      <SelectTrigger className="h-7 w-[88px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
+                        <SelectValue placeholder="Lines" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {dmsLineOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <LogSection
+              title="DMS Logs"
+              log={dms}
+              color="blue"
+              placeholder={dmsPlaceholderText}
+              isLoading={isFetchingDmsLogs}
+            />
+          </div>
         </CardHeader>
       </Card>
     </div>
@@ -743,17 +990,21 @@ function LogSection({
   title,
   log,
   color,
+  placeholder,
+  isLoading = false,
 }: {
   title: string;
   log: string;
   color: string;
+  placeholder?: string;
+  isLoading?: boolean;
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const rawLog = log ?? "";
   const normalizedLog = rawLog.trim();
   const hasContent = normalizedLog.length > 0;
-  const friendlyPlaceholder = "No logs available yet.";
+  const friendlyPlaceholder = placeholder || "No logs available yet.";
   const sanitizedLines = hasContent
     ? rawLog.replace(/\r\n/g, "\n").split("\n")
     : [friendlyPlaceholder];
@@ -783,9 +1034,11 @@ function LogSection({
         ref={scrollRef}
         className={`relative bg-black text-${color}-400 font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
         style={{
-          overflowX: "scroll",
+          overflowX: "hidden",
           overflowY: "auto",
-          whiteSpace: "nowrap",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
           width: "100%",
           maxWidth: "100%",
         }}
@@ -804,12 +1057,9 @@ function LogSection({
             </Button>
           </div>
         ) : null}
-        <div
-          style={{ minWidth: "max-content" }}
-          className={`${showExpandButton ? "pr-10" : ""} ${isPlaceholder ? "text-muted-foreground" : ""}`}
-        >
+        <div className={`${showExpandButton ? "pr-10" : ""} ${isPlaceholder ? "text-muted-foreground" : ""}`}>
           {bodyLines.map((line, idx) => (
-            <div key={idx} className="whitespace-nowrap">
+            <div key={idx} className="whitespace-pre-wrap break-words">
               {line}
             </div>
           ))}
@@ -821,7 +1071,15 @@ function LogSection({
   return (
     <>
       <div className="flex items-center justify-between mt-4">
-        <p className="font-semibold">{title}</p>
+        <div className="flex items-center gap-2">
+          <p className="font-semibold">{title}</p>
+          {isLoading ? (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading
+            </span>
+          ) : null}
+        </div>
         {hasContent ? (
           <div className="flex items-center gap-2">
             <CopyButton text={log} className="text-xs" />
