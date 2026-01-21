@@ -37,6 +37,7 @@ DMS_SERVICE_HOME = Path("/home/nunet")
 DMS_WORK_DIR = DMS_SERVICE_HOME / "nunet"
 DMS_DEPLOYMENTS_DIR = DMS_WORK_DIR / "deployments"
 DMS_DEPLOYMENTS_LOGS = DMS_DEPLOYMENTS_DIR
+DMS_LOG_JSONL_PATH = DMS_SERVICE_HOME / "logs" / "nunet-dms-logs.jsonl"
 DMS_LOG_PATH = DMS_SERVICE_HOME / "logs" / "nunet-dms.log"
 DMS_INIT_SCRIPT = DEFAULT_SCRIPTS_DIR / "configure-dms.sh"
 DMS_CAP_FILE = HOME_DIR / ".nunet" / "cap" / "dms.cap"
@@ -78,6 +79,7 @@ __all__ = [
     "DMS_WORK_DIR",
     "DMS_DEPLOYMENTS_DIR",
     "DMS_LOG_PATH",
+    "DMS_LOG_JSONL_PATH",
     "DMS_CAP_FILE",
     "SERVICE_DMS_CAP_FILE",
     "NUNET_CONFIG_PATH",

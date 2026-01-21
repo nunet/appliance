@@ -29,6 +29,7 @@ from .path_constants import (
     BACKEND_DIR,
     DMS_DEPLOYMENTS_DIR,
     DMS_DEPLOYMENTS_LOGS,
+    DMS_LOG_JSONL_PATH,
     DMS_LOG_PATH,
     NUNET_CONFIG_PATH,
 )
@@ -1419,14 +1420,26 @@ def _resolve_dms_log_path() -> Optional[Path]:
             if "logging" in cfg and isinstance(cfg.get("logging"), dict):
                 candidates.append(cfg["logging"].get("file"))
 
+    candidates.append(str(DMS_LOG_JSONL_PATH))
     candidates.append(str(DMS_LOG_PATH))
+    unreadable_candidate: Optional[Path] = None
     for candidate in candidates:
         if not candidate:
             continue
         path = Path(candidate)
-        if path.exists():
-            return path
-    return None
+        try:
+            if path.exists():
+                if os.access(path, os.R_OK):
+                    return path
+                if unreadable_candidate is None:
+                    unreadable_candidate = path
+        except PermissionError as exc:
+            logger.warning("Permission denied reading DMS log path %s: %s", path, exc)
+            if unreadable_candidate is None:
+                unreadable_candidate = path
+        except OSError as exc:
+            logger.debug("Unable to stat DMS log path %s: %s", path, exc)
+    return unreadable_candidate
 
 
 def _format_dms_log_entry(entry: Dict[str, Any]) -> str:
