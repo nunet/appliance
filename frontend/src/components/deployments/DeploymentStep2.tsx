@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardHeader,
@@ -9,35 +9,131 @@ import {
   CardContent,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { useConnectedPeers } from "../../hooks/getConnectedPeers";
+
+type Props = {
+  deployment_type: string;
+  peer_id: string;
+  set_deployment_type: (v: string) => void;
+  set_peer_id: (v: string) => void;
+  yaml_path: string;
+
+  nodes: string[];
+  nodes_count: number | null;
+  is_nodes_loading: boolean;
+
+  node_peer_map: Record<string, string>;
+  set_node_peer_map: (v: Record<string, string>) => void;
+};
+
+function peerSuffix(peer: string, tail = 9) {
+  if (!peer) return "";
+  if (peer.length <= tail) return peer;
+  return "..." + peer.slice(-tail);
+}
 
 export default function DeploymentStepTwo({
   deployment_type,
   peer_id,
   set_deployment_type,
   set_peer_id,
-}) {
+  nodes,
+  is_nodes_loading,
+  node_peer_map,
+  set_node_peer_map,
+}: Props) {
   const [search, setSearch] = useState("");
+  const [activeNode, setActiveNode] = useState<string | null>(null);
 
-  const { data: peers = [], isLoading, error } = useConnectedPeers();
+  const { data: peers = [] } = useConnectedPeers();
 
-  const filteredPeers = peers.filter((p) =>
-    p.toLowerCase().includes(search.toLowerCase())
-  );
+  // Ensure we always have an active node in targeted mode (if nodes exist)
+  useEffect(() => {
+    if (deployment_type !== "targeted") {
+      setActiveNode(null);
+      return;
+    }
+
+    if (!nodes.length) {
+      setActiveNode(null);
+      return;
+    }
+
+    if (!activeNode || !nodes.includes(activeNode)) {
+      setActiveNode(nodes[0]);
+    }
+  }, [deployment_type, nodes, activeNode]);
+
+  // Keep peer_id in sync with first node selection for backwards compatibility
+  useEffect(() => {
+    const firstNode = nodes[0];
+    if (!firstNode) {
+      if (peer_id) set_peer_id("");
+      return;
+    }
+
+    const nextPeerId = node_peer_map[firstNode] || "";
+    if (peer_id !== nextPeerId) set_peer_id(nextPeerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, node_peer_map]);
+
+
+  const targetedCount = useMemo(() => {
+    if (!nodes.length) return 0;
+    return nodes.reduce(
+      (acc, nodeId) => acc + (node_peer_map[nodeId] ? 1 : 0),
+      0
+    );
+  }, [nodes, node_peer_map]);
+
+  const undecidedCount = useMemo(() => {
+    if (!nodes.length) return 0;
+    return nodes.length - targetedCount;
+  }, [nodes.length, targetedCount]);
+
+  const filteredPeers = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return peers;
+    return peers.filter((p) => p.toLowerCase().includes(q));
+  }, [peers, search]);
+
+  const peerMatches = useMemo(() => {
+    // Render-limit for performance
+    return filteredPeers.slice(0, 50);
+  }, [filteredPeers]);
+
+  const assignPeerToActiveNode = (peer: string) => {
+    if (deployment_type !== "targeted") return;
+
+    const nodeId = activeNode || nodes[0];
+    if (!nodeId) return;
+
+    const next = { ...node_peer_map, [nodeId]: peer };
+    set_node_peer_map(next);
+
+    // Maintain legacy peer_id as first node peer
+    const firstNode = nodes[0];
+    set_peer_id(firstNode ? next[firstNode] || "" : "");
+  };
+
+  const clearNode = (nodeId: string) => {
+    const next = { ...node_peer_map };
+    delete next[nodeId];
+    set_node_peer_map(next);
+
+    // Maintain legacy peer_id as first node peer
+    const firstNode = nodes[0];
+    set_peer_id(firstNode ? next[firstNode] || "" : "");
+  };
 
   return (
     <div className="flex flex-col items-center w-full">
-      <h2 className="text-2xl font-semibold mb-6">Deployment Target</h2>
+      <div className="flex items-center w-full max-w-6xl mb-6 gap-4 flex-wrap">
+        <h2 className="text-2xl font-semibold">Deployment Target</h2>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-6xl">
         {/* Card 1: Deploy locally */}
@@ -45,6 +141,7 @@ export default function DeploymentStepTwo({
           onClick={() => {
             set_deployment_type("local");
             set_peer_id("");
+            set_node_peer_map({});
           }}
           className={cn(
             "cursor-pointer transition-all duration-1000 border-2 relative",
@@ -60,9 +157,7 @@ export default function DeploymentStepTwo({
           <CardContent>
             <div className="p-2 rounded-md bg-muted text-xs text-muted-foreground">
               <span className="font-mono">
-                {deployment_type === "local"
-                  ? "Deployed Locally"
-                  : "Not Selected"}
+                {deployment_type === "local" ? "Deployed Locally" : "Not Selected"}
               </span>
             </div>
           </CardContent>
@@ -79,84 +174,176 @@ export default function DeploymentStepTwo({
           )}
         >
           <CardHeader>
-            <div className="flex justify-between items-center">
-              <div>
+            <div className="flex justify-between items-center gap-3">
+              <div className="space-y-1.5">
                 <CardTitle>Target Deployment</CardTitle>
-                <CardDescription>Deploy to a specific peer</CardDescription>
+                <CardDescription>
+                  Pick a node, then choose a peer
+                </CardDescription>
               </div>
-              <Badge className="bg-blue-500 text-white">
-                {peers.length} Peers
-              </Badge>
+              {deployment_type === "targeted" && nodes.length > 0 && (
+                <div className="flex gap-2">
+                  <Badge className="bg-slate-700 text-white">
+                    Targeted {targetedCount}/{nodes.length}
+                  </Badge>
+                  <Badge className="bg-slate-700 text-white">
+                    Undecided {undecidedCount}
+                  </Badge>
+                </div>
+              )}
             </div>
           </CardHeader>
+
           <CardContent>
-            <div className="flex items-center justify-between mb-3 gap-2">
-              <Input
-                placeholder="Filter peers..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="max-w-xs"
-              />
-            </div>
+            {deployment_type === "targeted" ? (
+              <>
+                {(!nodes.length || is_nodes_loading) && (
+                  <div className="mb-3 text-xs text-muted-foreground">
+                    Waiting for node list from the selected ensemble...
+                  </div>
+                )}
 
-            {/* Table of peers */}
-            <div className="overflow-auto max-h-48 max-w-xs border rounded-md">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-full">Peer ID</TableHead>
-                    <TableHead className="w-10 text-center">Select</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredPeers.length === 0 ? (
-                    <div className="text-center text-muted-foreground p-4">
-                      Loading Peers...
+                {nodes.length > 0 && (
+                  <div className="space-y-4">
+                    {/* Nodes list (top) */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="text-sm font-medium">Nodes</div>
+                        <div className="text-xs text-muted-foreground">
+                          You must target at least one node to continue.
+                        </div>
+                      </div>
+
+                      <div className="max-h-56 overflow-auto border rounded-md">
+                        <div className="divide-y">
+                          {nodes.map((nodeId) => {
+                            const assignedPeer = node_peer_map[nodeId];
+                            const isActive = activeNode === nodeId;
+
+                            return (
+                              <div
+                                key={nodeId}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setActiveNode(nodeId)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") setActiveNode(nodeId);
+                                }}
+                                className={cn(
+                                  "flex items-center justify-between gap-3 px-3 py-2 cursor-pointer",
+                                  isActive ? "bg-blue-500/10" : "hover:bg-muted/50"
+                                )}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Badge className="bg-slate-700 text-white">{nodeId}</Badge>
+                                  <div className="text-xs text-muted-foreground truncate">
+                                    {assignedPeer ? (
+                                      <span className="font-mono" title={assignedPeer}>
+                                        {peerSuffix(assignedPeer)}
+                                      </span>
+                                    ) : (
+                                      "Undecided"
+                                    )}
+                                  </div>
+                                </div>
+
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    clearNode(nodeId);
+                                  }}
+                                  disabled={!assignedPeer}
+                                  className="text-xs"
+                                >
+                                  Clear
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground">
+                        Assigning peer for:{" "}
+                        <span className="font-mono">
+                          {activeNode || nodes[0]}
+                        </span>
+                      </div>
                     </div>
-                  ) : (
-                    filteredPeers.map((peer) => (
-                      <TableRow
-                        key={peer}
-                        className="cursor-pointer"
-                        onClick={() => set_peer_id(peer)}
-                      >
-                        <TableCell className="font-mono">
-                          <span title={peer}>{"..." + peer.slice(-9)}</span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {peer_id === peer ? (
-                            <span className="text-blue-600 font-bold text-lg">
-                              ●
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground text-lg">
-                              ○
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
 
-            {/* Muted box showing selected peer */}
-            <div className="mt-3 p-2 rounded-md bg-muted text-xs text-muted-foreground">
-              Selected Peer ID:{" "}
-              <span className="font-mono">
-                {deployment_type === "targeted" && peer_id
-                  ? "..." + peer_id.slice(-9)
-                  : "Not Selected"}
-              </span>
-            </div>
+                    {/* Peer picker (bottom) */}
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Peers</div>
+
+                      <Input
+                        placeholder="Search peers (suffix match)"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                      />
+
+                      <div className="max-h-56 overflow-auto border rounded-md">
+                        {peerMatches.length === 0 ? (
+                          <div className="p-3 text-xs text-muted-foreground">
+                            No peers match your search.
+                          </div>
+                        ) : (
+                          <div className="divide-y">
+                            {peerMatches.map((peer) => (
+                              <div
+                                key={peer}
+                                className="px-3 py-2 cursor-pointer hover:bg-muted/50"
+                                onClick={() => assignPeerToActiveNode(peer)}
+                                title={peer}
+                              >
+                                <span className="font-mono text-sm">
+                                  {peerSuffix(peer)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-xs text-muted-foreground">
+                        Showing {peerMatches.length} of {filteredPeers.length} matches
+                        {filteredPeers.length !== peers.length
+                          ? ` (filtered from ${peers.length})`
+                          : ` (total ${peers.length})`}
+                        .
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Nodes available:</div>
+                {is_nodes_loading ? (
+                  <div className="text-xs text-muted-foreground">Loading node list...</div>
+                ) : nodes.length === 0 ? (
+                  <div className="text-xs text-muted-foreground">No nodes available.</div>
+                ) : (
+                  <div
+                    className="font-mono text-sm text-muted-foreground overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]"
+                    title={nodes.join(", ")}
+                  >
+                    {nodes.join(", ")}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* Card 3: Non-targeted */}
         <Card
           onClick={() => {
             set_deployment_type("non_targeted");
             set_peer_id("");
+            set_node_peer_map({});
           }}
           className={cn(
             "cursor-pointer transition-all duration-1000 border-2 relative",
@@ -172,9 +359,7 @@ export default function DeploymentStepTwo({
           <CardContent>
             <div className="p-2 rounded-md bg-muted text-xs text-muted-foreground">
               <span className="font-mono">
-                {deployment_type === "non_targeted"
-                  ? "Network decides"
-                  : "Not Selected"}
+                {deployment_type === "non_targeted" ? "Network decides" : "Not Selected"}
               </span>
             </div>
           </CardContent>
