@@ -30,7 +30,50 @@ import { YamlEditor, lintYaml } from "@/components/code/YamlEditor";
 import { uploadTemplate, updateTemplateContent, deleteTemplate, getTemplateCategories } from "@/api/ensembles";
 import { parseDocument } from "yaml";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, ChevronDown, ChevronUp, Info } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, FileJson, FileText, Info, Loader2, X } from "lucide-react";
+
+const MAX_FILE_SIZE = 50 * 1024; // 50 KB
+
+const formatBytes = (bytes: number, decimals = 2) => {
+  if (!+bytes) return "0 Bytes";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+};
+
+type FileListItemProps = {
+  file: File;
+  icon: React.ReactNode;
+  onRemove?: () => void;
+};
+
+function FileListItem({ file, icon, onRemove }: FileListItemProps) {
+  return (
+    <div className="flex items-center gap-3 rounded-md border bg-muted/40 p-2 text-sm">
+      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-background">
+        {icon}
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <p className="truncate font-medium">{file.name}</p>
+        <p className="text-xs text-muted-foreground">{formatBytes(file.size)}</p>
+      </div>
+      {onRemove && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          className="h-8 w-8 flex-shrink-0"
+          onClick={onRemove}
+          aria-label="Remove file"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      )}
+    </div>
+  );
+}
 
 type UploadCallbackPayload = {
   yamlPath: string;
@@ -91,8 +134,8 @@ function validateJsonAgainstYaml(yamlContent: string, jsonContent: string): stri
 }
 
 const FORM_STEPS = [
-  { id: "details", label: "YAML & folder" },
-  { id: "json", label: "JSON form" },
+  { id: "details", label: "YAML" },
+  { id: "json", label: "JSON" },
 ] as const;
 
 const EDIT_STEPS = [
@@ -239,6 +282,7 @@ export default function TemplateUploadDialog({
   const [isAnalyzingYaml, setIsAnalyzingYaml] = React.useState(false);
   const [stepIndex, setStepIndex] = React.useState(0);
   const [isDragActive, setIsDragActive] = React.useState(false);
+  const [isRemovingFile, setIsRemovingFile] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [overwritePrompt, setOverwritePrompt] = React.useState<{
     message?: string;
@@ -270,6 +314,19 @@ export default function TemplateUploadDialog({
     return "";
   }, [defaultCategory, folderOptions]);
 
+  const handleRemoveFile = React.useCallback(() => {
+    if (isAnalyzingYaml || isRemovingFile) return;
+    setIsRemovingFile(true);
+    setTimeout(() => {
+      setYamlFile(null);
+      setYamlText("");
+      setYamlReadError(null);
+      setYamlMissingPlaceholders([]);
+      setIsAnalyzingYaml(false);
+      setIsRemovingFile(false);
+    }, 300);
+  }, [isAnalyzingYaml, isRemovingFile]);
+
   const handleYamlSelection = React.useCallback(
     (file: File | null) => {
       setYamlFile(file);
@@ -280,12 +337,39 @@ export default function TemplateUploadDialog({
       if (!file) {
         return;
       }
+
+      if (!/\.(ya?ml)$/i.test(file.name)) {
+        toast.error("Invalid file type. Please upload a .yaml or .yml file.");
+        setYamlFile(null);
+        return;
+      }
+
+      if (file.size > MAX_FILE_SIZE) {
+        toast.error(`File is too large. Max size is ${formatBytes(MAX_FILE_SIZE)}.`);
+        setYamlFile(null);
+        return;
+      }
+
+      if (file.size === 0) {
+        toast.error("The selected file is empty. Please choose a valid YAML file.");
+        setYamlFile(null);
+        return;
+      }
+
       const requestId = ++yamlReadRequestRef.current;
       setIsAnalyzingYaml(true);
       file
         .text()
         .then((text) => {
           if (yamlReadRequestRef.current !== requestId) return;
+
+          if (!text.trim()) {
+            toast.error("The selected file contains no content. Please choose a valid YAML file.");
+            setYamlFile(null);
+            setIsAnalyzingYaml(false);
+            return;
+          }
+
           setYamlText(text);
           setIsAnalyzingYaml(false);
         })
@@ -310,20 +394,28 @@ export default function TemplateUploadDialog({
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       setIsDragActive(false);
+      if (isRemovingFile) return;
       const file = event.dataTransfer?.files?.[0];
       if (file) {
         handleYamlSelection(file);
       }
     },
-    [handleYamlSelection]
+    [handleYamlSelection, isRemovingFile]
   );
-  const handleDragOver = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    if (!isDragActive) {
-      setIsDragActive(true);
-    }
-    event.dataTransfer.dropEffect = "copy";
-  }, [isDragActive]);
+  const handleDragOver = React.useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      if (isRemovingFile) {
+        event.dataTransfer.dropEffect = "none";
+        return;
+      }
+      if (!isDragActive) {
+        setIsDragActive(true);
+      }
+      event.dataTransfer.dropEffect = "copy";
+    },
+    [isDragActive, isRemovingFile]
+  );
   const handleDragLeave = React.useCallback((event: React.DragEvent<HTMLDivElement>) => {
     if (event.currentTarget.contains(event.relatedTarget as Node)) {
       return;
@@ -764,12 +856,12 @@ export default function TemplateUploadDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            {isEditMode ? "Edit Ensemble Template" : "Upload Ensemble Template"}
+            {isEditMode ? "Edit Ensemble Template" : "Upload Ensemble"}
           </DialogTitle>
           <DialogDescription>
             {isEditMode
               ? "Update the YAML and JSON schema for this template."
-              : "Upload a YAML ensemble template and choose how to manage its JSON form."}
+              : "Upload an ensemble file and choose how to manage its JSON form."}
           </DialogDescription>
         </DialogHeader>
 
@@ -903,30 +995,33 @@ export default function TemplateUploadDialog({
           {stepIndex === 0 && (
             <div className="grid gap-6">
               <section className="space-y-3">
-                <div>
-                  <Label className="text-sm font-semibold">Ensemble YAML</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Upload the YAML or YML file that describes your ensemble. We will inspect it for the placeholders
-                    required by the bundled JSON forms.
-                  </p>
-                </div>
+                  <div className="flex items-center gap-2">
+                    <Label className="text-sm font-semibold">Ensemble</Label>
+		  </div>
                 <div
                   role="button"
-                  tabIndex={0}
-                  onClick={triggerFileDialog}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      triggerFileDialog();
-                    }
-                  }}
+                  tabIndex={yamlFile ? -1 : 0}
+                  onClick={yamlFile ? undefined : triggerFileDialog}
+                  onKeyDown={
+                    yamlFile
+                      ? undefined
+                      : (event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            triggerFileDialog();
+                          }
+                        }
+                  }
                   onDragEnter={handleDragOver}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                   className={cn(
-                    "flex flex-col items-center justify-center rounded-md border-2 border-dashed p-6 text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isDragActive ? "border-primary bg-primary/5" : "border-muted-foreground/40 bg-muted/20"
+                    "flex flex-col justify-center rounded-md border-2 border-dashed text-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    isDragActive
+                      ? "border-primary bg-primary/5"
+                      : "border-muted-foreground/40 bg-muted/20",
+                    yamlFile ? "p-4" : "p-6 items-center"
                   )}
                 >
                   <input
@@ -936,39 +1031,94 @@ export default function TemplateUploadDialog({
                     className="hidden"
                     onChange={handleYamlChange}
                   />
-                  <p className="text-sm font-medium">
-                    Drag & drop your YAML here
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    or click to browse for a file
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className="mt-3"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      triggerFileDialog();
-                    }}
-                  >
-                    Browse files
-                  </Button>
-                </div>
-                <p
-                  className={cn(
-                    "text-xs",
-                    yamlReadError ? "text-destructive" : "text-muted-foreground"
+                  {yamlFile ? (
+                    <>
+                      <div
+                        className={cn(
+                          "flex w-full items-center gap-3 text-sm transition-opacity duration-300",
+                          isRemovingFile && "opacity-0"
+                        )}
+                      >
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-background">
+                          {isAnalyzingYaml ? (
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                          ) : (
+                            <FileText className="h-6 w-6 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div className="flex-1 overflow-hidden text-left">
+                          <p className="truncate font-medium">{yamlFile.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {isAnalyzingYaml ? "Analyzing..." : formatBytes(yamlFile.size)}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 flex-shrink-0"
+                          onClick={handleRemoveFile}
+                          aria-label="Remove file"
+                          disabled={isAnalyzingYaml || isRemovingFile}
+                        >
+                          {isRemovingFile ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <X className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-4">
+                        or click to browse for a file
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="mt-2"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          triggerFileDialog();
+                        }}
+                        disabled={isRemovingFile}
+                      >
+                        Browse files
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium">Upload a file</p>
+                      <p className="text-xs text-muted-foreground">
+                        Drag and drop or click to upload (Max. 50KB)
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="mt-3"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          triggerFileDialog();
+                        }}
+                      >
+                        Browse files
+                      </Button>
+                    </>
                   )}
-                >
-                  {yamlFile
-                    ? yamlReadError
-                      ? yamlReadError
-                      : isAnalyzingYaml
-                        ? "Analyzing YAML..."
-                        : `Selected: ${yamlFile.name}`
-                    : "Accepted formats: .yaml or .yml"}
-                </p>
+                </div>
+                <div className="mt-1.5">
+                  {yamlFile ? (
+                    <>
+                      {yamlReadError && (
+                        <p className="text-xs text-destructive">{yamlReadError}</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Accepted formats: .yaml, .yml
+                    </p>
+                  )}
+                </div>
               </section>
 
               <section className="space-y-3">
@@ -988,12 +1138,12 @@ export default function TemplateUploadDialog({
                       <TooltipContent side="top" className="max-w-xs text-left">
                         {defaultCategory
                           ? `New uploads default to "${defaultCategory}". If you leave this empty we will place the files in the root folder.`
-                          : "Pick an existing folder or enter a new name. Leaving this empty stores the files at the root level."}
+                          : "Location to store the uploaded ensemble. Leaving this empty stores the files at the root level."}
                       </TooltipContent>
                     </Tooltip>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Choose an existing folder or type a new name to create it.
+                    Choose an existing folder or create one.
                   </p>
                 </div>
                 <Select
@@ -1041,17 +1191,30 @@ export default function TemplateUploadDialog({
                     </p>
                   </>
                 )}
-                {folderMode !== "custom" && (
-                  <p className="text-xs text-muted-foreground">
-                    Choose a destination for this template. Select “Create new folder…” to type a custom name.
-                  </p>
-                )}
               </section>
             </div>
           )}
 
           {stepIndex === 1 && (
             <div className="grid gap-6">
+              <section className="space-y-2">
+                <Label className="text-sm font-semibold">Selected files</Label>
+                <div className="space-y-2">
+                  {yamlFile && (
+                    <FileListItem
+                      file={yamlFile}
+                      icon={<FileText className="h-5 w-5 text-muted-foreground" />}
+                    />
+                  )}
+                  {jsonFile && (
+                    <FileListItem
+                      file={jsonFile}
+                      icon={<FileJson className="h-5 w-5 text-muted-foreground" />}
+                      onRemove={() => setJsonFile(null)}
+                    />
+                  )}
+                </div>
+              </section>
               <section className="space-y-3">
                 <div>
                   <Label className="text-sm font-semibold">JSON form strategy</Label>
@@ -1104,7 +1267,7 @@ export default function TemplateUploadDialog({
                   ))}
                 </RadioGroup>
 
-                {jsonMode === "file" && (
+                {jsonMode === "file" && !jsonFile && (
                   <div className="space-y-2 rounded-md border p-3">
                     <Label className="text-sm font-medium">Upload JSON sidecar</Label>
                     <Input
@@ -1112,9 +1275,7 @@ export default function TemplateUploadDialog({
                       accept=".json,application/json"
                       onChange={(event) => setJsonFile(event.target.files?.[0] ?? null)}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {jsonFile ? `Selected: ${jsonFile.name}` : "Accepted format: .json"}
-                    </p>
+                    <p className="text-xs text-muted-foreground">Accepted format: .json</p>
                   </div>
                 )}
 
@@ -1438,6 +1599,7 @@ export default function TemplateUploadDialog({
                 onClick={() => (isLastStep ? doUpload() : goToNextStep())}
                 disabled={
                   isUploading ||
+                  isRemovingFile ||
                   (isLastStep ? !canSubmit : !canProceedToJson)
                 }
               >
