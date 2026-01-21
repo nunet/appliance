@@ -159,6 +159,20 @@ export async function copyTemplate(payload) {
   return res.data;
 }
 
+export interface TemplateNodesCountResponse {
+  status: string;
+  template_path: string;
+  nodes_count: number;
+  nodes?: string[];
+}
+
+export async function getTemplateNodesCount(template_path: string): Promise<TemplateNodesCountResponse> {
+  const res = await api.get(`/ensemble/templates/nodes-count`, {
+    params: { template_path },
+  });
+  return res.data;
+}
+
 // examples
 export async function downloadExamples(payload) {
   const res = await api.post(`/ensemble/examples/download`, payload);

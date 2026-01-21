@@ -1,5 +1,8 @@
-import json, subprocess, os
+import json
+import subprocess
 import logging
+import re
+import yaml
 from modules.dms_manager import DMSManager
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks, Request
 from pathlib import Path
@@ -22,12 +25,44 @@ from ..schemas import (
 )
 
 from modules.ensemble_utils import (
-    scan_ensembles_directory, load_ensemble_metadata, process_yaml_template,
+    load_ensemble_metadata, process_yaml_template,
     validate_form_data, save_deployment_instance, get_deployment_options
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Replace any {{ ... }} placeholder with a scalar to make YAML parseable for counting nodes.
+_JINJA_VAR_RE = re.compile(r"{{[^{}]*}}")
+
+
+def _is_placeholder_peer(val: Any) -> bool:
+    """
+    Determine whether a peer value should be treated as a placeholder/dummy.
+
+    We ignore:
+      - None / non-strings (e.g., 0 after placeholder sanitization)
+      - empty strings
+      - Jinja placeholders that may remain quoted (e.g. "{{ peer_id }}")
+      - "0" (common sanitized placeholder string)
+      - "__DUMMY_PEER__" (used by rendering logic)
+    """
+    if val is None:
+        return True
+    if not isinstance(val, str):
+        return True
+
+    s = val.strip()
+    if not s:
+        return True
+    if "{{" in s or "}}" in s:
+        return True
+    if s in ("0", "__DUMMY_PEER__"):
+        return True
+    return False
+
 
 def _resolve_deploy_permission() -> Tuple[bool, Optional[str], str]:
     """
@@ -41,6 +76,7 @@ def _resolve_deploy_permission() -> Tuple[bool, Optional[str], str]:
     label = profile.get("label") if isinstance(profile, dict) else None
     display = label or role_id or "current role"
     return allowed, role_id, display
+
 
 def _metadata_without_peer_requirement(meta: dict | None) -> dict | None:
     """
@@ -57,6 +93,7 @@ def _metadata_without_peer_requirement(meta: dict | None) -> dict | None:
         fields["peer_id"] = f
         m["fields"] = fields
     return m
+
 
 def _autofill_local_peer(values: dict) -> dict:
     """
@@ -75,6 +112,7 @@ def _autofill_local_peer(values: dict) -> dict:
             pass
     return v
 
+
 def _resolve_template_in_base(mgr: EnsembleManagerV2, p: str) -> Path:
     """
     Resolve a template path relative to ~/ensembles and ensure it stays inside.
@@ -89,6 +127,7 @@ def _resolve_template_in_base(mgr: EnsembleManagerV2, p: str) -> Path:
         raise HTTPException(status_code=404, detail=f"Template not found: {c_res}")
     return c_res
 
+
 def _category_for(file_path: Path, root: Path) -> str:
     """
     Category = first directory under root; files directly under root -> 'root'
@@ -102,11 +141,13 @@ def _category_for(file_path: Path, root: Path) -> str:
         return parts[0]  # top-level folder under root
     return "root"
 
+
 def _relpath(file_path: Path, root: Path) -> str:
     try:
         return str(file_path.relative_to(root))
     except Exception:
         return str(file_path)
+
 
 def _matching_yaml_for(json_path: Path) -> Path | None:
     """
@@ -119,6 +160,7 @@ def _matching_yaml_for(json_path: Path) -> Path | None:
     if cand2.exists():
         return cand2
     return None
+
 
 def get_mgr():
     return EnsembleManagerV2()
@@ -221,6 +263,7 @@ def _resolve_allocation_choice(
         status_code=400,
         detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
     )
+
 
 @router.get("/deployments", response_model=DeploymentsWebResponse)
 def list_deployments(
@@ -662,6 +705,7 @@ def deployment_logs_text(
         dms_logs=dms_bundle,
     )
 
+
 @router.post("/deployments", response_model=DeployResponse)
 def deploy_ensemble(payload: DeployRequest, mgr: EnsembleManagerV2 = Depends(get_mgr)):
     allowed, role_id, role_display = _resolve_deploy_permission()
@@ -855,6 +899,7 @@ def list_yaml_templates(
         "items": page_items,
     }
 
+
 @router.get("/deployment-options", response_model=dict)
 def deployment_options():
     """
@@ -869,6 +914,68 @@ def deployment_options():
         return opts
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get deployment options: {e}")
+
+
+@router.get("/templates/nodes-count", response_model=dict)
+def template_nodes_count(
+    template_path: str = Query(..., description="Path under ~/ensembles, e.g. rare-evo/floppybird.yaml"),
+    mgr: EnsembleManagerV2 = Depends(get_mgr),
+):
+    """
+    Parse the selected YAML ensemble template and return the number of nodes.
+    This uses PyYAML on the backend, called from Step 2 in the UI.
+
+    Note: Many templates contain unquoted {{ ... }} placeholders, which are not valid YAML.
+    For the purpose of counting nodes, we replace those placeholders with a dummy scalar (0)
+    to make the YAML parseable.
+    """
+    tpl = _resolve_template_in_base(mgr, template_path)
+    try:
+        yaml_text = tpl.read_text(encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Unable to read YAML file: {exc}") from exc
+
+    yaml_text_for_parse = _JINJA_VAR_RE.sub("0", yaml_text)
+
+    try:
+        doc = yaml.safe_load(yaml_text_for_parse) or {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {exc}") from exc
+
+    nodes_list: List[str] = []
+    node_peers: Dict[str, str] = {}
+
+    if isinstance(doc, dict):
+        nodes = doc.get("nodes")
+        if isinstance(nodes, dict):
+            nodes_list = [str(k) for k in nodes.keys()]
+            for node_id, node_cfg in nodes.items():
+                if isinstance(node_cfg, dict):
+                    peer_val = node_cfg.get("peer")
+                    if isinstance(peer_val, str) and not _is_placeholder_peer(peer_val):
+                        node_peers[str(node_id)] = peer_val.strip()
+        elif isinstance(nodes, list):
+            nodes_list = [str(i) for i in range(len(nodes))]
+            for idx, node_cfg in enumerate(nodes):
+                if isinstance(node_cfg, dict):
+                    peer_val = node_cfg.get("peer")
+                    if isinstance(peer_val, str) and not _is_placeholder_peer(peer_val):
+                        node_peers[str(idx)] = peer_val.strip()
+
+    nodes_count = len(nodes_list)
+
+    try:
+        rel = str(tpl.relative_to(mgr.base_dir))
+    except Exception:
+        rel = str(tpl)
+
+    return {
+        "status": "success",
+        "template_path": rel,
+        "nodes_count": nodes_count,
+        "nodes": nodes_list,
+        "node_peers": node_peers,
+    }
 
 
 @router.post("/templates/render", response_model=dict)
@@ -932,6 +1039,7 @@ def render_template(
         "validation_errors": []
     }
 
+
 @router.post("/deploy/from-template", response_model=dict)
 def deploy_from_template(
     payload: Dict[str, Any] = Body(..., example={
@@ -947,7 +1055,8 @@ def deploy_from_template(
         },
         "deployment_type": "local",   # local | targeted | non_targeted
         "timeout": 60,
-        "save_instance": True
+        "save_instance": True,
+        "peer_ids": ["12D3KooW...", None, "12D3KooX..."]  # optional for targeted multi-node (None = undecided)
     }),
     mgr: EnsembleManagerV2 = Depends(get_mgr)
 ):
@@ -965,12 +1074,65 @@ def deploy_from_template(
     # Load metadata
     meta = load_ensemble_metadata(str(tpl))
 
+    # peer_ids may include None to represent "undecided".
+    peer_ids_raw = payload.get("peer_ids")
+    peer_ids: Optional[List[Optional[str]]] = None
+    if isinstance(peer_ids_raw, list) and all(isinstance(x, str) or x is None for x in peer_ids_raw):
+        cleaned: List[Optional[str]] = []
+        for x in peer_ids_raw:
+            if isinstance(x, str):
+                v = x.strip()
+                cleaned.append(v if v else None)
+            else:
+                cleaned.append(None)
+        peer_ids = cleaned
+
     # Prepare values per deployment type
     if deployment_type == "targeted":
         values = dict(values_in)
-        if not values.get("peer_id"):
-            raise HTTPException(status_code=400, detail="peer_id is required for targeted deployments")
+
+        if peer_ids is not None:
+            # Enforce "must target at least one node"
+            if not any(p for p in peer_ids):
+                raise HTTPException(status_code=400, detail="At least one node must be targeted (select a peer).")
+
+            # Ensure templates referencing peer_id still render, even though we will override per-node peers later.
+            first_targeted_peer = next((p for p in peer_ids if p), None)
+            values.setdefault("peer_id", first_targeted_peer or "__DUMMY_PEER__")
+
+            # Pass peer_ids through to process_yaml_template (API-level control, not a template/YAML key).
+            values["peer_ids"] = peer_ids
+
+            # Validate peer_ids length matches nodes count (best-effort).
+            try:
+                raw_text = tpl.read_text(encoding="utf-8")
+                sanitized = _JINJA_VAR_RE.sub("0", raw_text)
+                doc = yaml.safe_load(sanitized) or {}
+                nodes_list: List[str] = []
+                if isinstance(doc, dict):
+                    nodes = doc.get("nodes")
+                    if isinstance(nodes, dict):
+                        nodes_list = [str(k) for k in nodes.keys()]
+                    elif isinstance(nodes, list):
+                        nodes_list = [str(i) for i in range(len(nodes))]
+                nodes_count = len(nodes_list)
+                if nodes_count > 0 and len(peer_ids) != nodes_count:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"peer_ids length ({len(peer_ids)}) must match nodes count ({nodes_count})",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning("Unable to validate peer_ids length vs nodes count for %s: %s", tpl, exc)
+
+        else:
+            # Legacy behavior: a single peer_id required
+            if not values.get("peer_id"):
+                raise HTTPException(status_code=400, detail="peer_id is required for targeted deployments")
+
         meta_for_validation = meta
+
     elif deployment_type == "local":
         values = _autofill_local_peer(values_in)
         # If still no peer_id, fail with helpful message
@@ -980,6 +1142,7 @@ def deploy_from_template(
                 detail="Could not determine local peer_id. Ensure DMS is running, or provide peer_id explicitly."
             )
         meta_for_validation = meta
+
     else:  # non_targeted
         values = dict(values_in)
         values.pop("peer_id", None)  # explicitly ignore

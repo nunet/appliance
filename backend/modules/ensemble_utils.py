@@ -117,6 +117,19 @@ def process_yaml_template(
     except Exception:
         use_yaml = False
 
+    # peer_ids is an API-level control field (not a YAML key). It may contain nulls to indicate "undecided".
+    peer_ids_raw = values.get("peer_ids")
+    peer_ids: Optional[List[Optional[str]]] = None
+    if isinstance(peer_ids_raw, list) and all(isinstance(x, str) or x is None for x in peer_ids_raw):
+        cleaned: List[Optional[str]] = []
+        for x in peer_ids_raw:
+            if isinstance(x, str):
+                v = x.strip()
+                cleaned.append(v if v else None)
+            else:
+                cleaned.append(None)
+        peer_ids = cleaned
+
     if use_yaml:
         try:
             # Single-document YAML expected
@@ -127,24 +140,57 @@ def process_yaml_template(
                 target_peer = values.get("peer_id")
 
                 if isinstance(nodes, dict):
-                    for node in nodes.values():
-                        if isinstance(node, dict):
-                            if deployment_type == "non_targeted":
+                    if deployment_type == "non_targeted":
+                        for node in nodes.values():
+                            if isinstance(node, dict):
                                 node.pop("peer", None)
-                            elif deployment_type in ("local", "targeted") and target_peer:
-                                node["peer"] = target_peer
+                    elif deployment_type in ("local", "targeted"):
+                        if deployment_type == "targeted" and peer_ids is not None:
+                            for idx, (_node_id, node) in enumerate(nodes.items()):
+                                if not isinstance(node, dict):
+                                    continue
+                                peer = peer_ids[idx] if idx < len(peer_ids) else None
+                                if peer:
+                                    node["peer"] = peer
+                                else:
+                                    node.pop("peer", None)
+                        elif target_peer:
+                            for node in nodes.values():
+                                if isinstance(node, dict):
+                                    node["peer"] = target_peer
 
                 elif isinstance(nodes, list):
-                    for node in nodes:
-                        if isinstance(node, dict):
-                            if deployment_type == "non_targeted":
+                    if deployment_type == "non_targeted":
+                        for node in nodes:
+                            if isinstance(node, dict):
                                 node.pop("peer", None)
-                            elif deployment_type in ("local", "targeted") and target_peer:
-                                node["peer"] = target_peer
+                    elif deployment_type in ("local", "targeted"):
+                        if deployment_type == "targeted" and peer_ids is not None:
+                            for idx, node in enumerate(nodes):
+                                if not isinstance(node, dict):
+                                    continue
+                                peer = peer_ids[idx] if idx < len(peer_ids) else None
+                                if peer:
+                                    node["peer"] = peer
+                                else:
+                                    node.pop("peer", None)
+                        elif target_peer:
+                            for node in nodes:
+                                if isinstance(node, dict):
+                                    node["peer"] = target_peer
 
             rendered = yaml.safe_dump(doc, sort_keys=False).strip() + "\n"
 
         except Exception as exc:
+            # If per-node peer assignment was requested and we can't safely YAML-parse,
+            # fail rather than silently deploying with the wrong peers.
+            if deployment_type == "targeted" and peer_ids is not None:
+                logger.error(
+                    "YAML post-processing failed for %s (targeted multi-peer); refusing to fallback: %s",
+                    yaml_path, exc
+                )
+                return None
+
             logger.warning(
                 "YAML post-processing failed for %s (%s); falling back to regex: %s",
                 yaml_path, deployment_type, exc
@@ -157,6 +203,14 @@ def process_yaml_template(
                 if peer:
                     rendered = re.sub(r"^(\s*)peer:\s*.*?$", rf"\1peer: {peer}", rendered, flags=re.MULTILINE)
     else:
+        # Without YAML parsing, we can only safely do single-peer substitution.
+        if deployment_type == "targeted" and peer_ids is not None:
+            logger.error(
+                "YAML parsing unavailable for %s (targeted multi-peer); cannot safely assign per-node peers.",
+                yaml_path,
+            )
+            return None
+
         if deployment_type == "non_targeted":
             rendered = re.sub(r"^\s*peer:\s*.*?$", "", rendered, flags=re.MULTILINE)
             rendered = re.sub(r"\n{3,}", "\n\n", rendered)
