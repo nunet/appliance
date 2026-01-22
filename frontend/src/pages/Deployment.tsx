@@ -42,6 +42,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { YamlViewer } from "../components/ui/YamlViewer";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import { Switch } from "../components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -49,6 +50,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { DmsLogSection } from "../components/logging/DmsLogSection";
+import { DmsLogView, parseDmsLogEntries } from "../lib/dmsLogs";
 
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
@@ -596,54 +599,50 @@ function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: str
 function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
   const allocKey = alloc ?? "__default__";
   const [isRequesting, setIsRequesting] = useState(false);
-  const dmsFilters = [
+  const dmsLevels = [
     {
       value: "all",
       label: "All",
       query: null,
-      hint: "All logs for this deployment",
+      hint: "All log levels for this deployment",
     },
     {
-      value: "errors",
-      label: "Errors",
-      query: '.error and .level == "ERROR"',
-      hint: "Error-level lines with error details",
+      value: "info",
+      label: "Info",
+      query: '(.level // "" | ascii_upcase) == "INFO"',
+      hint: "Info-level entries",
     },
     {
-      value: "errors-all",
-      label: "Errors (All)",
-      query: ".error",
-      hint: "Errors across all log levels",
+      value: "debug",
+      label: "Debug",
+      query: '(.level // "" | ascii_upcase) == "DEBUG"',
+      hint: "Debug-level entries",
     },
     {
-      value: "bids",
-      label: "Bids",
-      query: '.msg | IN("deployment_bid", "bid_request")',
-      hint: "Bid requests and bid responses",
+      value: "warn",
+      label: "Warn",
+      query:
+        '((.level // "" | ascii_upcase) == "WARN" or (.level // "" | ascii_upcase) == "WARNING")',
+      hint: "Warning-level entries",
     },
     {
-      value: "dispatch",
-      label: "Dispatch",
-      query: '.msg == "dispatching_message"',
-      hint: "Message dispatch activity",
-    },
-    {
-      value: "sandbox",
-      label: "Sandbox",
-      query: '.msg == "dispatching_message" and (.msg_from != null or .from != null)',
-      hint: "Dispatch lines with message sender info",
+      value: "error",
+      label: "Error",
+      query:
+        '((.level // "" | ascii_upcase) == "ERROR" or (.level // "" | ascii_upcase) == "ERR")',
+      hint: "Error-level entries",
     },
   ];
   const dmsViewOptions = [
     {
-      value: "compact",
-      label: "Compact",
-      hint: "Timestamp, level, msg, key IDs",
-    },
-    {
       value: "folded",
       label: "Folded",
       hint: "Timestamp, level, msg only",
+    },
+    {
+      value: "compact",
+      label: "Compact",
+      hint: "Timestamp, level, msg, key IDs",
     },
     {
       value: "expanded",
@@ -667,15 +666,16 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     { value: "2000", label: "2k" },
     { value: "5000", label: "5k" },
   ];
-  const [dmsFilter, setDmsFilter] = useState(dmsFilters[0].value);
-  const [dmsView, setDmsView] = useState(dmsViewOptions[0].value);
-  const [dmsLines, setDmsLines] = useState("2000");
-  const activeDmsFilter =
-    dmsFilters.find((filter) => filter.value === dmsFilter) ?? dmsFilters[0];
-  const dmsQuery = activeDmsFilter.query;
-  const dmsLinesValue = Number(dmsLines) || 2000;
+  const [dmsLevel, setDmsLevel] = useState(dmsLevels[0].value);
+  const [dmsView, setDmsView] = useState<DmsLogView>("folded");
+  const [dmsLines, setDmsLines] = useState("1000");
+  const [isDmsTailEnabled, setIsDmsTailEnabled] = useState(false);
+  const activeDmsLevel = dmsLevels.find((filter) => filter.value === dmsLevel) ?? dmsLevels[0];
+  const dmsQuery = activeDmsLevel.query;
+  const dmsLinesValue = Number(dmsLines) || 1000;
   const activeDmsView =
     dmsViewOptions.find((option) => option.value === dmsView) ?? dmsViewOptions[0];
+  const isDmsTailActive = isDmsTailEnabled;
 
   const {
     data: baseLogsData,
@@ -697,7 +697,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     refetch: refetchDmsLogs,
     isFetching: isFetchingDmsLogs,
   } = useQuery({
-    queryKey: ["deployment-logs-dms", deploymentId, allocKey, dmsFilter, dmsLinesValue, dmsView],
+    queryKey: ["deployment-logs-dms", deploymentId, allocKey, dmsLevel, dmsLinesValue],
     queryFn: () =>
       getDeploymentLogs(
         deploymentId,
@@ -705,15 +705,23 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
         dmsQuery,
         false,
         dmsLinesValue,
-        dmsView,
+        "raw",
         false
       ),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
+    refetchInterval: isDmsTailActive ? 15000 : false,
+    refetchIntervalInBackground: true,
     staleTime: Infinity,
     gcTime: Infinity,
     keepPreviousData: true,
   });
+
+  useEffect(() => {
+    if (isDmsTailActive) {
+      void refetchDmsLogs();
+    }
+  }, [isDmsTailActive, dmsLevel, dmsLinesValue, refetchDmsLogs]);
 
   const handleRefresh = async () => {
     setIsRequesting(true);
@@ -834,25 +842,112 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
 
   const { stdout, stderr } = parsedStdLogs;
   const { dms, hasFilteredDms } = parsedDmsLogs;
+  const dmsEntries = useMemo(() => parseDmsLogEntries(dms), [dms]);
   const dmsPlaceholderText = isFetchingDmsLogs
     ? "Loading DMS logs..."
     : hasFilteredDms
       ? "No DMS logs available yet."
       : "Filtered DMS logs unavailable. Refresh to retry.";
 
+  const renderDmsControls = () => (
+    <div className="rounded-xl border border-border/50 bg-gradient-to-br from-muted/60 via-muted/30 to-background/80 px-4 py-3 shadow-sm backdrop-blur-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
+            <span>DMS Controls</span>
+          </div>
+          <div className="text-xs text-muted-foreground/85">{activeDmsLevel.hint}</div>
+          <div className="text-[11px] text-muted-foreground/70">
+            View: {activeDmsView.label} — {activeDmsView.hint}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <ToggleGroup
+            type="single"
+            value={dmsLevel}
+            onValueChange={(value) => value && setDmsLevel(value)}
+            variant="default"
+            size="sm"
+            className="flex flex-wrap gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-xs"
+            aria-label="DMS log level"
+          >
+            {dmsLevels.map((filter) => (
+              <Tooltip key={filter.value}>
+                <TooltipTrigger asChild>
+                  <ToggleGroupItem
+                    value={filter.value}
+                    className="text-[11px] whitespace-nowrap !rounded-full !first:rounded-l-full !last:rounded-r-full data-[state=on]:bg-primary/15 data-[state=on]:text-primary px-3"
+                  >
+                    {filter.label}
+                  </ToggleGroupItem>
+                </TooltipTrigger>
+                <TooltipContent>{filter.hint}</TooltipContent>
+              </Tooltip>
+            ))}
+          </ToggleGroup>
+          <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              View
+            </span>
+            <Select value={dmsView} onValueChange={(value) => setDmsView(value as DmsLogView)}>
+              <SelectTrigger className="h-7 w-[110px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
+                <SelectValue placeholder="View" />
+              </SelectTrigger>
+              <SelectContent>
+                {dmsViewOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Lines
+            </span>
+            <Select value={dmsLines} onValueChange={setDmsLines}>
+              <SelectTrigger className="h-7 w-[88px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
+                <SelectValue placeholder="Lines" />
+              </SelectTrigger>
+              <SelectContent>
+                {dmsLineOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-3 py-1 shadow-xs">
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Tail
+            </span>
+            <Switch
+              checked={isDmsTailEnabled}
+              onCheckedChange={(checked) => setIsDmsTailEnabled(checked)}
+              aria-label="Toggle DMS log tailing"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   const logSections = useMemo(
     () => [
       {
         key: "stdout",
         title: "STDOUT",
-        color: "green",
+        textClass: "text-emerald-300",
         log: stdout,
         placeholder: isFetchingBaseLogs ? "Loading STDOUT logs..." : "No STDOUT logs available yet.",
       },
       {
         key: "stderr",
         title: "STDERR",
-        color: "red",
+        textClass: "text-white",
         log: stderr,
         placeholder: isFetchingBaseLogs ? "Loading STDERR logs..." : "No STDERR logs available yet.",
       },
@@ -889,94 +984,23 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
               key={section.key}
               title={section.title}
               log={section.log}
-              color={section.color}
+              textClass={section.textClass}
               placeholder={section.placeholder}
               isLoading={isFetchingBaseLogs}
             />
           ))}
 
           <div className="mt-4">
-            <div className="rounded-xl border border-border/50 bg-gradient-to-br from-muted/60 via-muted/30 to-background/80 px-4 py-3 shadow-sm backdrop-blur-sm">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary/70" />
-                    <span>DMS Controls</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground/85">{activeDmsFilter.hint}</div>
-                  <div className="text-[11px] text-muted-foreground/70">
-                    View: {activeDmsView.label} — {activeDmsView.hint}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <ToggleGroup
-                    type="single"
-                    value={dmsFilter}
-                    onValueChange={(value) => value && setDmsFilter(value)}
-                    variant="default"
-                    size="sm"
-                    className="flex flex-wrap gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-xs"
-                    aria-label="DMS log filter"
-                  >
-                    {dmsFilters.map((filter) => (
-                      <Tooltip key={filter.value}>
-                        <TooltipTrigger asChild>
-                          <ToggleGroupItem
-                            value={filter.value}
-                            className={`text-[11px] whitespace-nowrap !rounded-full !first:rounded-l-full !last:rounded-r-full data-[state=on]:bg-primary/15 data-[state=on]:text-primary ${
-                              filter.value === "errors-all" ? "px-4 min-w-[110px]" : "px-3"
-                            }`}
-                          >
-                            {filter.label}
-                          </ToggleGroupItem>
-                        </TooltipTrigger>
-                        <TooltipContent>{filter.hint}</TooltipContent>
-                      </Tooltip>
-                    ))}
-                  </ToggleGroup>
-                  <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      View
-                    </span>
-                    <Select value={dmsView} onValueChange={setDmsView}>
-                      <SelectTrigger className="h-7 w-[110px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
-                        <SelectValue placeholder="View" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {dmsViewOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-full border border-border/50 bg-background/80 px-2 py-1 shadow-xs">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Lines
-                    </span>
-                    <Select value={dmsLines} onValueChange={setDmsLines}>
-                      <SelectTrigger className="h-7 w-[88px] border-transparent bg-transparent px-2 text-[11px] shadow-none hover:bg-muted/40">
-                        <SelectValue placeholder="Lines" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {dmsLineOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <LogSection
+            {renderDmsControls()}
+            <DmsLogSection
               title="DMS Logs"
-              log={dms}
-              color="blue"
+              entries={dmsEntries}
+              view={dmsView}
+              copyText={dms}
               placeholder={dmsPlaceholderText}
               isLoading={isFetchingDmsLogs}
+              autoScroll={isDmsTailActive}
+              modalControls={renderDmsControls()}
             />
           </div>
         </CardHeader>
@@ -989,84 +1013,28 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
 function LogSection({
   title,
   log,
-  color,
+  textClass,
   placeholder,
   isLoading = false,
 }: {
   title: string;
   log: string;
-  color: string;
+  textClass: string;
   placeholder?: string;
   isLoading?: boolean;
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const rawLog = log ?? "";
-  const normalizedLog = rawLog.trim();
-  const hasContent = normalizedLog.length > 0;
   const friendlyPlaceholder = placeholder || "No logs available yet.";
-  const sanitizedLines = hasContent
-    ? rawLog.replace(/\r\n/g, "\n").split("\n")
-    : [friendlyPlaceholder];
-
-  const LogBody = ({
-    sizeClass,
-    showExpandButton = true,
-    linesToRender: bodyLines,
-    isPlaceholder = false,
-  }: {
-    sizeClass: string;
-    showExpandButton?: boolean;
-    linesToRender: string[];
-    isPlaceholder?: boolean;
-  }) => {
-    const scrollRef = useRef<HTMLDivElement | null>(null);
-
-    useEffect(() => {
-      const node = scrollRef.current;
-      if (node) {
-        node.scrollTop = node.scrollHeight;
-      }
-    }, [log]);
-
-    return (
-      <div
-        ref={scrollRef}
-        className={`relative bg-black text-${color}-400 font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
-        style={{
-          overflowX: "hidden",
-          overflowY: "auto",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          overflowWrap: "anywhere",
-          width: "100%",
-          maxWidth: "100%",
-        }}
-      >
-        {showExpandButton ? (
-          <div className="sticky top-2 flex justify-end pr-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsModalOpen(true)}
-              aria-label={`Expand ${title} logs`}
-              className="size-8 rounded-full bg-black/40 hover:bg-black/60 focus-visible:ring-offset-0"
-            >
-              <Maximize2 className="h-4 w-4" />
-            </Button>
-          </div>
-        ) : null}
-        <div className={`${showExpandButton ? "pr-10" : ""} ${isPlaceholder ? "text-muted-foreground" : ""}`}>
-          {bodyLines.map((line, idx) => (
-            <div key={idx} className="whitespace-pre-wrap break-words">
-              {line}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+  const hasContent = rawLog.trim().length > 0;
+  const sanitizedLines = useMemo(
+    () =>
+      hasContent
+        ? rawLog.replace(/\r\n/g, "\n").split("\n")
+        : [friendlyPlaceholder],
+    [rawLog, hasContent, friendlyPlaceholder]
+  );
 
   return (
     <>
@@ -1088,7 +1056,13 @@ function LogSection({
       </div>
       {hasContent ? (
         <>
-          <LogBody sizeClass="h-40" linesToRender={sanitizedLines} />
+          <StdLogBody
+            sizeClass="h-40"
+            textClass={textClass}
+            linesToRender={sanitizedLines}
+            scrollKey={rawLog}
+            onExpand={() => setIsModalOpen(true)}
+          />
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogContent className="!max-w-[95vw] !w-[95vw] max-h-[90vh] sm:!max-w-[95vw]">
               <DialogHeader>
@@ -1097,22 +1071,97 @@ function LogSection({
               <div className="flex justify-end mb-2">
                 <CopyButton text={log} className="text-xs" />
               </div>
-              <LogBody
+              <StdLogBody
                 sizeClass="max-h-[70vh] min-h-[50vh]"
-                showExpandButton={false}
+                textClass={textClass}
                 linesToRender={sanitizedLines}
+                scrollKey={rawLog}
+                showExpandButton={false}
               />
             </DialogContent>
           </Dialog>
         </>
       ) : (
-        <LogBody
+        <StdLogBody
           sizeClass="h-40"
-          showExpandButton={false}
+          textClass={textClass}
           linesToRender={sanitizedLines}
+          showExpandButton={false}
+          scrollKey={rawLog}
           isPlaceholder
         />
       )}
     </>
+  );
+}
+
+type StdLogBodyProps = {
+  sizeClass: string;
+  textClass: string;
+  linesToRender: string[];
+  scrollKey: string;
+  showExpandButton?: boolean;
+  isPlaceholder?: boolean;
+  onExpand?: () => void;
+};
+
+function StdLogBody({
+  sizeClass,
+  textClass,
+  linesToRender,
+  scrollKey,
+  showExpandButton = true,
+  isPlaceholder = false,
+  onExpand,
+}: StdLogBodyProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [scrollKey]);
+
+  return (
+    <div
+      ref={scrollRef}
+      className={`relative bg-black ${textClass} font-mono text-sm rounded-md p-3 shadow-inner ${sizeClass}`}
+      style={{
+        overflowX: "hidden",
+        overflowY: "auto",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        overflowWrap: "anywhere",
+        width: "100%",
+        maxWidth: "100%",
+      }}
+    >
+      {showExpandButton ? (
+        <div className="sticky top-2 flex justify-end pr-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onExpand}
+            aria-label="Expand logs"
+            className="size-8 rounded-full bg-black/40 hover:bg-black/60 focus-visible:ring-offset-0"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ) : null}
+      <div
+        className={`${showExpandButton ? "pr-10" : ""} ${
+          isPlaceholder ? "text-muted-foreground" : ""
+        }`}
+      >
+        {linesToRender.map((line, idx) => (
+          <div key={idx} className="whitespace-pre-wrap break-words">
+            {line}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
