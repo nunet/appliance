@@ -607,7 +607,7 @@ export function SectionCards() {
             </div>
           </CardHeader>
           <CardFooter className="flex-col items-start gap-1.5 text-sm">
-            <div className="text-muted-foreground w-full">
+            <div className="text-muted-foreground w-full space-y-2">
               <div className="flex items-center gap-2 flex-wrap">
                 <b>DID Key:</b>
                 <code
@@ -618,15 +618,29 @@ export function SectionCards() {
                 </code>
                 <CopyButton text={info?.dms_did} className="ml-2" />
               </div>
+              <div className="flex items-center gap-2 w-full">
+                <b>Peer ID:</b>{" "}
+                <code
+                  className="truncate max-w-[250px] md:max-w-none"
+                  title={info?.dms_peer_id}
+                >
+                  {info?.dms_peer_id}{" "}
+                </code>
+                <CopyButton text={info?.dms_peer_id} className="ml-2" />
+              </div>
               <div className="flex items-center gap-2 flex-wrap">
-                <p>
-                  <b>Version:</b> <code>{info?.dms_version}</code>
-                </p>
+                  <b>DMS Version:</b>
+		  <code
+		    className="text-sm truncate max-w-[250px] md:max-w-none"
+		    title={info?.dms_version}
+		  >
+		  	{info?.dms_version}
+		  </code>
                 <Button
                   size="sm"
                   variant={dmsUpdateAvailable || isDmsUpdateInProgress ? "default" : "outline"}
                   className={cn(
-                    "h-7 px-3 text-xs",
+                    "h-6 px-3 text-xs",
                     dmsUpdateAvailable || isDmsUpdateInProgress
                       ? "bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-100"
                       : "text-muted-foreground"
@@ -643,25 +657,55 @@ export function SectionCards() {
                     dmsUpdateLabel
                   )}
                 </Button>
-              </div>
-              <p className="flex items-center gap-2 w-full">
-                <b>Peer ID:</b>{" "}
-                <code
-                  className="truncate max-w-[250px] md:max-w-none"
-                  title={info?.dms_peer_id}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+                  <b>Appliance Version:</b>
+		  <code
+		    className="text-sm truncate max-w-[250px] md:max-w-none"
+		    title={sysinfo?.applianceVersion}
+		  >
+		  	{sysinfo?.applianceVersion}
+		  </code>
+                <Button
+                  size="sm"
+                  variant={
+                    applianceUpdateAvailable || isApplianceUpdateInProgress
+                      ? "default"
+                      : "outline"
+                  }
+                  className={cn(
+                    "h-6 px-3 text-xs",
+                    applianceUpdateAvailable || isApplianceUpdateInProgress
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-100"
+                      : "text-muted-foreground"
+                  )}
+                  onClick={handleTriggerUpdate}
+                  disabled={!applianceUpdateAvailable || isApplianceUpdateInProgress}
+                  title={
+                    applianceUpdateAvailable && latestApplianceVersion
+                      ? `Update to ${latestApplianceVersion}`
+                      : undefined
+                  }
                 >
-                  {info?.dms_peer_id}{" "}
-                </code>
-                <CopyButton text={info?.dms_peer_id} className="ml-2" />
-              </p>
+                  {isApplianceUpdateInProgress ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      {applianceUpdateLabel}
+                    </>
+                  ) : (
+                    applianceUpdateLabel
+                  )}
+                </Button>
+              </div>
             </div>
 
-            <div className="w-full mt-2 flex flex-col lg:flex-row gap-4 items-start">
+            <div className="w-full mt-2 flex flex-col lg:flex-row gap-4">
               {/* Left column */}
-              <div className="flex-1 flex flex-col border-2 p-2 gap-2 main_board flex-grow-1 w-full">
+              <div className="flex-1 flex flex-col border border-blue-500 p-2 main_board flex-grow-1 w-full">
                 <h2 className="font-bold text-sm lg:text-lg my-2">Status:</h2>
                 <Separator />
-                <div
+                <div className="flex-grow flex flex-col justify-center gap-2 mt-2">
+                  <div
                   className={cn(
                     "main_board_info",
                     info?.dms_status.includes("not")
@@ -697,11 +741,15 @@ export function SectionCards() {
                 >
                   {info?.dms_is_relayed ? "Relayed" : "Not Relayed"}
                 </div>
+                </div>
               </div>
 
               {/* Right column (sysInfo) */}
-              <div className="flex-1 flex flex-col border-2 p-2 gap-2 main_board flex-grow-1 w-full">
-                <div className="flex main_board_info">
+              <div className="flex-1 flex flex-col border border-blue-500 p-2 main_board flex-grow-1 w-full">
+                <h2 className="font-bold text-sm lg:text-lg my-2">System Info:</h2>
+                <Separator />
+                <div className="flex-grow flex flex-col justify-center gap-2 mt-2">
+                  <div className="flex main_board_info">
                   <span className="font-bold">Public IP</span>
                   <div className="flex items-center gap-1">
                     <span className="truncate max-w-[120px]">
@@ -724,42 +772,6 @@ export function SectionCards() {
                   </div>
                 </div>
 
-                <div className="flex main_board_info">
-                  <span className="font-bold">Appliance Version</span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span>{sysinfo?.applianceVersion}</span>
-                    <Button
-                      size="sm"
-                      variant={
-                        applianceUpdateAvailable || isApplianceUpdateInProgress
-                          ? "default"
-                          : "outline"
-                      }
-                      className={cn(
-                        "h-7 px-3 text-xs",
-                        applianceUpdateAvailable || isApplianceUpdateInProgress
-                          ? "bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-100"
-                          : "text-muted-foreground"
-                      )}
-                      onClick={handleTriggerUpdate}
-                      disabled={!applianceUpdateAvailable || isApplianceUpdateInProgress}
-                      title={
-                        applianceUpdateAvailable && latestApplianceVersion
-                          ? `Update to ${latestApplianceVersion}`
-                          : undefined
-                      }
-                    >
-                      {isApplianceUpdateInProgress ? (
-                        <>
-                          <Loader2 className="size-4 animate-spin" />
-                          {applianceUpdateLabel}
-                        </>
-                      ) : (
-                        applianceUpdateLabel
-                      )}
-                    </Button>
-                  </div>
-                </div>
 
                 <div className="flex main_board_info">
                   <span className="font-bold">SSH</span>
@@ -772,6 +784,7 @@ export function SectionCards() {
                   <span className="font-bold">
                     {sysinfo?.sshStatus.authorized_keys} SSH Authorized Keys
                   </span>
+                </div>
                 </div>
               </div>
             </div>
@@ -820,12 +833,14 @@ export function SectionCards() {
       <div className="grid grid-cols-1 gap-4 px-4">
         <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
           <CardHeader className="flex items-center justify-between">
-            <CardDescription className="flex items-center gap-2 py-1">
-              Docker
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-sm lg:text-lg">
+                Docker
+              </h2>
               <Badge className="bg-blue-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/40">
                 {docker?.count} containers
               </Badge>
-            </CardDescription>
+            </div>
             {/* Refresh Docker button */}
             <RefreshButton
               onClick={() => refetchDocker()}

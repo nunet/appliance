@@ -37,17 +37,14 @@ export function PeersList({ peers }: PeersListProps) {
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4">
-      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
+      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg text-wrap break-words">
         <CardHeader>
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 sm:flex-3">
               <h2 className="font-semibold text-sm lg:text-lg">
                 Connected Peers
               </h2>
-              <Badge
-                variant="secondary"
-                className="px-2 py-0.5 rounded-full text-xs font-medium"
-              >
+              <Badge className="bg-blue-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/40">
                 {filteredPeers.length}
               </Badge>
             </div>
