@@ -121,8 +121,8 @@ Track the parallel MORK workloads:
 - Monitor resource utilization on compute nodes
 - Check task completion status
 
-<img src="assets/test.png" alt="Results of test allocation" width="45%">
-<img src="assets/bench.png" alt="Results of bench allocation" width="45%">
+![Results of test allocation](./assets/test.png)
+![Results of bench allocation](./assets/bench.png)
 
 
 ## Customization Options
