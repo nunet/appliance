@@ -79,6 +79,7 @@ export interface ContractPaymentDetails {
   provider_addr?: string | null;
   currency?: string | null;
   fees_per_allocation?: string | null;
+  fee_per_allocation?: string | null;
   fee_per_deployment?: string | null;
   fee_per_time_unit?: string | null;
   time_unit?: string | null;
@@ -89,7 +90,7 @@ export interface ContractPaymentDetails {
   resource_time_unit?: string | null;
   fixed_rental_amount?: string | null;
   payment_period?: string | null;
-  payment_period_count?: string | null;
+  payment_period_count?: number | string | null;
   timestamp?: string | null;
   blockchain?: ContractBlockchain | null;
   addresses?: ContractPaymentAddress[] | null;

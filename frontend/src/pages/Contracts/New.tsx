@@ -272,7 +272,7 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
       ? paymentTypeValue
       : "blockchain",
     paymentModel: normalizedPaymentModel,
-    paymentFeesPerAllocation: toFormString(payment.fees_per_allocation),
+    paymentFeesPerAllocation: toFormString(payment.fees_per_allocation ?? payment.fee_per_allocation),
     paymentFeePerDeployment: toFormString(payment.fee_per_deployment),
     paymentFeePerTimeUnit: toFormString(payment.fee_per_time_unit),
     paymentTimeUnit: paymentTimeUnit,
@@ -295,6 +295,20 @@ function applyStringField(target: Record<string, any>, key: string, value: strin
   const normalized = value.trim();
   if (normalized) {
     target[key] = normalized;
+  } else {
+    delete target[key];
+  }
+}
+
+function applyPositiveIntegerField(target: Record<string, any>, key: string, value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    delete target[key];
+    return;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    target[key] = parsed;
   } else {
     delete target[key];
   }
@@ -385,7 +399,7 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   applyStringField(payment, "payment_model", form.paymentModel.toLowerCase());
   applyStringField(payment, "payment_type", form.paymentType.toLowerCase());
   applyStringField(payment, "payment_period", form.paymentPeriod.toLowerCase());
-  applyStringField(payment, "payment_period_count", form.paymentPeriodCount);
+  applyPositiveIntegerField(payment, "payment_period_count", form.paymentPeriodCount);
   if (normalizedBlockchain) {
     payment.blockchain = normalizedBlockchain;
   } else {
@@ -393,6 +407,7 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   }
 
   const paymentFieldKeys = [
+    "fee_per_allocation",
     "fees_per_allocation",
     "fee_per_deployment",
     "fee_per_time_unit",
@@ -411,7 +426,7 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   const paymentModel = form.paymentModel.trim().toLowerCase();
   switch (paymentModel) {
     case "pay_per_allocation":
-      applyStringField(payment, "fees_per_allocation", form.paymentFeesPerAllocation);
+      applyStringField(payment, "fee_per_allocation", form.paymentFeesPerAllocation);
       break;
     case "pay_per_deployment":
       applyStringField(payment, "fee_per_deployment", form.paymentFeePerDeployment);
@@ -1039,24 +1054,35 @@ function ConfigureTemplateStep({
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2">
             <Label>Payment model</Label>
-            <Input
-              value={paymentModelSearch}
-              onChange={(event) => setPaymentModelSearch(event.target.value)}
-              placeholder="Search payment models..."
-              className="h-8"
-              aria-label="Search payment models"
-            />
             <Select
               value={formState.paymentModel}
               onValueChange={(value) => {
                 onChange({ paymentModel: value as ContractFormState["paymentModel"] });
                 setPaymentModelSearch("");
               }}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setPaymentModelSearch("");
+                }
+              }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select a model" />
               </SelectTrigger>
               <SelectContent>
+                <div
+                  className="sticky top-0 z-10 border-b border-border/60 bg-popover p-2"
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <Input
+                    value={paymentModelSearch}
+                    onChange={(event) => setPaymentModelSearch(event.target.value)}
+                    placeholder="Search payment models..."
+                    className="h-8 w-full"
+                    aria-label="Search payment models"
+                  />
+                </div>
                 {filteredPaymentModels.length ? (
                   filteredPaymentModels.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
@@ -1077,7 +1103,7 @@ function ConfigureTemplateStep({
               value={formState.paymentType}
               onValueChange={(value) => onChange({ paymentType: value as ContractFormState["paymentType"] })}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select a payment type" />
               </SelectTrigger>
               <SelectContent>
@@ -1120,7 +1146,7 @@ function ConfigureTemplateStep({
                   onChange({ paymentBlockchain: value as ContractFormState["paymentBlockchain"] })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a network" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1146,7 +1172,7 @@ function ConfigureTemplateStep({
                   label="Fees per allocation"
                   value={formState.paymentFeesPerAllocation}
                   onChange={(value) => onChange({ paymentFeesPerAllocation: value })}
-                  placeholder={placeholderValue(payment.fees_per_allocation, "500")}
+                  placeholder={placeholderValue(payment.fees_per_allocation ?? payment.fee_per_allocation, "500")}
                 />
               ) : null}
               {showFeePerDeployment ? (
@@ -1167,19 +1193,13 @@ function ConfigureTemplateStep({
               Time utilization
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <TextField
-                label="Fee per time unit"
-                value={formState.paymentFeePerTimeUnit}
-                onChange={(value) => onChange({ paymentFeePerTimeUnit: value })}
-                placeholder={placeholderValue(payment.fee_per_time_unit, "e.g. 0.01")}
-              />
               <div className="space-y-2">
                 <Label>Time unit</Label>
                 <Select
                   value={formState.paymentTimeUnit}
                   onValueChange={(value) => onChange({ paymentTimeUnit: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a time unit" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1191,6 +1211,12 @@ function ConfigureTemplateStep({
                   </SelectContent>
                 </Select>
               </div>
+              <TextField
+                label="Fee per time unit"
+                value={formState.paymentFeePerTimeUnit}
+                onChange={(value) => onChange({ paymentFeePerTimeUnit: value })}
+                placeholder={placeholderValue(payment.fee_per_time_unit, "e.g. 0.01")}
+              />
             </div>
           </div>
         ) : null}
@@ -1231,7 +1257,7 @@ function ConfigureTemplateStep({
                   value={formState.paymentResourceTimeUnit}
                   onValueChange={(value) => onChange({ paymentResourceTimeUnit: value })}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select a time unit" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1270,7 +1296,7 @@ function ConfigureTemplateStep({
                 value={formState.paymentPeriod}
                 onValueChange={(value) => onChange({ paymentPeriod: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Select a period" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1410,7 +1436,7 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
   addPaymentRow("Provider address", payment.provider_addr ?? paymentAddress?.provider_addr);
   addPaymentRow("Currency", payment.currency ?? paymentAddress?.currency);
   addPaymentRow("Blockchain", payment.blockchain ?? paymentAddress?.blockchain);
-  addPaymentRow("Fees per allocation", payment.fees_per_allocation);
+  addPaymentRow("Fees per allocation", payment.fees_per_allocation ?? payment.fee_per_allocation);
   addPaymentRow("Fee per deployment", payment.fee_per_deployment);
   addPaymentRow("Fee per time unit", payment.fee_per_time_unit);
   addPaymentRow("Time unit", payment.time_unit);
