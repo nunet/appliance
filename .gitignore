@@ -155,6 +155,7 @@ Dockerfile.cross-build
 .env.development.local
 .env.test.local
 .env.production.local
+frontend/.env.e2e
 
 # PEX cache
 .pex/

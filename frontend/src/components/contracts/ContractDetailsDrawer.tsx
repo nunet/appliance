@@ -251,7 +251,7 @@ type PaymentDetailsView = {
   resource_time_unit?: string | null;
   fixed_rental_amount?: string | null;
   payment_period?: string | null;
-  payment_period_count?: string | null;
+  payment_period_count?: number | string | null;
   blockchain?: string | null;
   timestamp?: string | number | Date | bigint | null;
   addresses?: PaymentAddressView[];
@@ -266,6 +266,26 @@ function normalizeDisplayValue(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
   }
   return String(value);
+}
+
+function hasDisplayValue(value: unknown): boolean {
+  if (value == null) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value);
+  }
+  return true;
+}
+
+function toDisplayText(value: unknown): string | null {
+  if (!hasDisplayValue(value)) {
+    return null;
+  }
+  return typeof value === "string" ? value : String(value);
 }
 
 function pickFirstValue(details: Record<string, unknown>, ...keys: string[]): unknown {
@@ -549,6 +569,48 @@ export function ContractDetailsDrawer({
     () => extractPaymentDetails(mergedContract, rawState),
     [mergedContract, rawState]
   );
+  const paymentRows = React.useMemo(() => {
+    if (!paymentDetails) {
+      return [];
+    }
+    const rows: Array<{ label: string; content: React.ReactNode }> = [];
+    const addTextRow = (label: string, value: unknown) => {
+      const text = toDisplayText(value);
+      if (text) {
+        rows.push({ label, content: text });
+      }
+    };
+    const addDidRow = (label: string, value: unknown) => {
+      if (hasDisplayValue(value)) {
+        rows.push({ label, content: <DidDisplay value={String(value)} muted /> });
+      }
+    };
+    const formattedTimestamp = formatDate(paymentDetails.timestamp);
+
+    addTextRow("Payment model", paymentDetails.payment_model);
+    addTextRow("Payment type", paymentDetails.payment_type);
+    addTextRow("Payment period", paymentDetails.payment_period);
+    addTextRow("Payment period count", paymentDetails.payment_period_count);
+    addTextRow("Currency", paymentDetails.currency);
+    addDidRow("Requester address", paymentDetails.requester_addr);
+    addDidRow("Provider address", paymentDetails.provider_addr);
+    addTextRow("Fees per allocation", paymentDetails.fees_per_allocation);
+    addTextRow("Fee per deployment", paymentDetails.fee_per_deployment);
+    addTextRow("Fee per time unit", paymentDetails.fee_per_time_unit);
+    addTextRow("Time unit", paymentDetails.time_unit);
+    addTextRow("Fixed rental amount", paymentDetails.fixed_rental_amount);
+    addTextRow("CPU fee per time unit", paymentDetails.fee_per_cpu_core_per_time_unit);
+    addTextRow("RAM fee per time unit", paymentDetails.fee_per_ram_gb_per_time_unit);
+    addTextRow("Disk fee per time unit", paymentDetails.fee_per_disk_gb_per_time_unit);
+    addTextRow("GPU fee per time unit", paymentDetails.fee_per_gpu_per_time_unit);
+    addTextRow("Resource time unit", paymentDetails.resource_time_unit);
+    addTextRow("Blockchain", paymentDetails.blockchain);
+    if (formattedTimestamp) {
+      rows.push({ label: "Timestamp", content: formattedTimestamp });
+    }
+
+    return rows;
+  }, [paymentDetails]);
   const durationStart = formatDate(mergedContract?.duration?.start_date);
   const durationEnd = formatDate(mergedContract?.duration?.end_date);
   const resourceConfiguration = mergedContract?.resource_configuration ?? null;
@@ -702,65 +764,13 @@ export function ContractDetailsDrawer({
               </Section>
 
               <Section title="Payment details">
-                {paymentDetails ? (
+                {paymentRows.length ? (
                   <div className="grid gap-3 md:grid-cols-2">
-                    <InfoRow label="Payment model">
-                      {paymentDetails.payment_model ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Payment type">
-                      {paymentDetails.payment_type ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Payment period">
-                      {paymentDetails.payment_period ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Payment period count">
-                      {paymentDetails.payment_period_count ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Currency">
-                      {paymentDetails.currency ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Requester address">
-                      <DidDisplay value={paymentDetails.requester_addr ?? null} muted />
-                    </InfoRow>
-                    <InfoRow label="Provider address">
-                      <DidDisplay value={paymentDetails.provider_addr ?? null} muted />
-                    </InfoRow>
-                    <InfoRow label="Fees per allocation">
-                      {paymentDetails.fees_per_allocation ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Fee per deployment">
-                      {paymentDetails.fee_per_deployment ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Fee per time unit">
-                      {paymentDetails.fee_per_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Time unit">
-                      {paymentDetails.time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Fixed rental amount">
-                      {paymentDetails.fixed_rental_amount ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="CPU fee per time unit">
-                      {paymentDetails.fee_per_cpu_core_per_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="RAM fee per time unit">
-                      {paymentDetails.fee_per_ram_gb_per_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Disk fee per time unit">
-                      {paymentDetails.fee_per_disk_gb_per_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="GPU fee per time unit">
-                      {paymentDetails.fee_per_gpu_per_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Resource time unit">
-                      {paymentDetails.resource_time_unit ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Blockchain">
-                      {paymentDetails.blockchain ?? "--"}
-                    </InfoRow>
-                    <InfoRow label="Timestamp">
-                      {formatDate(paymentDetails.timestamp) ?? "--"}
-                    </InfoRow>
+                    {paymentRows.map((row) => (
+                      <InfoRow key={row.label} label={row.label}>
+                        {row.content}
+                      </InfoRow>
+                    ))}
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground">No payment details available.</p>
