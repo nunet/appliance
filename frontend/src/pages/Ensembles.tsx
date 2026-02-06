@@ -12,7 +12,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectTrigger,
@@ -41,7 +40,7 @@ export default function EnsemblesPage() {
   const [editingDetail, setEditingDetail] = React.useState<TemplateDetailResponse | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState("");
-  const [fileType, setFileType] = React.useState<"all" | "yaml" | "json">("all");
+  const [categoryFilter, setCategoryFilter] = React.useState<string>("all");
 
   const {
     data,
@@ -242,16 +241,12 @@ export default function EnsemblesPage() {
       if (query && !stemLower.includes(query) && !pathLower.includes(query)) {
         return false;
       }
-      
-      if (fileType === "yaml") {
-        return grouped.yamlTemplate !== null;
-      }
-      if (fileType === "json") {
-        return grouped.jsonTemplate !== null;
+      if (categoryFilter !== "all" && grouped.category !== categoryFilter) {
+        return false;
       }
       return true;
     },
-    [searchTerm, fileType]
+    [searchTerm, categoryFilter]
   );
 
   const filteredTemplates = React.useMemo(
@@ -260,14 +255,6 @@ export default function EnsemblesPage() {
   );
   
   const templateCount = React.useMemo(() => filteredTemplates.length, [filteredTemplates]);
-  const yamlCount = React.useMemo(
-    () => filteredTemplates.filter((g) => g.yamlTemplate !== null).length,
-    [filteredTemplates]
-  );
-  const jsonCount = React.useMemo(
-    () => filteredTemplates.filter((g) => g.jsonTemplate !== null).length,
-    [filteredTemplates]
-  );
 
   if (isLoading) {
     return (
@@ -283,39 +270,38 @@ export default function EnsemblesPage() {
                 <CardDescription>Loading templates…</CardDescription>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
+                <Input 
+                  placeholder="Search file name…" 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                  className="w-48"
+                  data-testid="ensemble-search-input"
+                />
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-48" data-testid="ensemble-category-filter">
+                    <SelectValue placeholder="Filter by category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all" data-testid="ensemble-category-option-all">All categories</SelectItem>
+                    {folderOptions.map((cat) => (
+                      <SelectItem key={cat} value={cat} data-testid={`ensemble-category-option-${cat}`}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button 
+                  variant="outline" 
                   onClick={() => setCreateOpen(true)}
                   data-testid="ensemble-add-button"
                 >
                   Add Ensemble
                 </Button>
-                <Button
-                  variant="outline"
+                <Button 
                   onClick={() => window.location.assign("/#/deploy/new")}
                   data-testid="ensemble-deploy-button"
                 >
-                  Deploy
+                  New Deployment
                 </Button>
               </div>
-            </div>
-            <div className="flex flex-col gap-2 md:flex-row">
-              <Input
-                placeholder="Search file name…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                data-testid="ensemble-search-input"
-              />
-              <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-                <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
-                  <SelectValue placeholder="File type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
-                  <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
-                  <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
           </CardHeader>
           <CardContent>
@@ -351,39 +337,38 @@ export default function EnsemblesPage() {
             <CardDescription>No templates found.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
+            <Input 
+              placeholder="Search file name…" 
+              value={searchTerm} 
+              onChange={(e) => setSearchTerm(e.target.value)} 
+              className="w-48"
+              data-testid="ensemble-search-input"
+            />
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-48" data-testid="ensemble-category-filter">
+                <SelectValue placeholder="Filter by category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" data-testid="ensemble-category-option-all">All categories</SelectItem>
+                {folderOptions.map((cat) => (
+                  <SelectItem key={cat} value={cat} data-testid={`ensemble-category-option-${cat}`}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button 
+              variant="outline" 
               onClick={() => setCreateOpen(true)}
               data-testid="ensemble-add-button"
             >
               Add Ensemble
             </Button>
-            <Button
-              variant="outline"
+            <Button 
               onClick={() => window.location.assign("/#/deploy/new")}
               data-testid="ensemble-deploy-button"
             >
-              Deploy
+              New Deployment
             </Button>
           </div>
-            <div className="flex flex-col gap-2 md:flex-row">
-              <Input
-                placeholder="Search file name…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                data-testid="ensemble-search-input"
-              />
-              <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-                <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
-                  <SelectValue placeholder="File type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
-                  <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
-                  <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </CardHeader>
         </Card>
       </div>
@@ -400,45 +385,44 @@ export default function EnsemblesPage() {
           <div className="flex items-center justify-between w-full">
             <div>
               <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
-              <CardDescription>Manage, edit, or delete your ensemble templates.</CardDescription>
+              <CardDescription>Manage, edit, or delete ensemble templates.</CardDescription>
               <p className="text-xs text-muted-foreground mt-1" data-testid="ensemble-counts">
-                {templateCount} templates · {yamlCount} YAML · {jsonCount} JSON
+                {templateCount} templates
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
+              <Input
+                placeholder="Search file name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-48"
+                data-testid="ensemble-search-input"
+              />
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-48" data-testid="ensemble-category-filter">
+                  <SelectValue placeholder="Filter by category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all" data-testid="ensemble-category-option-all">All categories</SelectItem>
+                  {folderOptions.map((cat) => (
+                    <SelectItem key={cat} value={cat} data-testid={`ensemble-category-option-${cat}`}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button 
+                variant="outline" 
                 onClick={() => setCreateOpen(true)}
                 data-testid="ensemble-add-button"
               >
                 Add Ensemble
               </Button>
-              <Button
-                variant="outline"
+              <Button 
                 onClick={() => window.location.assign("/#/deploy/new")}
                 data-testid="ensemble-deploy-button"
               >
-                Deploy
+                New Deployment
               </Button>
             </div>
-          </div>
-          <div className="flex flex-col gap-2 md:flex-row">
-            <Input
-              placeholder="Search file name…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              data-testid="ensemble-search-input"
-            />
-            <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-              <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
-                <SelectValue placeholder="File type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
-                <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
-                <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
         </CardHeader>
         <CardContent>
@@ -476,18 +460,16 @@ export default function EnsemblesPage() {
 
                     <div className="flex flex-col md:items-end gap-3 shrink-0">
                       <div className="flex gap-2 self-start md:self-end">
-                        {grouped.yamlTemplate && (
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">
-                            YAML
-                          </Badge>
-                        )}
-                        {grouped.jsonTemplate && (
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800">
-                            JSON
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex gap-2 self-start md:self-end">
+                        <Button
+                          size="sm"
+                          className="w-full md:w-auto"
+                          onClick={() => {
+                            const path = resolveTemplatePath(grouped);
+                            window.location.assign(`/#/deploy/new?template=${encodeURIComponent(path)}`);
+                          }}
+                        >
+                          Deploy
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"

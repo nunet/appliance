@@ -13,7 +13,7 @@ import DeploymentStepOne from "../components/deployments/DeploymentStep1";
 import DeploymentStepTwo from "../components/deployments/DeploymentStep2";
 import DeploymentStepThree from "../components/deployments/DeploymentStep3";
 import DeploymentStepFour from "../components/deployments/DeploymentStep4";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { deployFromTemplate, getTemplateNodesCount } from "../api/deployments";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ const steps = [
 
 export default function NewDeployment() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(1);
 
@@ -65,6 +66,16 @@ export default function NewDeployment() {
     }
     return [];
   }, [nodesData?.nodes, nodesCount]);
+
+  // Handle template from URL query param
+  useEffect(() => {
+    const templateFromUrl = searchParams.get("template");
+    if (templateFromUrl) {
+      setTemplatePath(templateFromUrl);
+      setYamlPath(templateFromUrl);
+      setCurrentStep(2);
+    }
+  }, [searchParams]);
 
   // Reset targeted selection when template changes
   useEffect(() => {

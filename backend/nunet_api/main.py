@@ -11,7 +11,7 @@ from starlette.staticfiles import StaticFiles
 
 from modules.path_constants import FRONTEND_DIR
 from .security import require_auth
-from .routers import auth, contracts, dms, ensemble, ensemble_schema, organizations, payments, sysinfo, upnp
+from .routers import appliance, auth, contracts, dms, ensemble, ensemble_schema, organizations, payments, sysinfo, upnp
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ app.include_router(ensemble_schema.router, prefix="/ensemble", tags=["ensemble"]
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"], dependencies=protected)
 app.include_router(contracts.router, prefix="/contracts", tags=["contracts"], dependencies=protected)
 app.include_router(upnp.router, prefix="/upnp", tags=["upnp"], dependencies=protected)
+app.include_router(appliance.router, prefix="/appliance", tags=["appliance"], dependencies=protected)
 
 
 @app.get("/health")
