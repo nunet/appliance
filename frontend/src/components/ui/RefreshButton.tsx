@@ -32,7 +32,7 @@ export function RefreshButton({
             onClick={async () => {
               try {
                 await onClick(); // wait for the refresh to finish
-                toast.success("Refreshed successfully");
+                toast.success("Page refreshed");
               } catch (error) {
                 console.error("Error in RefreshButton onClick:", error);
                 toast.error("Failed to refresh");

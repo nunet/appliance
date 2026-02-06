@@ -77,10 +77,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   if (mode === "advanced") {
     navMain.push(
       {
-        title: "Appliance",
+        title: "Advanced",
         url: "/appliance",
         icon: IconServer,
         items: [
+          { title: "Appliance", url: "/appliance", icon: IconServer },
           { title: "DMS", url: "/appliance/dms", icon: IconServer },
           { title: "UPnP Port Forwarding", url: "/appliance/upnp", icon: IconNetwork },
           { title: "Proxy", url: "/appliance/proxy", icon: IconNetwork },

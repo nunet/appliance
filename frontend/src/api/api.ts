@@ -67,6 +67,12 @@ export interface DmsLogsResponse {
   dms_logs?: DmsLogBundleResponse | null;
 }
 
+export type ApplianceLogs = Record<string, string>;
+
+export interface ApplianceUptime {
+  uptime: string;
+}
+
 // ==== AXIOS INSTANCE ====
 // In development, Vite runs on 5173 and backend on 8080
 // In production, both frontend and backend serve from the same port
@@ -274,6 +280,13 @@ export const getDockerContainer = () =>
       }[];
     }>("/sys/docker/containers")
     .then((res) => res.data);
+
+// ==== APPLIANCE ENDPOINTS ====
+export const getApplianceLogs = (lines: number) =>
+  api.get<ApplianceLogs>("/appliance/logs", { params: { lines } }).then((res) => res.data);
+
+export const getApplianceUptime = () =>
+  api.get<ApplianceUptime>("/appliance/uptime").then((res) => res.data);
 
 // ==== HEALTH ====
 export const getHealth = () =>

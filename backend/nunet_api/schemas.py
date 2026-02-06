@@ -58,6 +58,7 @@ __all__ = [
     "ContractTemplateSummary",
     "ContractTemplateDetail",
     "ContractTemplateListResponse",
+    "ApplianceUptime",
 ]
 
 class TokenConfig(BaseModel):
@@ -417,6 +418,9 @@ class ContractTemplateListResponse(BaseModel):
     status: Literal["success", "error"]
     templates: List[ContractTemplateSummary] = PydField(default_factory=list)
     message: Optional[str] = None
+
+class ApplianceUptime(BaseModel):
+    uptime: str
 
 class SshStatus(BaseModel):
     running: bool

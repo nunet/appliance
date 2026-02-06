@@ -32,6 +32,7 @@ const PaymentsPage = lazy(() => import("./components/payments/PaymentsPage"));
 const LoginPage = lazy(() => import("./pages/Login"));
 const SetupAdmin = lazy(() => import("./pages/SetupAdmin"));
 const UPnPPage = lazy(() => import("./pages/UPnP"));
+const Appliance = lazy(() => import("./pages/Appliance"));
 
 function Layout() {
   return (
@@ -138,6 +139,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     <Route path="/deploy/:id" element={<DeploymentDetailsPage />} />
                     <Route path="/organizations" element={<Organizations />} />
                     <Route path="/ensembles" element={<Ensembles />} />
+                    <Route path="/appliance" element={<Appliance />} />
                     <Route path="/appliance/dms" element={<DMS />} />
                     <Route path="/appliance/upnp" element={<UPnPPage />} />
                     <Route path="/payments" element={<PaymentsPage />} />
