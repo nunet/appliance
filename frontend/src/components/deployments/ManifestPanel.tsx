@@ -184,7 +184,10 @@ function ManifestPanelImpl({
   if (!hasValidId) {
     return (
       <div className="px-4 my-4 w-full">
-        <Card className="flex items-center justify-center min-h-[200px] text-muted-foreground text-sm">
+        <Card
+          className="flex items-center justify-center min-h-[200px] text-muted-foreground text-sm"
+          data-testid="deployment-manifest-panel"
+        >
           No manifest available
           {onRefresh && (
             <div className="mt-4">
@@ -202,7 +205,10 @@ function ManifestPanelImpl({
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
-      <Card className="relative bg-gradient-to-b from-primary/5 to-card dark:from-primary/10 shadow-sm border rounded-xl overflow-hidden">
+      <Card
+        className="relative bg-gradient-to-b from-primary/5 to-card dark:from-primary/10 shadow-sm border rounded-xl overflow-hidden"
+        data-testid="deployment-manifest-panel"
+      >
         <CardHeader className="space-y-1 flex flex-row items-center justify-between">
           <div>
             <CardDescription className="flex items-center gap-2 text-sm">

@@ -46,7 +46,7 @@ export function TemplateDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !isPending && onOpenChange(next)}>
-      <DialogContent>
+      <DialogContent data-testid="ensemble-delete-dialog">
         <DialogHeader>
           <DialogTitle>Delete template</DialogTitle>
           <DialogDescription>
@@ -59,10 +59,20 @@ export function TemplateDeleteDialog({
           {templatePath}
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+            data-testid="ensemble-delete-cancel"
+          >
             Cancel
           </Button>
-          <Button variant="destructive" onClick={() => mutateAsync()} disabled={isPending || !templatePath}>
+          <Button
+            variant="destructive"
+            onClick={() => mutateAsync()}
+            disabled={isPending || !templatePath}
+            data-testid="ensemble-delete-confirm"
+          >
             {isPending ? "Deleting..." : "Delete"}
           </Button>
         </DialogFooter>

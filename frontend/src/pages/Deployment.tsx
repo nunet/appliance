@@ -292,7 +292,10 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4 w-full">
-      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full">
+      <Card
+        className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full"
+        data-testid="deployment-info-card"
+      >
         <CardHeader className="w-full flex flex-col gap-2">
           <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
             <CardTitle className="font-semibold tabular-nums max-w-[250px] sm:max-w-full break-words min-w-0">
@@ -307,18 +310,18 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="text-muted-foreground space-y-0.5">
-            <p>
+            <p data-testid="deployment-info-status">
               <b>Status:</b> {statusText}
             </p>
             {sanitizedTypeText ? (
-              <p>
+              <p data-testid="deployment-info-type">
                 <b>Type:</b> {sanitizedTypeText}
               </p>
             ) : null}
-            <p>
+            <p data-testid="deployment-info-timestamp">
               <b>Timestamp:</b> {timestampText}
             </p>
-            <p className="flex items-center gap-2 flex-wrap">
+            <p className="flex items-center gap-2 flex-wrap" data-testid="deployment-info-ensemble-file">
               <span className="flex items-center gap-2">
                 <b>Ensemble File:</b>
                 {hasEnsembleFile ? (
@@ -341,6 +344,7 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
                         size="icon"
                         className="h-7 w-7"
                         onClick={handleViewFile}
+                        data-testid="deployment-view-file-button"
                       >
                         <FileText className="h-3.5 w-3.5" />
                       </Button>
@@ -392,7 +396,7 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
       </Card>
 
       <Dialog open={isFileModalOpen} onOpenChange={handleFileModalChange}>
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="sm:max-w-4xl" data-testid="deployment-file-modal">
           <DialogHeader>
             <DialogTitle>{fileMeta?.name ?? "Deployment File"}</DialogTitle>
             {shortFilePath ? (
@@ -462,7 +466,7 @@ export function DeploymentProgressCard({
   // Render skeleton while loading
   if (!details || isFetching) {
     return (
-      <Card className="@container/card lg:col-span-1">
+      <Card className="@container/card lg:col-span-1" data-testid="deployment-progress-card">
         <CardHeader>
           <Skeleton className="h-4 w-32 mb-2" /> {/* CardDescription */}
           <Skeleton className="h-8 w-48 mb-1" /> {/* CardTitle */}
@@ -478,7 +482,7 @@ export function DeploymentProgressCard({
 
   // Render actual content
   return (
-    <Card className="@container/card lg:col-span-1">
+    <Card className="@container/card lg:col-span-1" data-testid="deployment-progress-card">
       <CardHeader>
         <CardDescription>Deployment Progress</CardDescription>
         <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl flex flex-row gap-2 items-center">
@@ -490,6 +494,7 @@ export function DeploymentProgressCard({
                 ? "text-blue-500"
                 : "text-red-500"
             }
+            data-testid="deployment-progress-status"
           >
             {details.status.deployment_status.toUpperCase()}
           </span>
@@ -536,7 +541,7 @@ function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
   });
 
   return (
-    <Card className="@container/card lg:col-span-2">
+    <Card className="@container/card lg:col-span-2" data-testid="deployment-allocations-card">
       <CardHeader>
         <CardDescription className="flex items-center gap-2 justify-between w-full">
           <span>Allocations</span>
@@ -957,7 +962,10 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4">
-      <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg">
+      <Card
+        className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg"
+        data-testid="deployment-logs-card"
+      >
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardDescription>Deployment Logs ({alloc ?? "auto"})</CardDescription>
@@ -982,6 +990,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
           {logSections.map((section) => (
             <LogSection
               key={section.key}
+              sectionKey={section.key}
               title={section.title}
               log={section.log}
               textClass={section.textClass}
@@ -1011,12 +1020,14 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
 
 // ?? Log section component
 function LogSection({
+  sectionKey,
   title,
   log,
   textClass,
   placeholder,
   isLoading = false,
 }: {
+  sectionKey: string;
   title: string;
   log: string;
   textClass: string;
@@ -1037,7 +1048,7 @@ function LogSection({
   );
 
   return (
-    <>
+    <div data-testid={`deployment-logs-${sectionKey}`}>
       <div className="flex items-center justify-between mt-4">
         <div className="flex items-center gap-2">
           <p className="font-semibold">{title}</p>
@@ -1091,7 +1102,7 @@ function LogSection({
           isPlaceholder
         />
       )}
-    </>
+    </div>
   );
 }
 

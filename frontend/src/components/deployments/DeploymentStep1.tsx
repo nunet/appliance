@@ -78,7 +78,7 @@ export default function DeploymentStepOne({ ...props }) {
   );
 
   return (
-    <div className="flex flex-col w-full h-full overflow-x-hidden">
+    <div className="flex flex-col w-full h-full overflow-x-hidden" data-testid="deployment-step1">
       {/* Header row with title + refresh */}
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <h2 className="text-2xl font-semibold">Select an Ensemble</h2>
@@ -112,6 +112,10 @@ export default function DeploymentStepOne({ ...props }) {
                 props.setCategory(tpl.category);
                 props.set_yaml_path(tpl.yaml_path || tpl.path);
               }}
+              data-testid="deployment-template-card"
+              data-template-path={tpl.path}
+              data-template-stem={tpl.stem}
+              data-template-category={tpl.category}
               className={cn(
                 "cursor-pointer transition-all duration-500 border-2 rounded-2xl h-full",
                 props.path === tpl.path
@@ -140,6 +144,7 @@ export default function DeploymentStepOne({ ...props }) {
               disabled={isFetchingNextPage}
               variant="outline"
               className="px-6"
+              data-testid="deployment-template-load-more"
             >
               {isFetchingNextPage ? "Loading..." : "Load More"}
             </Button>

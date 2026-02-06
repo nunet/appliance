@@ -48,6 +48,7 @@ function RestartDmsButton({
           className="w-full bg-white text-black border border-gray-300 hover:bg-gray-50 mt-4"
           onClick={() => setIsConfirming(true)}
           disabled={isLoading}
+          data-testid="org-restart-dms-button"
         >
           {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Restart DMS
@@ -66,6 +67,7 @@ function RestartDmsButton({
               className="flex-1 bg-red-500 text-white hover:bg-red-600"
               onClick={handleRestart}
               disabled={isLoading}
+              data-testid="org-restart-confirm-button"
             >
               {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Yes, Restart
@@ -75,6 +77,7 @@ function RestartDmsButton({
               variant="outline"
               onClick={() => setIsConfirming(false)}
               disabled={isLoading}
+              data-testid="org-restart-cancel-button"
             >
               Cancel
             </Button>

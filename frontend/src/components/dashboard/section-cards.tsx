@@ -537,6 +537,7 @@ export function SectionCards() {
                       variant="destructive"
                       className="bg-red-600 hover:bg-red-700 text-white"
                       disabled={isOffboarding || isOnboarding}
+                      data-testid="offboard-button"
                     >
                       {isOffboarding ? (
                         <>
@@ -548,7 +549,7 @@ export function SectionCards() {
                       )}
                     </Button>
                   </DialogTrigger>
-                  <DialogContent showCloseButton={!isOffboarding}>
+                  <DialogContent showCloseButton={!isOffboarding} data-testid="offboard-dialog">
                     <DialogHeader>
                       <DialogTitle>Confirm offboarding</DialogTitle>
                       <DialogDescription>
@@ -561,6 +562,7 @@ export function SectionCards() {
                         variant="outline"
                         onClick={() => setConfirmOffboardOpen(false)}
                         disabled={isOffboarding}
+                        data-testid="offboard-cancel-button"
                       >
                         Cancel
                       </Button>
@@ -569,6 +571,7 @@ export function SectionCards() {
                         className="bg-red-600 hover:bg-red-700 text-white"
                         onClick={handleOffboardConfirm}
                         disabled={isOffboarding}
+                        data-testid="offboard-confirm-button"
                       >
                         {isOffboarding ? (
                           <>
@@ -587,6 +590,7 @@ export function SectionCards() {
                   className="bg-emerald-600 hover:bg-emerald-700 text-white"
                   disabled={isOnboarding || isOffboarding}
                   onClick={handleOnboardClick}
+                  data-testid="onboard-button"
                 >
                   {isOnboarding ? (
                     <>

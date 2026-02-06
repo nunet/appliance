@@ -415,7 +415,7 @@ export function OnboardingFlow({
       )}
 
       {!showSelect && !showForm && !showComplete && !isRejected && (
-        <Card>
+        <Card data-testid="onboarding-next-steps">
           <CardHeader>
             <CardTitle>Next Steps</CardTitle>
           </CardHeader>
@@ -434,7 +434,7 @@ export function OnboardingFlow({
       )}
 
       {showComplete && (
-        <Card>
+        <Card data-testid="onboarding-complete-card">
           <CardHeader>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-green-600" />
