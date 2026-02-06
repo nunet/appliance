@@ -731,7 +731,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
   const handleRefresh = async () => {
     setIsRequesting(true);
     try {
-      await requestDeploymentLogs(deploymentId, alloc ?? null, false);
+      await requestDeploymentLogs(deploymentId, alloc ?? null, true);
       await Promise.all([
         refetchBaseLogs({ throwOnError: true }),
         refetchDmsLogs({ throwOnError: true }),
