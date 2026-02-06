@@ -164,7 +164,7 @@ export default function NewDeployment() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center mt-10 px-4 py-1">
+    <div className="flex flex-col items-center justify-center mt-10 px-4 py-1" data-testid="deployment-wizard">
       <h1 className="text-2xl font-bold mb-8 text-center">
         Deploy a New Ensemble
       </h1>
@@ -195,7 +195,7 @@ export default function NewDeployment() {
       </div>
 
       {/* Card */}
-      <Card className="w-full mb-4 shadow-lg">
+      <Card className="w-full mb-4 shadow-lg" data-testid="deployment-wizard-card">
         <CardHeader>
           <CardTitle>{steps[currentStep - 1].title}</CardTitle>
         </CardHeader>
@@ -251,6 +251,7 @@ export default function NewDeployment() {
             onClick={() =>
               currentStep === 1 ? navigate("/deploy") : prevStep()
             }
+            data-testid="deployment-back-button"
           >
             Back
           </Button>
@@ -265,11 +266,16 @@ export default function NewDeployment() {
                   !isTargetedSelectionValid) ||
                 (currentStep === 3 && !formValid)
               }
+              data-testid="deployment-next-button"
             >
               Next
             </Button>
           ) : (
-            <Button onClick={handleSubmit} disabled={!formValid || isSubmitting}>
+            <Button
+              onClick={handleSubmit}
+              disabled={!formValid || isSubmitting}
+              data-testid="deployment-deploy-button"
+            >
               {isSubmitting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -146,7 +146,7 @@ export default function DeploymentStepThree({
 
     if (spec.type === "select" && spec.options) {
       return (
-        <div className="grid gap-1 my-2" key={key}>
+        <div className="grid gap-1 my-2" key={key} data-field-key={key}>
           <Label>
             {spec.label || key}{" "}
             <span className="text-muted-foreground text-xs">
@@ -159,6 +159,7 @@ export default function DeploymentStepThree({
             } bg-gray-800 text-white`}
             value={val}
             onChange={(e) => handleChange(key, e.target.value)}
+            data-testid={`deployment-field-${key}`}
           >
             {spec.options.map((o) => (
               <option key={o.value} value={o.value}>
@@ -172,7 +173,7 @@ export default function DeploymentStepThree({
     }
 
     return (
-      <div className="grid gap-1 my-2" key={key}>
+      <div className="grid gap-1 my-2" key={key} data-field-key={key}>
         <Label>
           {spec.label || key}{" "}
           <span className="text-muted-foreground text-xs">
@@ -191,11 +192,13 @@ export default function DeploymentStepThree({
             step={spec.step}
             onChange={(e) => handleChange(key, e.target.value)}
             className={error ? "border-red-500" : ""}
+            data-testid={`deployment-field-${key}`}
           />
           <Button
             size="sm"
             variant="outline"
             onClick={() => resetToDefault(key)}
+            data-testid={`deployment-field-reset-${key}`}
           >
             Reset
           </Button>
@@ -231,7 +234,7 @@ export default function DeploymentStepThree({
   const isMultiAlloc = Object.keys(allocations).length > 1;
 
   return (
-    <div className="flex flex-col w-full max-w-3xl mx-auto">
+    <div className="flex flex-col w-full max-w-3xl mx-auto" data-testid="deployment-step3">
       <h2 className="text-xl font-semibold mb-4">{tpl.schema.name}</h2>
       <Separator className="mb-4" />
 

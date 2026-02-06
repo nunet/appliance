@@ -32,6 +32,7 @@ export default function Wizzard() {
         {/* Red pill (Simple Mode) */}
         <Card
           onClick={() => chooseMode("simple")}
+          data-testid="mode-card-simple"
           className="cursor-pointer transition hover:scale-105 rounded-2xl border-2 border-red-500 bg-gradient-to-b from-red-600 to-red-800 shadow-xl"
         >
           <CardContent className="flex items-center justify-center h-48">
@@ -43,6 +44,7 @@ export default function Wizzard() {
         <Card
           onClick={isAdvancedModeEnabled ? () => chooseMode("advanced") : undefined}
           aria-disabled={!isAdvancedModeEnabled}
+          data-testid="mode-card-advanced"
           className={`transition rounded-2xl border-2 border-blue-500 bg-gradient-to-b from-blue-600 to-blue-800 shadow-xl ${
             isAdvancedModeEnabled ? "cursor-pointer hover:scale-105" : "opacity-60 cursor-not-allowed pointer-events-none"
           }`}

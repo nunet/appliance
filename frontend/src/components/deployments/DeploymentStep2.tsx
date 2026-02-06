@@ -130,7 +130,7 @@ export default function DeploymentStepTwo({
   };
 
   return (
-    <div className="flex flex-col items-center w-full">
+    <div className="flex flex-col items-center w-full" data-testid="deployment-step2">
       <div className="flex items-center w-full max-w-6xl mb-6 gap-4 flex-wrap">
         <h2 className="text-2xl font-semibold">Deployment Target</h2>
       </div>
@@ -143,6 +143,7 @@ export default function DeploymentStepTwo({
             set_peer_id("");
             set_node_peer_map({});
           }}
+          data-testid="deployment-target-local"
           className={cn(
             "cursor-pointer transition-all duration-1000 border-2 relative",
             deployment_type === "local"
@@ -166,6 +167,7 @@ export default function DeploymentStepTwo({
         {/* Card 2: Target deployment */}
         <Card
           onClick={() => set_deployment_type("targeted")}
+          data-testid="deployment-target-targeted"
           className={cn(
             "cursor-pointer transition-all duration-1000 border-2 relative",
             deployment_type === "targeted"
@@ -282,6 +284,7 @@ export default function DeploymentStepTwo({
                         placeholder="Search peers (suffix match)"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
+                        data-testid="deployment-peer-filter"
                       />
 
                       <div className="max-h-56 overflow-auto border rounded-md">
@@ -297,6 +300,8 @@ export default function DeploymentStepTwo({
                                 className="px-3 py-2 cursor-pointer hover:bg-muted/50"
                                 onClick={() => assignPeerToActiveNode(peer)}
                                 title={peer}
+                                data-testid="deployment-peer-row"
+                                data-peer-id={peer}
                               >
                                 <span className="font-mono text-sm">
                                   {peerSuffix(peer)}
@@ -345,6 +350,7 @@ export default function DeploymentStepTwo({
             set_peer_id("");
             set_node_peer_map({});
           }}
+          data-testid="deployment-target-non-targeted"
           className={cn(
             "cursor-pointer transition-all duration-1000 border-2 relative",
             deployment_type === "non_targeted"

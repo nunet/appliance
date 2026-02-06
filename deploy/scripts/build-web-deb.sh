@@ -272,6 +272,11 @@ if [ -f /usr/lib/nunet-appliance-web/known_orgs/known_organizations.json ]; then
   install -m 0644 -T /usr/lib/nunet-appliance-web/known_orgs/known_organizations.json "$backup_target"
   chown ubuntu:ubuntu "$backup_target" || true
 fi
+if [ -f /usr/lib/nunet-appliance-web/known_orgs/known_organizations.e2e.json ]; then
+  e2e_target="/home/ubuntu/nunet/appliance/known_orgs/known_organizations.e2e.json"
+  install -m 0644 -T /usr/lib/nunet-appliance-web/known_orgs/known_organizations.e2e.json "$e2e_target"
+  chown ubuntu:ubuntu "$e2e_target" || true
+fi
 # Create ensembles directory and populate defaults if missing/empty
 mkdir -p /home/ubuntu/ensembles
 if [ -z "$(ls -A /home/ubuntu/ensembles 2>/dev/null)" ]; then

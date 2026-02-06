@@ -262,6 +262,7 @@ export default function TemplateUploadDialog({
 }: Props) {
   const qc = useQueryClient();
   const isEditMode = mode === "edit";
+  const dialogTestId = isEditMode ? "ensemble-edit-dialog" : "ensemble-upload-dialog";
   const templatePath = initialData?.yamlPath;
   const [yamlFile, setYamlFile] = React.useState<File | null>(null);
   const [category, setCategory] = React.useState(defaultCategory || "");
@@ -853,6 +854,8 @@ export default function TemplateUploadDialog({
           "max-h-[90vh] overflow-y-auto",
           isEditMode ? "sm:max-w-[720px] lg:max-w-[960px]" : "sm:max-w-[520px]"
         )}
+        data-testid={dialogTestId}
+        data-mode={isEditMode ? "edit" : "create"}
       >
         <DialogHeader>
           <DialogTitle>
@@ -872,11 +875,16 @@ export default function TemplateUploadDialog({
             <p className="py-2 text-sm text-destructive">Template details are unavailable.</p>
           ) : (
             <div className="space-y-6 py-2">
-              <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <div
+                className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+                data-testid="ensemble-edit-path-summary"
+              >
                 <p className="font-semibold text-foreground">Path</p>
-                <p className="break-all font-mono text-foreground">{initialData.yamlPath}</p>
+                <p className="break-all font-mono text-foreground" data-testid="ensemble-edit-path">
+                  {initialData.yamlPath}
+                </p>
                 {initialData.category && (
-                  <p className="mt-1">
+                  <p className="mt-1" data-testid="ensemble-edit-category">
                     Category: <span className="font-semibold">{initialData.category}</span>
                   </p>
                 )}
@@ -892,6 +900,7 @@ export default function TemplateUploadDialog({
                           type="button"
                           onClick={() => setEditStep(step.id)}
                           className="flex items-center gap-2 rounded-md px-2 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition"
+                          data-testid={`ensemble-edit-step-${step.id}`}
                         >
                           <span
                             className={cn(
@@ -927,32 +936,39 @@ export default function TemplateUploadDialog({
                 </div>
 
                 {isYamlStep ? (
-                  <YamlEditor
-                    label="YAML Template"
-                    value={editYamlContent}
-                    onChange={(val) => {
-                      setEditYamlContent(val);
-                      setEditYamlError(null);
-                    }}
-                    helperText="Edit with syntax highlighting and lint feedback."
-                    error={editYamlError}
-                    className="min-h-[420px]"
-                  />
+                  <div data-testid="ensemble-edit-yaml-editor">
+                    <YamlEditor
+                      label="YAML Template"
+                      value={editYamlContent}
+                      onChange={(val) => {
+                        setEditYamlContent(val);
+                        setEditYamlError(null);
+                      }}
+                      helperText="Edit with syntax highlighting and lint feedback."
+                      error={editYamlError}
+                      className="min-h-[420px]"
+                    />
+                  </div>
                 ) : (
-                  <JsonEditor
-                    label="JSON Form Schema"
-                    value={editJsonContent}
-                    onChange={(val) => {
-                      setEditJsonContent(val);
-                      setEditJsonError(null);
-                    }}
-                    helperText="Ensure every placeholder from the YAML has a corresponding field."
-                    error={editJsonError}
-                    className="min-h-[420px]"
-                  />
+                  <div data-testid="ensemble-edit-json-editor">
+                    <JsonEditor
+                      label="JSON Form Schema"
+                      value={editJsonContent}
+                      onChange={(val) => {
+                        setEditJsonContent(val);
+                        setEditJsonError(null);
+                      }}
+                      helperText="Ensure every placeholder from the YAML has a corresponding field."
+                      error={editJsonError}
+                      className="min-h-[420px]"
+                    />
+                  </div>
                 )}
                 {placeholderMismatch && (
-                  <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  <div
+                    className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                    data-testid="ensemble-edit-placeholder-warning"
+                  >
                     {placeholderMismatch}
                   </div>
                 )}
@@ -994,10 +1010,14 @@ export default function TemplateUploadDialog({
 
           {stepIndex === 0 && (
             <div className="grid gap-6">
-              <section className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Label className="text-sm font-semibold">Ensemble</Label>
-		  </div>
+              <section className="space-y-3" data-testid="ensemble-yaml-section">
+                <div>
+                  <Label className="text-sm font-semibold">Ensemble YAML</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Upload the YAML or YML file that describes your ensemble. We will inspect it for the placeholders
+                    required by the bundled JSON forms.
+                  </p>
+                </div>
                 <div
                   role="button"
                   tabIndex={yamlFile ? -1 : 0}
@@ -1023,6 +1043,7 @@ export default function TemplateUploadDialog({
                       : "border-muted-foreground/40 bg-muted/20",
                     yamlFile ? "p-4" : "p-6 items-center"
                   )}
+                  data-testid="ensemble-yaml-dropzone"
                 >
                   <input
                     ref={fileInputRef}
@@ -1030,6 +1051,7 @@ export default function TemplateUploadDialog({
                     accept=".yaml,.yml,text/yaml"
                     className="hidden"
                     onChange={handleYamlChange}
+                    data-testid="ensemble-yaml-input"
                   />
                   {yamlFile ? (
                     <>
@@ -1106,22 +1128,18 @@ export default function TemplateUploadDialog({
                     </>
                   )}
                 </div>
-                <div className="mt-1.5">
-                  {yamlFile ? (
-                    <>
-                      {yamlReadError && (
-                        <p className="text-xs text-destructive">{yamlReadError}</p>
-                      )}
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      Accepted formats: .yaml, .yml
-                    </p>
-                  )}
-                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground" data-testid="ensemble-yaml-status">
+                  {yamlFile
+                    ? yamlReadError
+                      ? yamlReadError
+                      : isAnalyzingYaml
+                        ? "Analyzing YAML..."
+                        : `Selected: ${yamlFile.name}`
+                    : "Accepted formats: .yaml, .yml"}
+                </p>
               </section>
 
-              <section className="space-y-3">
+              <section className="space-y-3" data-testid="ensemble-folder-section">
                 <div>
                   <div className="flex items-center gap-2">
                     <Label className="text-sm font-semibold">Folder</Label>
@@ -1160,7 +1178,7 @@ export default function TemplateUploadDialog({
                     setCategory(value);
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger data-testid="ensemble-folder-select">
                     <SelectValue
                       placeholder={
                         fallbackCategory
@@ -1171,11 +1189,17 @@ export default function TemplateUploadDialog({
                   </SelectTrigger>
                   <SelectContent>
                     {folderOptions.map((folder) => (
-                      <SelectItem key={folder} value={folder}>
+                      <SelectItem
+                        key={folder}
+                        value={folder}
+                        data-testid={`ensemble-folder-option-${folder || "root"}`}
+                      >
                         {formatFolderLabel(folder)}
                       </SelectItem>
                     ))}
-                    <SelectItem value="custom">Create new folder…</SelectItem>
+                    <SelectItem value="custom" data-testid="ensemble-folder-option-custom">
+                      Create new folder…
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {folderMode === "custom" && (
@@ -1185,6 +1209,7 @@ export default function TemplateUploadDialog({
                       placeholder="Enter new folder name"
                       value={category}
                       onChange={(event) => setCategory(event.target.value)}
+                      data-testid="ensemble-folder-input"
                     />
                     <p className="text-xs text-muted-foreground">
                       We will create this folder under ~/ensembles if it does not exist.
@@ -1226,6 +1251,7 @@ export default function TemplateUploadDialog({
                   value={jsonMode}
                   onValueChange={handleJsonModeChange}
                   className="gap-2"
+                  data-testid="ensemble-json-mode"
                 >
                   {JSON_MODE_OPTIONS.map((option) => (
                     <label
@@ -1235,6 +1261,7 @@ export default function TemplateUploadDialog({
                         "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition hover:border-primary",
                         jsonMode === option.value && "border-primary bg-primary/5"
                       )}
+                      data-testid={`ensemble-json-mode-${option.value}`}
                     >
                       <RadioGroupItem
                         id={`json-mode-${option.value}`}
@@ -1274,6 +1301,7 @@ export default function TemplateUploadDialog({
                       type="file"
                       accept=".json,application/json"
                       onChange={(event) => setJsonFile(event.target.files?.[0] ?? null)}
+                      data-testid="ensemble-json-file-input"
                     />
                     <p className="text-xs text-muted-foreground">Accepted format: .json</p>
                   </div>
@@ -1294,6 +1322,7 @@ export default function TemplateUploadDialog({
                         variant="ghost"
                         onClick={() => setIsManualEditorOpen((prev) => !prev)}
                         className="gap-1"
+                        data-testid="ensemble-json-toggle"
                       >
                         {isManualEditorOpen ? "Collapse editor" : "Open editor"}
                         {isManualEditorOpen ? (
@@ -1311,12 +1340,14 @@ export default function TemplateUploadDialog({
                           onChange={handleManualJsonChange}
                           placeholder='Paste JSON here, e.g. { "name": "My template" }'
                           className="font-mono"
+                          data-testid="ensemble-json-textarea"
                         />
                         <p
                           className={cn(
                             "text-xs",
                             jsonError ? "text-destructive" : "text-muted-foreground"
                           )}
+                          data-testid="ensemble-json-helper"
                         >
                           {jsonError
                             ? jsonError
@@ -1363,13 +1394,14 @@ export default function TemplateUploadDialog({
                   checked={contractRequired}
                   disabled={!isDefaultJson}
                   onCheckedChange={(checked) => setContractRequired(Boolean(checked))}
+                  data-testid="ensemble-contract-switch"
                 />
               </div>
 
               {isDefaultJson && (
                 <div className="space-y-3">
                   {hasMissingPlaceholders ? (
-                    <Alert className="space-y-3 border-dashed">
+                    <Alert className="space-y-3 border-dashed" data-testid="ensemble-placeholder-warning">
                       <Info className="h-4 w-4" aria-hidden="true" />
                       <AlertTitle>Default JSON form requirements</AlertTitle>
                       <AlertDescription className="space-y-2">
@@ -1388,6 +1420,7 @@ export default function TemplateUploadDialog({
                             variant="ghost"
                             className="gap-1 px-2"
                             onClick={() => setShowPlaceholderList((prev) => !prev)}
+                            data-testid="ensemble-placeholder-toggle"
                           >
                             {placeholderToggleLabel}
                             {showPlaceholderList ? (
@@ -1404,7 +1437,10 @@ export default function TemplateUploadDialog({
                       </AlertDescription>
                     </Alert>
                   ) : (
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-500/40 bg-emerald-50 px-4 py-3 text-emerald-900 dark:border-emerald-500/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+                    <div
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-500/40 bg-emerald-50 px-4 py-3 text-emerald-900 dark:border-emerald-500/50 dark:bg-emerald-950/40 dark:text-emerald-100"
+                      data-testid="ensemble-placeholder-ok"
+                    >
                       <div className="flex items-center gap-3">
                         <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                         <div>
@@ -1412,13 +1448,14 @@ export default function TemplateUploadDialog({
                           <p className="text-xs">Your YAML matches the selected JSON form.</p>
                         </div>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="gap-1 px-2 text-emerald-900 hover:text-emerald-900 dark:text-emerald-100"
-                        onClick={() => setShowPlaceholderList((prev) => !prev)}
-                      >
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1 px-2 text-emerald-900 hover:text-emerald-900 dark:text-emerald-100"
+                            onClick={() => setShowPlaceholderList((prev) => !prev)}
+                            data-testid="ensemble-placeholder-toggle"
+                          >
                         {placeholderToggleLabel}
                         {showPlaceholderList ? (
                           <ChevronUp className="h-4 w-4" aria-hidden="true" />
@@ -1429,7 +1466,7 @@ export default function TemplateUploadDialog({
                     </div>
                   )}
                   {showPlaceholderList && (
-                    <div className="space-y-3 rounded-md border bg-muted/40 p-3 text-xs">
+                    <div className="space-y-3 rounded-md border bg-muted/40 p-3 text-xs" data-testid="ensemble-placeholder-list">
                       <div>
                         <p className="font-medium">Always include:</p>
                         <ul className="mt-1 list-disc space-y-1 pl-5">
@@ -1488,7 +1525,7 @@ export default function TemplateUploadDialog({
         )}
 
         {!isEditMode && overwritePrompt && (
-          <Alert variant="destructive" className="space-y-3">
+          <Alert variant="destructive" className="space-y-3" data-testid="ensemble-overwrite-warning">
             <Info className="h-4 w-4" aria-hidden="true" />
             <AlertTitle>Template already exists</AlertTitle>
             <AlertDescription className="space-y-3">
@@ -1520,6 +1557,7 @@ export default function TemplateUploadDialog({
                   variant="outline"
                   onClick={() => setOverwritePrompt(null)}
                   disabled={isOverwriting}
+                  data-testid="ensemble-overwrite-cancel"
                 >
                   Cancel
                 </Button>
@@ -1528,6 +1566,7 @@ export default function TemplateUploadDialog({
                   variant="destructive"
                   onClick={handleOverwriteConfirm}
                   disabled={isOverwriting}
+                  data-testid="ensemble-overwrite-confirm"
                 >
                   {isOverwriting ? "Replacing..." : "Replace template"}
                 </Button>
@@ -1543,6 +1582,7 @@ export default function TemplateUploadDialog({
                 variant="destructive"
                 onClick={() => doDelete()}
                 disabled={isDeleting || isSavingEdit}
+                data-testid="ensemble-dialog-delete"
               >
                 {isDeleting ? "Deleting..." : "Delete"}
               </Button>
@@ -1550,6 +1590,7 @@ export default function TemplateUploadDialog({
                 variant="outline"
                 onClick={() => handleDialogChange(false)}
                 disabled={isSavingEdit || isDeleting}
+                data-testid="ensemble-dialog-cancel"
               >
                 Cancel
               </Button>
@@ -1561,6 +1602,7 @@ export default function TemplateUploadDialog({
                   variant="ghost"
                   onClick={() => setEditStep("yaml")}
                   disabled={isSavingEdit || isDeleting}
+                  data-testid="ensemble-dialog-back"
                 >
                   Back
                 </Button>
@@ -1570,6 +1612,7 @@ export default function TemplateUploadDialog({
                   type="button"
                   onClick={() => setEditStep("json")}
                   disabled={!canAdvanceFromYaml || isDeleting}
+                  data-testid="ensemble-dialog-next"
                 >
                   Next: JSON
                 </Button>
@@ -1577,6 +1620,7 @@ export default function TemplateUploadDialog({
                 <Button
                   onClick={() => doEdit()}
                   disabled={isSavingEdit || !canSaveEdit || isDeleting}
+                  data-testid="ensemble-dialog-save"
                 >
                   {isSavingEdit ? "Saving..." : "Save changes"}
                 </Button>
@@ -1585,12 +1629,23 @@ export default function TemplateUploadDialog({
           </DialogFooter>
         ) : (
           <DialogFooter className="flex flex-wrap justify-between gap-2">
-            <Button variant="outline" onClick={() => handleDialogChange(false)} disabled={isUploading}>
+            <Button
+              variant="outline"
+              onClick={() => handleDialogChange(false)}
+              disabled={isUploading}
+              data-testid="ensemble-dialog-cancel"
+            >
               Cancel
             </Button>
             <div className="flex flex-wrap gap-2">
               {!isFirstStep && (
-                <Button type="button" variant="ghost" onClick={goToPrevStep} disabled={isUploading}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={goToPrevStep}
+                  disabled={isUploading}
+                  data-testid="ensemble-dialog-back"
+                >
                   Back
                 </Button>
               )}
@@ -1602,6 +1657,7 @@ export default function TemplateUploadDialog({
                   isRemovingFile ||
                   (isLastStep ? !canSubmit : !canProceedToJson)
                 }
+                data-testid={isLastStep ? "ensemble-dialog-save" : "ensemble-dialog-next"}
               >
                 {isLastStep ? (isUploading ? "Uploading..." : "Save template") : "Next"}
               </Button>

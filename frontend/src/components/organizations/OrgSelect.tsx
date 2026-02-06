@@ -127,6 +127,7 @@ export function OrgSelect({
               onClick={handleRefreshKnown}
               disabled={refreshKnownMutation.isPending}
               className="w-full sm:w-auto"
+              data-testid="org-fetch-button"
             >
               {refreshKnownMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -157,6 +158,9 @@ export function OrgSelect({
                 return (
                   <div
                     key={did}
+                    data-testid="org-card"
+                    data-org-did={did}
+                    data-org-name={val?.name ?? did}
                     className={`relative p-4 rounded-2xl border transition-all duration-300 overflow-hidden
                       ${isJoined ? "border-green-500" : "border-gray-200"}
                     `}
@@ -211,6 +215,8 @@ export function OrgSelect({
                             onClick={() => handleJoin(did)}
                             disabled={disabled}
                             className="w-full cursor-pointer"
+                            data-testid="org-join-button"
+                            data-org-did={did}
                           >
                             Join
                           </Button>
@@ -220,20 +226,24 @@ export function OrgSelect({
                             {expiresSoon && (
                               <Button
                                 size="sm"
-                            variant="outline"
-                            onClick={() => handleRenew(did)}
-                            disabled={disabled}
-                            className="w-full cursor-pointer"
-                          >
-                            Renew
-                          </Button>
-                        )}
+                                variant="outline"
+                                onClick={() => handleRenew(did)}
+                                disabled={disabled}
+                                className="w-full cursor-pointer"
+                                data-testid="org-renew-button"
+                                data-org-did={did}
+                              >
+                                Renew
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               variant="destructive"
                               onClick={() => setLeaveTarget({ did, name: val?.name ?? did })}
                               disabled={disabled || leaveMutation.isPending}
                               className="w-full cursor-pointer"
+                              data-testid="org-leave-button"
+                              data-org-did={did}
                             >
                               Leave
                             </Button>
@@ -278,6 +288,7 @@ export function OrgSelect({
               variant="destructive"
               disabled={leaveMutation.isPending || !leaveTarget}
               onClick={() => leaveTarget && leaveMutation.mutate(leaveTarget.did)}
+              data-testid="org-leave-confirm-button"
             >
               {leaveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Leave

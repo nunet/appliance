@@ -18,6 +18,7 @@ from .path_constants import KNOWN_ORGS_FILE, DMS_CAP_FILE
 KNOWN_ORGS_SOURCE_URL = (
     "https://gitlab.com/nunet/appliance/-/raw/main/known_orgs/known_organizations.json"
 )
+KNOWN_ORGS_E2E_FILENAME = "known_organizations.e2e.json"
 
 DEFAULT_ORG_ROLE = "compute_provider"
 ROLE_LABELS: Dict[str, str] = {
@@ -301,12 +302,27 @@ def load_known_organizations():
     if legacy_path != KNOWN_ORGS_FILE:
         candidates.append(legacy_path)
 
+    known: Dict[str, Any] = {}
+    primary_path: Path | None = None
     for candidate in candidates:
         if candidate.exists():
             with open(candidate, 'r') as f:
                 data = json.load(f)
-                return _ensure_roles_payload(data)
-    return {}
+                known = _ensure_roles_payload(data)
+                primary_path = candidate
+                break
+
+    if primary_path is None:
+        primary_path = KNOWN_ORGS_FILE
+
+    e2e_file = primary_path.with_name(KNOWN_ORGS_E2E_FILENAME)
+    if e2e_file.exists():
+        with open(e2e_file, 'r') as f:
+            extra_data = _ensure_roles_payload(json.load(f))
+            if isinstance(extra_data, dict):
+                known.update(extra_data)
+
+    return known
 
 
 def refresh_known_organizations(timeout: int = 10) -> Dict[str, Dict[str, object]]:

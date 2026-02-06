@@ -182,6 +182,7 @@ export default function Page() {
                           className="flex items-center gap-2"
                           onClick={handleRefresh}
                           disabled={isFetchingDeployments} // disable while loading
+                          data-testid="deployments-refresh-button"
                         >
                           {isFetchingDeployments ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -224,6 +225,7 @@ export default function Page() {
                     variant="outline"
                     className="border-green-500 text-green-500 hover:bg-green-50 hover:text-green-600 flex items-center gap-2"
                     onClick={() => navigate("/deploy/new")}
+                    data-testid="deployments-new-button"
                   >
                     <Plus className="w-4 h-4" />
                     New

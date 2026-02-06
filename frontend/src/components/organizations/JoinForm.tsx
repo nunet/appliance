@@ -226,6 +226,7 @@ export function JoinForm({
             value={formData["name"] ?? ""}
             onChange={(e) => handleChange("name", e.target.value)}
             placeholder="Full name"
+            data-testid="join-name-input"
           />
 
           {/* Dynamically render org fields */}
@@ -238,6 +239,7 @@ export function JoinForm({
               value={formData[field.name] ?? ""}
               onChange={(e) => handleChange(field.name, e.target.value)}
               placeholder={field.label}
+              data-testid={`join-field-${field.name}`}
               className={field.type === "text" ? "md:col-span-2" : ""}
             />
           ))}
@@ -250,10 +252,16 @@ export function JoinForm({
             value={formData["why_join"]}
             onValueChange={(v) => handleChange("why_join", v)}
             className="grid grid-cols-1 md:grid-cols-3 gap-2"
+            data-testid="join-role-group"
           >
             {roleOptions.map((role) => (
               <div className="flex items-center space-x-2" key={role.id}>
-                <RadioGroupItem value={role.id} id={role.id} />
+                <RadioGroupItem
+                  value={role.id}
+                  id={role.id}
+                  data-testid={`join-role-${role.id}`}
+                  data-role-id={role.id}
+                />
                 {role.description ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -312,6 +320,7 @@ export function JoinForm({
 
             onSubmit(payload);
           }}
+          data-testid="join-submit-button"
         >
           {submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           {renewal ? "Submit Renewal" : "Submit"}
@@ -322,6 +331,7 @@ export function JoinForm({
           variant={"outline"}
           disabled={submitting}
           onClick={() => onCancel?.()}
+          data-testid="join-cancel-button"
         >
           Cancel
         </Button>

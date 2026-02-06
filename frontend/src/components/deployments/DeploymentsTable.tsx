@@ -174,6 +174,7 @@ export default function DeploymentsCards() {
             setPage(1); // reset to page 1 on search
           }}
           className="max-w-sm"
+          data-testid="deployment-search-input"
         />
         <Select
           value={statusFilter}
@@ -182,15 +183,25 @@ export default function DeploymentsCards() {
             setPage(1); // reset to page 1 on filter change
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px]" data-testid="deployment-status-filter">
             <SelectValue placeholder="Filter by status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="submitted">Submitted</SelectItem>
-            <SelectItem value="running">Running</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="failed">Failed</SelectItem>
+            <SelectItem value="all" data-testid="deployment-status-option-all">
+              All statuses
+            </SelectItem>
+            <SelectItem value="submitted" data-testid="deployment-status-option-submitted">
+              Submitted
+            </SelectItem>
+            <SelectItem value="running" data-testid="deployment-status-option-running">
+              Running
+            </SelectItem>
+            <SelectItem value="completed" data-testid="deployment-status-option-completed">
+              Completed
+            </SelectItem>
+            <SelectItem value="failed" data-testid="deployment-status-option-failed">
+              Failed
+            </SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -236,7 +247,12 @@ export default function DeploymentsCards() {
         <>
           <div className="grid grid-cols-1 gap-4">
             {paginatedData.map((d: any) => (
-              <Card key={d.id} className="hover:shadow-md transition-shadow">
+              <Card
+                key={d.id}
+                className="hover:shadow-md transition-shadow"
+                data-testid="deployment-card"
+                data-deployment-id={d.id}
+              >
                 {/* Responsive layout: col on mobile, row on desktop */}
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4">
                   {/* Left side: ID + details */}
@@ -270,6 +286,7 @@ export default function DeploymentsCards() {
                       className={`px-2 py-1 rounded-full text-xs font-medium self-start md:self-end ${
                         statusColors[d.status] || "bg-gray-100 text-gray-800"
                       }`}
+                      data-testid="deployment-card-status"
                     >
                       {d.status.toUpperCase()}
                     </span>
@@ -278,6 +295,8 @@ export default function DeploymentsCards() {
                       size="sm"
                       className="w-full md:w-auto mt-2 md:mt-8"
                       onClick={() => navigate(`/deploy/${d.id}`)}
+                      data-testid="deployment-card-view"
+                      data-deployment-id={d.id}
                     >
                       View Details
                     </Button>
@@ -297,17 +316,18 @@ export default function DeploymentsCards() {
           </div>
 
           {/* Pagination Controls */}
-          <div className="flex justify-between items-center mt-4">
+          <div className="flex justify-between items-center mt-4" data-testid="deployment-pagination">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPage((old) => Math.max(old - 1, 1))}
               disabled={page === 1}
+              data-testid="deployment-pagination-prev"
             >
               Previous
             </Button>
 
-            <span className="text-sm text-gray-600">
+            <span className="text-sm text-gray-600" data-testid="deployment-pagination-label">
               Page {page}
             </span>
 
@@ -316,6 +336,7 @@ export default function DeploymentsCards() {
               size="sm"
               onClick={() => setPage((old) => old + 1)}
               disabled={!hasNextPage}
+              data-testid="deployment-pagination-next"
             >
               Next
             </Button>

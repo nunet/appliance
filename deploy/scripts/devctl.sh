@@ -116,6 +116,29 @@ apply_default_env() {
   export NUNET_STATIC_DIR="${NUNET_STATIC_DIR:-$APPLIANCE_ROOT/frontend/dist}"
 }
 
+install_browser_deps() {
+  local marker="$DEV_RUN_DIR/.browser_deps_installed"
+  mkdir -p "$DEV_RUN_DIR"
+  if [ -f "$marker" ]; then
+    return 0
+  fi
+
+  echo "Installing browser runtime dependencies (Chrome/Chromium/Electron/Xvfb)..."
+  sudo apt-get update
+  sudo apt-get install -y \
+    xvfb \
+    chromium-browser \
+    libnss3 libnspr4 \
+    libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdrm2 libgbm1 libxkbcommon0 \
+    libxdamage1 libxfixes3 libxrandr2 \
+    libpango-1.0-0 libasound2t64 \
+    libgtk-3-0 \
+    fonts-liberation ca-certificates
+
+  touch "$marker"
+}
+
 current_installed_version() {
   dpkg-query -W -f='${Version}\n' "$PKG_NAME_WEBSVC" 2>/dev/null || true
 }
@@ -209,6 +232,8 @@ dev_setup() {
   need python3
   need corepack
 
+  install_browser_deps
+
   # Check Node.js version and install if needed
   if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(22|24)"; then
     echo "Installing Node.js 22+ for frontend development..."
@@ -218,6 +243,16 @@ dev_setup() {
 
   corepack prepare "pnpm@${PNPM_VERSION}" --activate
   corepack pnpm --version >/dev/null 2>&1 || { echo "pnpm unavailable via corepack"; exit 1; }
+
+  # Ensure frontend deps (including Cypress binary) are installed before starting dev services.
+  # This avoids manual installs on fresh machines.
+  (
+    cd "$ROOT/frontend"
+    corepack pnpm install --frozen-lockfile
+    # Pre-download Cypress; if offline, continue without failing the setup.
+    corepack pnpm exec cypress install || echo "Skipping Cypress binary download (offline or already installed)"
+  )
+
   python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
   # shellcheck disable=SC1090
   . "$VENV_DIR/bin/activate"

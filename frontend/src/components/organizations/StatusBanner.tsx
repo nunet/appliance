@@ -20,8 +20,13 @@ export function StatusBanner({ status }: { status?: StatusResponse }) {
   if (!isImportant) return null;
 
   return (
-    <div className="rounded-xl shadow-sm">
-      <Card>
+    <div className="rounded-xl shadow-sm" data-testid="org-status-banner-wrapper">
+      <Card
+        data-testid="org-status-banner"
+        data-status-state={ui_state}
+        data-api-status={api_status ?? ""}
+        data-current-step={current_step}
+      >
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

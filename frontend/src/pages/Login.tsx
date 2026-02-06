@@ -52,7 +52,7 @@ export default function LoginPage() {
             </CardDescription>
           </div>
         </CardHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} data-testid="login-form">
           <CardContent className="space-y-6 pb-0">
             <div className="space-y-2">
               <Label htmlFor="password" className="text-sm font-medium text-foreground">
@@ -66,6 +66,7 @@ export default function LoginPage() {
                 onChange={(event) => setPassword(event.target.value)}
                 className="h-12 text-base shadow-sm"
                 required
+                data-testid="login-password-input"
               />
             </div>
           </CardContent>
@@ -75,6 +76,7 @@ export default function LoginPage() {
               size="lg"
               type="submit"
               disabled={submitting || password.length === 0}
+              data-testid="login-submit-button"
             >
               {submitting ? "Signing in..." : "Sign in"}
             </Button>
@@ -84,5 +86,4 @@ export default function LoginPage() {
     </div>
   );
 }
-
 

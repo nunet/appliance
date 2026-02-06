@@ -272,7 +272,10 @@ export default function EnsemblesPage() {
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+        <Card
+          className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg"
+          data-testid="ensembles-card"
+        >
           <CardHeader className="flex flex-col gap-4">
             <div className="flex items-center justify-between flex-row w-full">
               <div>
@@ -280,24 +283,37 @@ export default function EnsemblesPage() {
                 <CardDescription>Loading templates…</CardDescription>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={() => setCreateOpen(true)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setCreateOpen(true)}
+                  data-testid="ensemble-add-button"
+                >
                   Add Ensemble
                 </Button>
-                <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+                <Button
+                  variant="outline"
+                  onClick={() => window.location.assign("/#/deploy/new")}
+                  data-testid="ensemble-deploy-button"
+                >
                   Deploy
                 </Button>
               </div>
             </div>
             <div className="flex flex-col gap-2 md:flex-row">
-              <Input placeholder="Search file name…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Input
+                placeholder="Search file name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                data-testid="ensemble-search-input"
+              />
               <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-                <SelectTrigger className="md:w-48">
+                <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
                   <SelectValue placeholder="File type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All files</SelectItem>
-                  <SelectItem value="yaml">YAML only</SelectItem>
-                  <SelectItem value="json">JSON only</SelectItem>
+                  <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
+                  <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
+                  <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -325,30 +341,46 @@ export default function EnsemblesPage() {
   if (templates.length === 0) {
     return (
       <div className="grid grid-cols-1 gap-4 px-4 my-4">
-        <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+        <Card
+          className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg"
+          data-testid="ensembles-card"
+        >
           <CardHeader className="flex flex-col gap-4">
           <div>
             <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
             <CardDescription>No templates found.</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setCreateOpen(true)}>
+            <Button
+              variant="outline"
+              onClick={() => setCreateOpen(true)}
+              data-testid="ensemble-add-button"
+            >
               Add Ensemble
             </Button>
-            <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+            <Button
+              variant="outline"
+              onClick={() => window.location.assign("/#/deploy/new")}
+              data-testid="ensemble-deploy-button"
+            >
               Deploy
             </Button>
           </div>
             <div className="flex flex-col gap-2 md:flex-row">
-              <Input placeholder="Search file name…" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+              <Input
+                placeholder="Search file name…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                data-testid="ensemble-search-input"
+              />
               <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-                <SelectTrigger className="md:w-48">
+                <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
                   <SelectValue placeholder="File type" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All files</SelectItem>
-                  <SelectItem value="yaml">YAML only</SelectItem>
-                  <SelectItem value="json">JSON only</SelectItem>
+                  <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
+                  <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
+                  <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -360,21 +392,32 @@ export default function EnsemblesPage() {
 
   return (
     <div className="grid grid-cols-1 gap-4 px-4 my-4">
-      <Card className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg">
+      <Card
+        className="bg-gradient-to-t from-primary/5 to-card shadow-xs border rounded-lg"
+        data-testid="ensembles-card"
+      >
         <CardHeader className="flex flex-col gap-4">
           <div className="flex items-center justify-between w-full">
             <div>
               <CardTitle className="text-lg font-semibold">Ensembles</CardTitle>
               <CardDescription>Manage, edit, or delete your ensemble templates.</CardDescription>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1" data-testid="ensemble-counts">
                 {templateCount} templates · {yamlCount} YAML · {jsonCount} JSON
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setCreateOpen(true)}>
+              <Button
+                variant="outline"
+                onClick={() => setCreateOpen(true)}
+                data-testid="ensemble-add-button"
+              >
                 Add Ensemble
               </Button>
-              <Button variant="outline" onClick={() => window.location.assign("/#/deploy/new")}>
+              <Button
+                variant="outline"
+                onClick={() => window.location.assign("/#/deploy/new")}
+                data-testid="ensemble-deploy-button"
+              >
                 Deploy
               </Button>
             </div>
@@ -384,36 +427,48 @@ export default function EnsemblesPage() {
               placeholder="Search file name…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              data-testid="ensemble-search-input"
             />
             <Select value={fileType} onValueChange={(val: "all" | "yaml" | "json") => setFileType(val)}>
-              <SelectTrigger className="md:w-48">
+              <SelectTrigger className="md:w-48" data-testid="ensemble-type-filter">
                 <SelectValue placeholder="File type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All files</SelectItem>
-                <SelectItem value="yaml">YAML only</SelectItem>
-                <SelectItem value="json">JSON only</SelectItem>
+                <SelectItem value="all" data-testid="ensemble-type-option-all">All files</SelectItem>
+                <SelectItem value="yaml" data-testid="ensemble-type-option-yaml">YAML only</SelectItem>
+                <SelectItem value="json" data-testid="ensemble-type-option-json">JSON only</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </CardHeader>
         <CardContent>
           {filteredTemplates.length === 0 ? (
-            <p className="text-muted-foreground py-4 text-center">No templates found</p>
+            <p className="text-muted-foreground py-4 text-center" data-testid="ensemble-empty-state">
+              No templates found
+            </p>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 gap-4" data-testid="ensemble-list">
               {filteredTemplates.map((grouped) => (
-                <Card key={`${grouped.category}:${grouped.stem}`} className="hover:shadow-md transition-shadow">
+                <Card
+                  key={`${grouped.category}:${grouped.stem}`}
+                  className="hover:shadow-md transition-shadow"
+                  data-testid="ensemble-row"
+                  data-ensemble-stem={grouped.stem}
+                  data-ensemble-category={grouped.category}
+                  data-ensemble-path={grouped.displayPath}
+                  data-ensemble-has-yaml={Boolean(grouped.yamlTemplate)}
+                  data-ensemble-has-json={Boolean(grouped.jsonTemplate)}
+                >
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4">
                     <div className="flex-1 min-w-0">
                       <CardTitle className="text-base font-semibold mb-1">
                         {grouped.stem}
                       </CardTitle>
                       <div className="text-sm text-muted-foreground space-y-0.5">
-                        <p className="break-all font-mono text-xs">
+                        <p className="break-all font-mono text-xs" data-testid="ensemble-path">
                           {grouped.displayPath}
                         </p>
-                        <p>
+                        <p data-testid="ensemble-category">
                           <b>Category:</b> <span className="font-semibold">{grouped.category}</span>
                         </p>
                       </div>
@@ -438,6 +493,8 @@ export default function EnsemblesPage() {
                           size="sm"
                           className="w-full md:w-auto"
                           onClick={() => handleEdit(grouped)}
+                          data-testid="ensemble-edit-button"
+                          data-ensemble-stem={grouped.stem}
                         >
                           Edit
                         </Button>
@@ -446,6 +503,8 @@ export default function EnsemblesPage() {
                           size="sm"
                           className="w-full md:w-auto"
                           onClick={() => handleDelete(grouped)}
+                          data-testid="ensemble-delete-button"
+                          data-ensemble-stem={grouped.stem}
                         >
                           Delete
                         </Button>

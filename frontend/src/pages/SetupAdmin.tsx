@@ -90,7 +90,7 @@ export default function SetupAdmin() {
               : "Choose a strong admin password. You will use this password to access the web manager."}
           </CardDescription>
         </CardHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} data-testid="setup-form">
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="password">New admin password</Label>
@@ -101,6 +101,7 @@ export default function SetupAdmin() {
                 autoComplete="new-password"
                 onChange={(event) => setPassword(event.target.value)}
                 required
+                data-testid="setup-password-input"
               />
             </div>
             <div className="space-y-2">
@@ -112,12 +113,18 @@ export default function SetupAdmin() {
                 autoComplete="new-password"
                 onChange={(event) => setConfirm(event.target.value)}
                 required
+                data-testid="setup-password-confirm-input"
               />
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
           </CardContent>
           <CardFooter>
-            <Button className="w-full" type="submit" disabled={submitting}>
+            <Button
+              className="w-full"
+              type="submit"
+              disabled={submitting}
+              data-testid="setup-submit-button"
+            >
               {submitting ? "Saving..." : "Set password"}
             </Button>
           </CardFooter>

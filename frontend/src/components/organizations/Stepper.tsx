@@ -47,7 +47,12 @@ export function Stepper({
   });
 
   return (
-    <div ref={containerRef} className="w-full overflow-x-auto py-4">
+    <div
+      ref={containerRef}
+      className="w-full overflow-x-auto py-4"
+      data-testid="onboarding-stepper"
+      data-current-step={currentStep}
+    >
       <div className="flex items-center gap-4 min-w-max">
         {filteredSteps.map((s, i) => {
           const isLast = i === filteredSteps.length - 1;

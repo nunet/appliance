@@ -26,10 +26,17 @@ export default function DeploymentStepFour({
 }: DeploymentStepFourProps) {
   // Build summary items dynamically
   const summaryItems = [
-    { label: "Ensemble", value: template_path },
-    { label: "Category", value: category || "N/A" },
-    { label: "Deployment Type", value: deployment_type },
+    { key: "ensemble", testId: "deployment-summary-ensemble", label: "Ensemble", value: template_path },
+    { key: "category", testId: "deployment-summary-category", label: "Category", value: category || "N/A" },
+    {
+      key: "deployment_type",
+      testId: "deployment-summary-deployment_type",
+      label: "Deployment Type",
+      value: deployment_type,
+    },
     ...Object.entries(formData).map(([key, value]) => ({
+      key: `field-${key}`,
+      testId: `deployment-summary-field-${key}`,
       label: formatLabel(key),
       value,
     })),
@@ -37,18 +44,23 @@ export default function DeploymentStepFour({
 
   // Add peer_id if deployment_type is targeted
   if (deployment_type === "targeted" && peer_id) {
-    summaryItems.push({ label: "Peer ID", value: "..." + peer_id.slice(-6) });
+    summaryItems.push({
+      key: "peer_id",
+      testId: "deployment-summary-peer_id",
+      label: "Peer ID",
+      value: "..." + peer_id.slice(-6),
+    });
   }
 
   return (
-    <div className="flex flex-col items-center w-full">
+    <div className="flex flex-col items-center w-full" data-testid="deployment-step4">
       <h2 className="text-2xl font-semibold mb-6">Deployment Summary</h2>
 
       <Card className="w-full max-w-3xl bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs">
         <CardContent>
           <div className="space-y-4">
             {summaryItems.map((item, idx) => (
-              <div key={idx}>
+              <div key={item.key} data-testid={item.testId}>
                 <div className="flex justify-between text-sm">
                   <span className="font-medium text-muted-foreground">
                     {item.label}
