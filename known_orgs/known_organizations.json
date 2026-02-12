@@ -38,6 +38,28 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
         }
       }
     ]
@@ -85,6 +107,137 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      }
+    ]
+  },
+  "did:key:z6MksnDmmfFkEU4a71du26wuE2fecDNgWfn4h8A3txQAHHyT": {
+    "name": "NuNet Contract Test ",
+    "onboarding_api_url": "https://contract-testnet.nunet.network/api",
+    "tokenomics": {
+      "enabled": true,
+      "chain": "ethereum"
+    },
+    "join_fields": [
+      {
+        "name": "email",
+        "label": "Email",
+        "type": "email",
+        "required": true
+      },
+      {
+        "name": "location",
+        "label": "Location (City, Country)",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "discord",
+        "label": "Discord Username (Optional)",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "roles": [
+      {
+        "id": "compute_provider",
+        "label": "Compute Provider",
+        "description": "A Compute provider provides resources to the network",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast/contract/computeprovider",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/dms/deployment",
+            "/broadcast/deployment/computeprovider",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      },
+      {
+        "id": "Orchestrator",
+        "label": "Orchestrator",
+        "description": "An Orchestrator can deploy ensembles on the network,  This role requires more trust and will need manual approval by the organization",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast/contract/orchestrator",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast/deployment/orchestrator",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
         }
       }
     ]
@@ -126,6 +279,28 @@
           "caps": [
             "/dms/deployment",
             "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
             "/broadcast",
             "/public"
           ],
@@ -179,6 +354,28 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
         }
       }
     ]
@@ -222,6 +419,28 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment/bid",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
         }
       },
       {
@@ -233,6 +452,28 @@
           "caps": [
             "/dms/deployment",
             "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
             "/broadcast",
             "/public"
           ],
@@ -255,6 +496,28 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
         }
       },
       {
@@ -271,6 +534,22 @@
           "topics": [
             "/nunet"
           ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [],
+          "topics": []
         }
       }
     ]
