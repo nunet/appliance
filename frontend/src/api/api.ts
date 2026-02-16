@@ -1,5 +1,5 @@
 // src/api.ts
-import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import axios, { AxiosError } from "axios";
 import { AuthResponse } from "./auth";
 
 
@@ -79,7 +79,7 @@ export interface ApplianceUptime {
 const getBaseURL = () => {
   if (import.meta.env.DEV) {
     // Allow override via env var in development
-    const envUrl = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
+    const envUrl = (import.meta.env as ImportMetaEnv & { VITE_API_BASE_URL?: string }).VITE_API_BASE_URL;
     if (envUrl && envUrl.trim().length > 0) {
       return envUrl;
     }
@@ -375,16 +375,20 @@ export interface PaymentsConfig {
   cardano: CardanoTokenConfig;
 }
 
+export type DmsPaymentMetadata = Record<string, unknown>;
+
 // Single transaction item from DMS
 export interface DmsPaymentItem {
   unique_id: string;
   payment_validator_did: string;
   contract_did: string;
   to_address: string;
+  from_address?: string;
   amount: string;
   status: "paid" | "unpaid";
   tx_hash: string; // can be empty string when unpaid
   blockchain?: string;
+  metadata?: DmsPaymentMetadata | null;
 }
 
 export interface DmsIgnoredPayment {
@@ -392,7 +396,7 @@ export interface DmsIgnoredPayment {
   reason: string;
 }
 
-// List response with counts and sorted items (paid first, then unpaid)
+// List response with counts and sorted items (unpaid first, then paid)
 export interface DmsPaymentsListResponse {
   total_count: number;
   paid_count: number;

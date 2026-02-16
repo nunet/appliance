@@ -1,8 +1,9 @@
 # nunet_api/routers/payments.py
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pycardano.exception import TransactionFailedException
 from decimal import Decimal, InvalidOperation
+import json
 import re
 from ..schemas import (
     CardanoBuildRequest,
@@ -25,7 +26,7 @@ ETH_TOKEN_CONFIG = TokenConfig(
     chain_id=11155111,
     token_address="0xB37216b70a745129966E553cF8Ee2C51e1cB359A",
     token_symbol="TSTNTX",
-    token_decimals=6,
+    token_decimals=16,
     explorer_base_url="https://sepolia.etherscan.io/",
     network_name="Ethereum Sepolia",
 )
@@ -33,7 +34,7 @@ ETH_TOKEN_CONFIG = TokenConfig(
 CARDANO_TOKEN_CONFIG = CardanoTokenConfig(
     chain_id=1,
     token_address="asset1tkxzxjklvs5gdkpuh26ex3re4rl8wjg3wmyxdr",
-    token_decimals=0,  # native asset units are indivisible
+    token_decimals=16,
     token_symbol="tNTX",
     explorer_base_url="https://preprod.cexplorer.io/",
     network_name="Cardano Preprod",
@@ -107,16 +108,22 @@ def _valid_amount_str(amount: str, max_decimals: int) -> bool:
     except (InvalidOperation, TypeError):
         return False
 
-def _coerce_first_address(value: Any) -> str:
+def _coerce_first_address(
+    value: Any,
+    preferred_keys: Tuple[str, ...] = ("provider_addr", "requester_addr", "address", "addr"),
+    allow_plain_string: bool = True,
+) -> str:
     """
     Ensure the to_address field is a plain string.
     DMS responses sometimes provide structured payloads, so search through
     nested collections for the first non-empty string.
     """
     if isinstance(value, str):
+        if not allow_plain_string:
+            return ""
         return value.strip()
     if isinstance(value, dict):
-        for key in ("provider_addr", "requester_addr", "address", "addr"):
+        for key in preferred_keys:
             candidate = value.get(key)
             if isinstance(candidate, str):
                 trimmed = candidate.strip()
@@ -125,7 +132,7 @@ def _coerce_first_address(value: Any) -> str:
         return ""
     if isinstance(value, (list, tuple)):
         for entry in value:
-            coerced = _coerce_first_address(entry)
+            coerced = _coerce_first_address(entry, preferred_keys, allow_plain_string=allow_plain_string)
             if coerced:
                 return coerced
         return ""
@@ -147,6 +154,26 @@ def _extract_blockchain(value: Any, default: str = PAY_BLOCKCHAIN) -> str:
                 return bc
     return (default or PAY_BLOCKCHAIN).upper()
 
+
+def _coerce_metadata(value: Any) -> Optional[Dict[str, Any]]:
+    """
+    Normalize optional metadata payload into a dictionary.
+    Accepts native dicts and JSON-object strings.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
 def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize DMS transaction keys (handles TitleCase and snake_case).
@@ -155,16 +182,26 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     to_address_raw = d.get("to_address") or d.get("ToAddress") or d.get("toAddress") or ""
     blockchain = _extract_blockchain(to_address_raw, d.get("blockchain") or PAY_BLOCKCHAIN)
+    metadata_raw = d.get("metadata")
+    if metadata_raw is None:
+        metadata_raw = d.get("Metadata")
+    metadata = _coerce_metadata(metadata_raw)
 
     return {
         "unique_id": d.get("unique_id") or d.get("UniqueID") or d.get("uniqueId") or "",
         "payment_validator_did": d.get("payment_validator_did") or d.get("PaymentValidatorDID") or "",
         "contract_did": d.get("contract_did") or d.get("ContractDID") or "",
-        "to_address": _coerce_first_address(to_address_raw),
+        "to_address": _coerce_first_address(to_address_raw, ("provider_addr", "requester_addr", "address", "addr")),
+        "from_address": _coerce_first_address(
+            to_address_raw,
+            ("requester_addr", "provider_addr", "address", "addr"),
+            allow_plain_string=False,
+        ),
         "amount": d.get("amount") or d.get("Amount") or "",
         "status": (d.get("status") or d.get("Status") or "").lower(),  # normalize to lower
         "tx_hash": d.get("tx_hash") or d.get("TxHash") or "",
         "blockchain": blockchain,
+        "metadata": metadata,
     }
 
 
@@ -207,7 +244,7 @@ def get_config():
 def list_payments(mgr: DMSManager = Depends(get_mgr)):
     """
     Fetch all transactions from DMS, normalize, validate lightly,
-    sort by status (paid first, then unpaid), and return counts.
+    sort by status (unpaid first, then paid), and return counts.
     """
     out = mgr.list_transactions(blockchain=None)
     if out.get("status") == "error":

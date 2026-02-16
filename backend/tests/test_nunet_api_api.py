@@ -482,6 +482,11 @@ def test_payments_list_payments_normalizes_transactions(client):
                         "payment_validator_did": "did:validator:1",
                         "contract_did": "did:contract:1",
                         "tx_hash": "0x" + "d" * 64,
+                        "metadata": {
+                            "deployment_id": "deployment-123",
+                            "allocation_count": 2,
+                            "total_utilization_sec": 3600,
+                        },
                     },
                 ]
             }
@@ -500,6 +505,53 @@ def test_payments_list_payments_normalizes_transactions(client):
     assert body["ignored_count"] == 0
     assert body["items"][0]["unique_id"] == "1"
     assert body["items"][0]["blockchain"] == "ETHEREUM"
+    assert body["items"][0]["metadata"]["deployment_id"] == "deployment-123"
+
+
+def test_payments_list_payments_normalizes_metadata_variants(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None):
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "1",
+                        "status": "unpaid",
+                        "to_address": "0x" + "c" * 40,
+                        "amount": "1.250000",
+                        "payment_validator_did": "did:validator:1",
+                        "contract_did": "did:contract:1",
+                        "tx_hash": "",
+                        "Metadata": "{\"deployment_id\":\"dep-a\",\"allocation_count\":3}",
+                    },
+                    {
+                        "unique_id": "2",
+                        "status": "paid",
+                        "to_address": "0x" + "d" * 40,
+                        "amount": "2.000000",
+                        "payment_validator_did": "did:validator:2",
+                        "contract_did": "did:contract:2",
+                        "tx_hash": "0x" + "a" * 64,
+                        "metadata": "not-json",
+                    },
+                ],
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get("/payments/list_payments")
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 2
+    assert body["items"][0]["unique_id"] == "1"
+    assert body["items"][0]["metadata"]["deployment_id"] == "dep-a"
+    assert body["items"][0]["metadata"]["allocation_count"] == 3
+    assert body["items"][1]["metadata"] is None
 
 
 def test_payments_list_payments_handles_list_addresses(client):
