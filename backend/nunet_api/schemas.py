@@ -146,9 +146,11 @@ class DmsTransaction(BaseModel):
     payment_validator_did: str
     contract_did: str
     to_address: str
+    from_address: Optional[str] = None
     amount: str
     status: str
     tx_hash: str
+    metadata: Optional[Dict[str, Any]] = None
 
 class DmsTransactionsList(BaseModel):
     transactions: List[DmsTransaction]
