@@ -103,6 +103,17 @@ STEP_DEFS = [
     {"id": "join_data_sent", "label": "Data Sent"},
     {"id": "email_verified", "label": "Email Verified", "virtual": True},
     {"id": "pending_authorization", "label": "Pending Authorization"},
+    # Contract-enabled flow steps
+    {"id": "contract_caps_ready", "label": "Contract Caps Ready"},
+    {"id": "contract_caps_applied", "label": "Contract Caps Applied"},
+    {"id": "contract_created", "label": "Contract Created"},
+    {"id": "contract_received", "label": "Contract Received"},
+    {"id": "contract_signing", "label": "Contract Signing", "virtual": True},
+    {"id": "contract_signed", "label": "Contract Signed"},
+    {"id": "deployment_caps_ready", "label": "Deployment Caps Ready"},
+    {"id": "deployment_caps_applied", "label": "Deployment Caps Applied"},
+    {"id": "deployment_test_complete", "label": "Deployment Tested"},
+    # Legacy flow steps
     {"id": "join_data_received", "label": "Join Data Received"},
     {"id": "capabilities_applied", "label": "Capabilities Applied"},
     {"id": "capabilities_onboarded", "label": "Capabilities Onboarded"},
@@ -119,7 +130,18 @@ PROGRESS_MAP = {
     "submit_data": 30,
     "join_data_sent": 40,
     "email_verified": 50,
-    "pending_authorization": 60,
+    "pending_authorization": 55,
+    # Contract-enabled flow progress
+    "contract_caps_ready": 58,
+    "contract_caps_applied": 60,
+    "contract_created": 63,
+    "contract_received": 66,
+    "contract_signing": 68,
+    "contract_signed": 70,
+    "deployment_caps_ready": 75,
+    "deployment_caps_applied": 80,
+    "deployment_test_complete": 90,
+    # Legacy flow progress
     "join_data_received": 70,
     "capabilities_applied": 80,
     "capabilities_onboarded": 83,
@@ -386,6 +408,9 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ("waiting_api", "Waiting for the organization's onboarding service to become available...")
     if step == "join_data_sent" and api_status in [None, "", "pending", "processing", "email_sent"]:
         return ("data_submitted", "Your join data has been submitted to the organization. Awaiting further instructions...")
+    if api_status == "contract_required_mismatch":
+        msg = onboarding_status.get("status_message") or "Contract required setting mismatch between organization and appliance; request pending manual review."
+        return ("contract_required_mismatch", msg)
     if api_status == "email_verified":
         return ("email_verified", "Your email has been verified! Waiting for organization approval...")
     if step == "join_data_sent" and api_status in ["pending", "processing"]:
@@ -394,6 +419,24 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ('approved', 'Your request has been approved! Finalizing onboarding...')
     if step == 'pending_authorization':
         return ('waiting_approval', 'Your request is being reviewed by the organization. Please wait for approval...')
+    
+    # Contract-enabled flow steps
+    if step == "contract_caps_applied" or api_status == "contract_caps_confirmed":
+        return ("contract_caps_applied", "Contract capabilities applied. Waiting for the organization to create a contract for you to sign. This may take a minute...")
+    if step == "contract_created" or api_status == "contract_created":
+        return ("contract_created", "A contract has been created by the organization. Checking for incoming contract...")
+    if step == "contract_received" or api_status == "contract_received":
+        return ("contract_received", "Contract received! Please review and sign the contract to continue.")
+    if step == "contract_signing":
+        return ("contract_signing", "Signing the contract...")
+    if step == "contract_signed" or api_status == "contract_signed" or api_status == "contract_verified":
+        return ("contract_signed", "Contract signed! Waiting for deployment capabilities...")
+    if step == "deployment_caps_applied" or api_status == "deployment_caps_confirmed":
+        return ("deployment_caps_applied", "Deployment capabilities applied. Running deployment verification...")
+    if step == "deployment_test_complete" or api_status == "deployment_test_complete":
+        return ("deployment_test_complete", "Deployment verification complete! Finalizing onboarding...")
+    
+    # Legacy flow steps
     if step == "capabilities_applied":
         return ("capabilities_applied", "Applying organization capabilities...")
     if step == "capabilities_onboarded":
@@ -724,6 +767,10 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     if not dms_did or not dms_peer_id:
         raise HTTPException(status_code=400, detail="DMS not ready (missing DID or Peer ID). Start DMS first.")
 
+    contract_required = True
+    if isinstance(org_entry, dict):
+        contract_required = org_entry.get("contract_required", True)
+
     payload: Dict[str, Any] = {
         "organization_name": org_data.get("name"),
         "organization_did": org_data.get("did"),
@@ -741,6 +788,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         "tokenomics": tokenomics_cfg,
         "is_renewal": is_renewal,
         "renewing_previous": body.renewing_previous,
+        "contract_required": contract_required,
         # runtime context
         "resources": runtime.get("resources", {}),
         "dms_resources": runtime.get("dms_resources", {}),
@@ -782,14 +830,18 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     status_token = api_res.get("status_token")
     api_status = api_res.get("status")
 
-    mgr.update_state(
-        step="join_data_sent",
-        request_id=request_id,
-        status_token=status_token,
-        api_status=api_status,
-        processing=False,
-        processed_ok=False,
-    )
+    update_kwargs: Dict[str, Any] = {
+        "step": "join_data_sent",
+        "request_id": request_id,
+        "status_token": status_token,
+        "api_status": api_status,
+        "processing": False,
+        "processed_ok": False,
+    }
+    if api_status == "contract_required_mismatch":
+        update_kwargs["status_message"] = api_res.get("status_message")
+        update_kwargs["contract_required_mismatch"] = True
+    mgr.update_state(**update_kwargs)
     if request_id:
         try:
             role_metadata.record_last_request_id(org_data.get("did", ""), request_id)
@@ -904,9 +956,14 @@ def leave_org(org_did: str, mgr: OnboardingManager = Depends(_mgr)):
 @router.get("/join/poll", response_model=PollStatusResponse)
 def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(True)):
     """
-    Polls the remote onboarding status. Handles three phases:
+    Polls the remote onboarding status. Handles multiple phases:
       - email_sent / pending -> keeps waiting (advances to pending_authorization after email_verified)
-      - ready / approved -> auto-process (exactly once)
+      - contract_caps_ready -> apply contract capabilities and restart DMS
+      - contract_created -> poll for incoming contracts
+      - contract_received -> wait for user to sign
+      - contract_signed -> wait for deployment caps
+      - deployment_caps_ready -> apply deployment capabilities
+      - deployment_test_complete / ready / approved -> complete
       - error / rejected -> marks rejected
     """
     state = mgr.get_onboarding_status()
@@ -940,6 +997,13 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
     api_status = (result or {}).get("status") or state.get("api_status")
     mgr.update_state(api_status=api_status)
 
+    if result is not None:
+        logger.info(
+            "Polled onboarding API: status=%s contract_did=%s",
+            result.get("status"),
+            result.get("contract_did") or "(none)",
+        )
+
     # 1) Email verified -> show pending_authorization
     if api_status == "email_verified":
         if state.get("step") != "pending_authorization":
@@ -952,7 +1016,221 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 2) Still waiting (pending/processing/email_sent/None)
+    # 2) Contract capabilities ready (Phase 2 of contract-enabled flow)
+    if api_status == "contract_caps_ready":
+        contract_caps = (result or {}).get("contract_caps") or (result or {}).get("capability_token")
+        if contract_caps and not state.get("contract_caps_applied"):
+            mgr.update_state(processing=True)
+            try:
+                success = mgr.apply_contract_capabilities(contract_caps)
+                if success:
+                    mgr.update_state(
+                        step="contract_caps_applied",
+                        contract_caps_applied=True,
+                        contract_caps=contract_caps,
+                        api_status=api_status
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_confirm_caps(req_id, token, cap_type="contract")
+                    except Exception as confirm_exc:
+                        logger.warning("Failed to confirm contract caps: %s", confirm_exc)
+                else:
+                    mgr.update_state(
+                        step="rejected",
+                        rejection_reason="Failed to apply contract capabilities"
+                    )
+            except Exception as exc:
+                logger.error("Contract capabilities application failed: %s", exc)
+                mgr.update_state(
+                    step="rejected",
+                    rejection_reason=f"Contract capabilities application failed: {exc}"
+                )
+            finally:
+                mgr.update_state(processing=False)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=state.get("step", "contract_caps_applied"),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 2.5) Contract caps confirmed - wait for contract creation
+    if api_status == "contract_caps_confirmed":
+        if state.get("step") != "contract_caps_applied":
+            mgr.update_state(step="contract_caps_applied")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_caps_applied",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 3) Contract created - poll for incoming contracts
+    if api_status == "contract_created":
+        contract_did = (result or {}).get("contract_did") or state.get("contract_did")
+        if not contract_did:
+            logger.info(
+                "No contract_did in status response (cannot poll DMS); keys=%s",
+                list((result or {}).keys()),
+            )
+        elif not state.get("contract_data"):
+            mgr.update_state(contract_did=contract_did)
+        if contract_did and not state.get("contract_data"):
+            # Poll DMS for the specific contract the orchestrator created; only confirm when we see that contract_did
+            try:
+                logger.info("Polling DMS for contract did=%s", contract_did[:50] + "..." if len(contract_did) > 50 else contract_did)
+                contract_data = mgr.poll_for_contracts(req_id, expected_contract_did=contract_did)
+                if contract_data:
+                    mgr.update_state(
+                        step="contract_received",
+                        contract_data=contract_data,
+                        contract_did=contract_did
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_contract_received(req_id, token)
+                    except Exception as notify_exc:
+                        logger.warning("Failed to notify contract received: %s", notify_exc)
+                    else:
+                        logger.info("Contract received and org manager notified: %s", contract_did)
+                else:
+                    logger.info(
+                        "Contract not yet in DMS list; expected_contract_did=%s",
+                        contract_did[:50] + "..." if len(contract_did) > 50 else contract_did,
+                    )
+            except Exception as exc:
+                logger.warning("Contract polling failed: %s", exc)
+        
+        # Use current state so we don't overwrite contract_received we may have just set above
+        state_after_poll = mgr.get_onboarding_status()
+        current_step = state_after_poll.get("step", "contract_created")
+        if current_step not in ("contract_received", "contract_signing", "contract_signed"):
+            current_step = "contract_created"
+            mgr.update_state(step=current_step)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=mgr.get_onboarding_status().get("step", current_step),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 4) Contract received - waiting for user to sign (handled by frontend)
+    if api_status == "contract_received":
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_received",
+            payload_available=True,  # Contract is available for signing
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 5) Contract signed - wait for deployment caps
+    if api_status == "contract_signed":
+        if not state.get("contract_signed"):
+            mgr.update_state(step="contract_signed", contract_signed=True)
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_signed",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 6) Deployment capabilities ready (Phase 5 of contract-enabled flow)
+    if api_status == "deployment_caps_ready":
+        deployment_caps = (result or {}).get("deployment_caps") or (result or {}).get("capability_token")
+        if deployment_caps and not state.get("deployment_caps_applied"):
+            mgr.update_state(processing=True)
+            try:
+                certificates = {
+                    "client_crt": (result or {}).get("client_crt"),
+                    "client_key": (result or {}).get("client_key"),
+                    "infra_bundle_crt": (result or {}).get("infra_bundle_crt"),
+                }
+                api_key = (result or {}).get("elastic_api_key") or (result or {}).get("elasticsearch_api_key")
+                
+                success = mgr.apply_deployment_capabilities(deployment_caps, certificates, api_key)
+                if success:
+                    mgr.update_state(
+                        step="deployment_caps_applied",
+                        deployment_caps_applied=True,
+                        deployment_caps=deployment_caps,
+                        api_status=api_status
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_confirm_caps(req_id, token, cap_type="deployment")
+                    except Exception as confirm_exc:
+                        logger.warning("Failed to confirm deployment caps: %s", confirm_exc)
+                else:
+                    mgr.update_state(
+                        step="rejected",
+                        rejection_reason="Failed to apply deployment capabilities"
+                    )
+            except Exception as exc:
+                logger.error("Deployment capabilities application failed: %s", exc)
+                mgr.update_state(
+                    step="rejected",
+                    rejection_reason=f"Deployment capabilities application failed: {exc}"
+                )
+            finally:
+                mgr.update_state(processing=False)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=mgr.get_onboarding_status().get("step", "deployment_caps_applied"),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 6.5) Deployment caps confirmed - wait for deployment test
+    if api_status == "deployment_caps_confirmed":
+        if state.get("step") != "deployment_caps_applied":
+            mgr.update_state(step="deployment_caps_applied")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="deployment_caps_applied",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 7) Deployment test complete - contract-enabled flow completed
+    if api_status == "deployment_test_complete":
+        mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+        return PollStatusResponse(
+            status="success",
+            api_status=api_status,
+            step="complete",
+            payload_available=True,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 7.5) Contract required mismatch - pending manual review (admin only)
+    if api_status == "contract_required_mismatch":
+        status_message = (result or {}).get("status_message") or "Contract required setting mismatch; request pending manual review."
+        mgr.update_state(
+            step="join_data_sent",
+            api_status=api_status,
+            status_message=status_message,
+            contract_required_mismatch=True,
+        )
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="join_data_sent",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 8) Still waiting (pending/processing/email_sent/None) - original behavior
     if api_status in ("pending", "processing", "email_sent", None, ""):
         next_step = "pending_authorization" if state.get("step") == "pending_authorization" else "join_data_sent"
         if state.get("step") != next_step:
@@ -965,7 +1243,19 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 3) Approved/ready -> auto-process exactly once
+    # 8.5) Contract verified (orchestrator verified signed contract; waiting for deployment caps)
+    if api_status == "contract_verified":
+        if state.get("step") != "contract_signed":
+            mgr.update_state(step="contract_signed")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_signed",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 9) Approved/ready -> auto-process exactly once (legacy flow)
     if api_status in ("ready", "approved"):
         if state.get("processed_ok"):
             mgr.update_state(step="complete", status="complete", completed=True)
@@ -1000,7 +1290,7 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 4) Error / rejected
+    # 10) Error / rejected
     mgr.update_state(
         step="rejected",
         rejection_reason=(result or {}).get("rejection_reason") or (result or {}).get("reason") or "rejected by remote",
@@ -1012,6 +1302,108 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
         payload_available=bool(state.get("api_payload")),
         state=mgr.get_onboarding_status(),
     )
+
+
+class ContractSignRequest(BaseModel):
+    contract_did: str = Field(..., description="DID of the contract to sign")
+
+
+class ContractSignResponse(BaseModel):
+    status: str
+    message: str
+    contract_did: Optional[str] = None
+    state: Dict[str, Any]
+
+
+@router.post("/contract/sign", response_model=ContractSignResponse)
+def sign_contract(request: ContractSignRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Sign a contract that was received during the contract-enabled flow.
+    This endpoint is called by the frontend after the user reviews and accepts the contract.
+    """
+    state = mgr.get_onboarding_status()
+    req_id = state.get("request_id")
+    token = state.get("status_token")
+    
+    # Validate state
+    if state.get("contract_signed"):
+        return ContractSignResponse(
+            status="success",
+            message="Contract already signed.",
+            contract_did=request.contract_did,
+            state=mgr.get_onboarding_status(),
+        )
+    
+    if not state.get("contract_caps_applied"):
+        raise HTTPException(
+            status_code=400,
+            detail="Contract capabilities not yet applied. Wait for contract_caps_applied status."
+        )
+    
+    # Sign the contract
+    mgr.update_state(processing=True, step="contract_signing")
+    try:
+        success = mgr.sign_contract(request.contract_did)
+        if not success:
+            mgr.update_state(processing=False)
+            raise HTTPException(status_code=500, detail="Failed to sign contract")
+        
+        # Notify Organization Manager
+        if req_id and token:
+            try:
+                mgr.api_contract_signed(req_id, token)
+            except Exception as exc:
+                logger.warning("Failed to notify contract signed: %s", exc)
+        
+        mgr.update_state(
+            step="contract_signed",
+            contract_signed=True,
+            contract_did=request.contract_did,
+            processing=False
+        )
+        
+        return ContractSignResponse(
+            status="success",
+            message="Contract signed successfully.",
+            contract_did=request.contract_did,
+            state=mgr.get_onboarding_status(),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Contract signing failed: %s", exc)
+        mgr.update_state(processing=False)
+        raise HTTPException(status_code=500, detail=f"Contract signing failed: {exc}")
+
+
+@router.get("/contract/pending")
+def get_pending_contract(mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Get the pending contract data if available.
+    Returns contract details for the frontend to display to the user.
+    """
+    state = mgr.get_onboarding_status()
+    
+    contract_data = state.get("contract_data")
+    contract_did = state.get("contract_did")
+    
+    if not contract_data and not contract_did:
+        return {
+            "status": "no_contract",
+            "message": "No pending contract available.",
+            "contract": None,
+        }
+    
+    return {
+        "status": "contract_available",
+        "message": "Contract pending user approval.",
+        "contract": {
+            "did": contract_did,
+            "data": contract_data,
+            "signed": state.get("contract_signed", False),
+        },
+    }
 
 
 @router.post("/join/process", response_model=ProcessResponse)

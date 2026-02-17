@@ -31,7 +31,8 @@ _DMS_PEERS_LOCK = threading.Lock()
 
 _ANSI_RE = re.compile(r"\u001b\[[0-9;]*m")
 _PRIVATE_IPV4 = re.compile(r"/ip4/(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)")
-_LOG_OUTPUT_MAX = 4000
+# Log snippet length; full stdout/stderr are still returned to callers (e.g. contract list JSON).
+_LOG_OUTPUT_MAX = 32_000
 
 
 class DmsCommandResult(TypedDict, total=False):
@@ -340,9 +341,9 @@ def contract_list_incoming(*, timeout: int = 30) -> DmsCommandResult:
             cp,
             expect_json=True,
         )
-    fallback_argv, fallback_cp = _run_contract_command("/dms/tokenomics/contract/list_incoming", timeout=timeout)
+    fallback_argv, fallback_cp = _run_contract_command("/dms/tokenomics/contract/list", timeout=timeout)
     return _build_contract_result(
-        "/dms/tokenomics/contract/list_incoming",
+        "/dms/tokenomics/contract/list",
         fallback_argv,
         fallback_cp,
         expect_json=True,

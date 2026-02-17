@@ -249,12 +249,26 @@ def get_contract_template_endpoint(
     return _template_to_detail(template)
 
 
+def _get_contract_did_from_entry(entry: Any) -> Optional[str]:
+    if not isinstance(entry, dict):
+        return None
+    for key in ("contract_did", "ContractDID", "contractDid", "did"):
+        val = entry.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
 @router.get("/", response_model=ContractListResponse)
 @router.get("", response_model=ContractListResponse, include_in_schema=False)
 def list_contracts_endpoint(
     view: Literal["incoming", "outgoing", "active", "all"] = Query(
         "all",
         description="Filter contracts by lifecycle view.",
+    ),
+    contract_did: Optional[str] = Query(
+        None,
+        description="When provided, return only the contract with this DID (e.g. for onboarding).",
     ),
     mgr: DMSManager = Depends(get_mgr),
 ) -> ContractListResponse:
@@ -267,6 +281,12 @@ def list_contracts_endpoint(
             "all": "Failed to list contracts",
         }
         _raise_contract_error(result, errors.get(view, "Failed to list contracts"))
+    if contract_did:
+        raw_contracts = result.get("contracts") or []
+        result = {
+            **result,
+            "contracts": [e for e in raw_contracts if _get_contract_did_from_entry(e) == contract_did],
+        }
     return _build_list_response(result)
 
 
