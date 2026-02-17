@@ -422,27 +422,36 @@ class DMSManager:
             logger.warning("Failed to calculate RAM: %s", exc)
 
         # 3) Disk in GiB
-        #    - Use df -k --total to get free space in KiB
-        #    - Convert KiB -> GiB
-        #    - Subtract 5 GiB
+        #    - Use df -k on a single path (root) so we get free space on the filesystem
+        #      DMS actually uses. df --total would sum "Available" across all mounts,
+        #      which can over-report and cause "not enough free Disk" from DMS.
+        #    - Convert KiB -> GiB, subtract 5 GiB reserve.
         try:
+            df_path = "/"
             df_cp = subprocess.run(
-                ["df", "-k", "--total"],
+                ["df", "-k", df_path],
                 capture_output=True,
                 text=True,
                 check=False,
             )
             if df_cp.returncode == 0:
                 lines = df_cp.stdout.strip().splitlines()
-                if lines:
-                    # Last line is the total
-                    total_line = lines[-1]
-                    parts = total_line.split()
+                # First data line (after header) is for df_path
+                if len(lines) >= 2:
+                    data_line = lines[1]
+                    parts = data_line.split()
+                    # Columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on
                     if len(parts) >= 4:
                         free_disk_kb = int(parts[3])
                         free_disk_gb = free_disk_kb / 1048576.0
                         disk_onboard_gb = max(0.0, free_disk_gb - 5.0)
                         resources["disk_gb"] = round(disk_onboard_gb, 2)
+                        logger.info(
+                            "Disk from df -k %s: free=%.2f GiB, onboard=%.2f GiB (after 5 GiB reserve)",
+                            df_path,
+                            free_disk_gb,
+                            resources["disk_gb"],
+                        )
         except Exception as exc:
             logger.warning("Failed to calculate disk space: %s", exc)
 
