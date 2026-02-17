@@ -89,4 +89,20 @@ export const organizationsApi = {
     );
     return data;
   },
+
+  async getPendingContract(): Promise<{
+    status: string;
+    message: string;
+    contract: { did: string; data?: unknown; signed: boolean } | null;
+  }> {
+    const { data } = await api.get(`/organizations/contract/pending`);
+    return data;
+  },
+
+  async signContract(contractDid: string) {
+    const { data } = await api.post(`/organizations/contract/sign`, {
+      contract_did: contractDid,
+    });
+    return data;
+  },
 };

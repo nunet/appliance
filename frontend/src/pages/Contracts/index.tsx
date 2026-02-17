@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AxiosError } from "axios";
-import { ContractListView, ContractMetadata, ContractTerminatePayload, contractsApi } from "@/api/contracts";
+import { ContractListView, ContractMetadata, ContractTerminatePayload, contractsApi, extractHostDid } from "@/api/contracts";
 import { getDmsStatus } from "@/api/api";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -73,23 +73,6 @@ function extractContractState(entry: unknown): string | null {
     }
   }
 
-  return null;
-}
-
-function extractHostDid(contract: ContractMetadata | null | undefined): string | null {
-  if (!contract) {
-    return null;
-  }
-  const candidates = [
-    contract.solution_enabler_did?.uri,
-    contract.participants?.provider?.uri,
-    contract.participants?.requestor?.uri,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
-  }
   return null;
 }
 

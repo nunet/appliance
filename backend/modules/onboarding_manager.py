@@ -83,6 +83,15 @@ class OnboardingManager:
             "processing": False,
             "processed_ok": False,
             "completed": False,
+            # Contract-enabled flow fields
+            "contract_caps_applied": False,
+            "contract_caps": None,
+            "deployment_caps_applied": False,
+            "deployment_caps": None,
+            "contract_signed": False,
+            "contract_did": None,
+            "contract_data": None,
+            "seen_contract_dids": [],
         }
 
     @staticmethod
@@ -594,6 +603,377 @@ class OnboardingManager:
         return resp.json()
 
     # ------------------------------------------------------------------ #
+    # Contract-enabled flow API methods
+    # ------------------------------------------------------------------ #
+
+    def api_confirm_caps(self, request_id: str, status_token: str, cap_type: str) -> Dict[str, Any]:
+        """
+        Notify Organization Manager that capabilities have been applied.
+        
+        Args:
+            request_id: The onboarding request ID
+            status_token: The status token for authentication
+            cap_type: Either "contract" or "deployment"
+            
+        Returns:
+            Response from Organization Manager API
+        """
+        log_step = "contract_caps_applied" if cap_type == "contract" else "deployment_caps_applied"
+        
+        if self.use_mock_api:
+            self.append_log(log_step, f"Mock confirm-caps invoked for {cap_type} capabilities.")
+            return {"status": "success"}
+        
+        api_url = self.get_onboarding_api_url()
+        if not api_url:
+            raise RuntimeError("No onboarding API URL configured for the selected organisation.")
+        
+        endpoint = f"{api_url.rstrip('/')}/onboarding/confirm-caps/{request_id}/"
+        params = {"status_token": status_token, "cap_type": cap_type}
+        
+        self.append_log(log_step, f"Confirming {cap_type} capabilities to {endpoint}")
+        
+        resp = self.session.post(endpoint, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def api_contract_received(self, request_id: str, status_token: str) -> Dict[str, Any]:
+        """
+        Notify Organization Manager that a contract has been received.
+        
+        Args:
+            request_id: The onboarding request ID
+            status_token: The status token for authentication
+            
+        Returns:
+            Response from Organization Manager API
+        """
+        if self.use_mock_api:
+            self.append_log("contract_received", "Mock contract-received invoked.")
+            return {"status": "success"}
+        
+        api_url = self.get_onboarding_api_url()
+        if not api_url:
+            raise RuntimeError("No onboarding API URL configured for the selected organisation.")
+        
+        endpoint = f"{api_url.rstrip('/')}/onboarding/contract-received/{request_id}/"
+        params = {"status_token": status_token}
+        
+        self.append_log("contract_received", f"Notifying contract received to {endpoint}")
+        
+        resp = self.session.post(endpoint, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def api_contract_signed(self, request_id: str, status_token: str) -> Dict[str, Any]:
+        """
+        Notify Organization Manager that a contract has been signed.
+        
+        Args:
+            request_id: The onboarding request ID
+            status_token: The status token for authentication
+            
+        Returns:
+            Response from Organization Manager API
+        """
+        if self.use_mock_api:
+            self.append_log("contract_signed", "Mock contract-signed invoked.")
+            return {"status": "success"}
+        
+        api_url = self.get_onboarding_api_url()
+        if not api_url:
+            raise RuntimeError("No onboarding API URL configured for the selected organisation.")
+        
+        endpoint = f"{api_url.rstrip('/')}/onboarding/contract-signed/{request_id}/"
+        params = {"status_token": status_token}
+        
+        self.append_log("contract_signed", f"Notifying contract signed to {endpoint}")
+        
+        resp = self.session.post(endpoint, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    def poll_for_contracts(self, request_id: str, expected_contract_did: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Poll DMS for incoming contracts.
+
+        When expected_contract_did is set (from the org manager API after the orchestrator
+        creates a contract), we only treat the contract as "received" when the DMS list
+        contains a contract with that contract_did, so we confirm receipt of the specific
+        contract the orchestrator created.
+
+        Args:
+            request_id: The onboarding request ID (for logging)
+            expected_contract_did: If set, only return a contract that matches this DID.
+
+        Returns:
+            Contract data if found (and matching expected_contract_did when provided), None otherwise
+        """
+        try:
+            from .dms_utils import run_dms_command_with_passphrase
+            
+            # Execute: nunet actor cmd /dms/tokenomics/contract/list
+            result = run_dms_command_with_passphrase(
+                ["nunet", "actor", "cmd", "-c", "dms", "/dms/tokenomics/contract/list"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15
+            )
+            
+            if result.returncode != 0:
+                logger.debug("Contract list command failed: %s", result.stderr or result.stdout)
+                return None
+
+            # Use full stdout for parsing (DMS command logging may truncate for logs only).
+            output = (result.stdout or "").strip()
+            if not output:
+                return None
+            
+            try:
+                data = json.loads(output)
+                # DMS returns {"contracts": [...]}; fallback to raw array
+                if isinstance(data, dict) and "contracts" in data:
+                    contracts = data["contracts"] if isinstance(data["contracts"], list) else []
+                elif isinstance(data, list):
+                    contracts = data
+                else:
+                    contracts = [data] if data else []
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse contract list response: %s", output[:200] if output else "")
+                return None
+
+            def _contract_did(c: dict) -> str:
+                return (c.get("contract_did") or c.get("did") or "").strip()
+
+            expected_did = (expected_contract_did or "").strip()
+
+            # If we have an expected contract_did from the API (orchestrator-created), look for that specific contract
+            if expected_did:
+                for contract in contracts:
+                    if not isinstance(contract, dict):
+                        continue
+                    if _contract_did(contract) != expected_did:
+                        continue
+                    # Found the contract the orchestrator created
+                    seen_contracts = set(self.state.get("seen_contract_dids", []))
+                    if expected_did not in seen_contracts:
+                        self.update_state(seen_contract_dids=list(seen_contracts | {expected_did}))
+                    self.append_log("contract_received", f"Contract received: {expected_did}")
+                    return contract
+                # Expected contract not in DMS list yet (or DID mismatch)
+                list_dids = [_contract_did(c) for c in contracts if isinstance(c, dict)]
+                logger.info(
+                    "Expected contract_did %s not in DMS list (%d contracts: %s)",
+                    expected_did[:50] + "..." if len(expected_did) > 50 else expected_did,
+                    len(contracts),
+                    list_dids[:5] if len(list_dids) > 5 else list_dids,
+                )
+                return None
+
+            # No expected_contract_did: treat any new (unseen) contract as received (legacy behavior)
+            seen_contracts = set(self.state.get("seen_contract_dids", []))
+            new_contracts = [
+                contract for contract in contracts
+                if isinstance(contract, dict) and _contract_did(contract) and _contract_did(contract) not in seen_contracts
+            ]
+
+            if new_contracts:
+                all_dids = seen_contracts | {_contract_did(c) for c in new_contracts}
+                self.update_state(seen_contract_dids=list(all_dids))
+                contract = new_contracts[0]
+                self.append_log("contract_received", f"Contract detected: {_contract_did(contract) or 'unknown'}")
+                return contract
+
+            return None
+            
+        except Exception as exc:
+            logger.error("Contract polling failed: %s", exc)
+            self.append_log("contract_received", f"Contract polling error: {exc}")
+            return None
+
+    def sign_contract(self, contract_did: str) -> bool:
+        """
+        Sign a contract using nunet CLI.
+        
+        Args:
+            contract_did: The DID of the contract to sign
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.append_log("contract_signed", f"Signing contract: {contract_did}")
+            
+            # Execute: nunet actor cmd /dms/tokenomics/contract/approve_local --contract-did <did>
+            result = run_dms_command_with_passphrase(
+                [
+                    "nunet", "actor", "cmd", "-c", "dms",
+                    "/dms/tokenomics/contract/approve_local",
+                    "--contract-did", contract_did
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = result.stderr or result.stdout or "Unknown error"
+                logger.error("Contract signing failed: %s", error_msg)
+                self.append_log("contract_signed", f"Contract signing failed: {error_msg}")
+                return False
+            
+            output = (result.stdout or "").strip()
+            self.append_log("contract_signed", f"Contract signed successfully. Output: {output}")
+            return True
+            
+        except Exception as exc:
+            logger.error("Failed to sign contract: %s", exc)
+            self.append_log("contract_signed", f"Contract signing error: {exc}")
+            return False
+
+    def apply_contract_capabilities(self, contract_caps: str) -> bool:
+        """
+        Apply contract capabilities (require token from known orgs + provide token from org manager) and restart DMS service.
+        
+        Args:
+            contract_caps: The provide capability token for contract interaction from Organization Manager
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.append_log("contract_caps_applied", "Applying contract capabilities...")
+            
+            # Get organization DID and role
+            org_data = self.state.get("org_data") or {}
+            org_did = org_data.get("did") if isinstance(org_data, dict) else None
+            if not org_did:
+                raise RuntimeError("No organization DID available")
+            
+            role_id = self.get_selected_role_id()
+            
+            # Generate and apply require token from known orgs file (contract caps only)
+            require_success = False
+            try:
+                self.append_log("contract_caps_applied", "Generating contract require token from known orgs file...")
+                require_success = self.generate_and_apply_require_token(
+                    org_did, 
+                    role_id=role_id,
+                    template_key="contract_require_template",
+                    log_step="contract_caps_applied"
+                )
+                if require_success:
+                    self.append_log("contract_caps_applied", "Contract require token generated and anchored successfully.")
+            except Exception as exc:
+                logger.warning("Contract require token generation failed: %s", exc)
+                self.append_log("contract_caps_applied", f"Contract require token generation failed: {exc}")
+                # Continue anyway - provide token might be sufficient
+            
+            # Anchor the provide token (from Organization Manager)
+            self.append_log("contract_caps_applied", "Anchoring contract provide token...")
+            self._apply_provide_token(contract_caps)
+            self.append_log("contract_caps_applied", "Contract provide token anchored successfully.")
+            
+            # Copy tokens to DMS user
+            self.copy_capability_tokens_to_dms_user()
+            
+            # Restart DMS service
+            self.append_log("contract_caps_applied", "Restarting nunet DMS service...")
+            restart_success = self.restart_dms_service()
+            
+            if restart_success:
+                self.append_log("contract_caps_applied", "DMS service restarted successfully.")
+                return True
+            else:
+                self.append_log("contract_caps_applied", "DMS service restart failed.")
+                return False
+                
+        except Exception as exc:
+            logger.error("Failed to apply contract capabilities: %s", exc)
+            self.append_log("contract_caps_applied", f"Failed to apply contract capabilities: {exc}")
+            return False
+
+    def apply_deployment_capabilities(
+        self,
+        deployment_caps: str,
+        certificates: Optional[Dict[str, str]] = None,
+        api_key: Optional[str] = None
+    ) -> bool:
+        """
+        Apply deployment capabilities, certificates, and API key.
+        
+        Args:
+            deployment_caps: The provide capability token from Organization Manager
+            certificates: Dictionary with client_crt, client_key, infra_bundle_crt
+            api_key: Elasticsearch API key
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.append_log("deployment_caps_applied", "Applying deployment capabilities...")
+            
+            # Get organization DID
+            org_data = self.state.get("org_data") or {}
+            org_did = org_data.get("did") if isinstance(org_data, dict) else None
+            if not org_did:
+                raise RuntimeError("No organization DID available")
+            
+            role_id = self.get_selected_role_id()
+            
+            # Generate and apply require token (from known orgs - deployment caps only)
+            require_success = False
+            try:
+                require_success = self.generate_and_apply_require_token(
+                    org_did, 
+                    role_id=role_id,
+                    template_key="deployment_require_template",
+                    log_step="deployment_caps_applied"
+                )
+                if require_success:
+                    self.append_log("deployment_caps_applied", "Deployment require token generated and anchored.")
+            except Exception as exc:
+                logger.warning("Deployment require token generation failed: %s", exc)
+                self.append_log("deployment_caps_applied", f"Deployment require token generation failed: {exc}")
+            
+            # Apply provide token (from Organization Manager)
+            if deployment_caps:
+                self.append_log("deployment_caps_applied", "Anchoring deployment provide token...")
+                self._apply_provide_token(deployment_caps)
+            
+            # Write certificates
+            if certificates:
+                self.append_log("deployment_caps_applied", "Writing mTLS certificates...")
+                self._write_certificates(certificates)
+            
+            # Configure observability (API key)
+            if api_key:
+                payload_with_api_key = {"elasticsearch_api_key": api_key, "elastic_api_key": api_key}
+                self.append_log("deployment_caps_applied", "Configuring observability (Elastic API key)...")
+                self._configure_observability(payload_with_api_key)
+            
+            # Copy capability tokens to DMS user
+            self.copy_capability_tokens_to_dms_user()
+            
+            # Restart DMS service
+            self.append_log("deployment_caps_applied", "Restarting nunet DMS service...")
+            restart_success = self.restart_dms_service()
+            
+            if restart_success:
+                self.append_log("deployment_caps_applied", "Deployment capabilities applied and DMS restarted successfully.")
+                return True
+            else:
+                self.append_log("deployment_caps_applied", "DMS service restart failed.")
+                return False
+                
+        except Exception as exc:
+            logger.error("Failed to apply deployment capabilities: %s", exc)
+            self.append_log("deployment_caps_applied", f"Failed to apply deployment capabilities: {exc}")
+            return False
+
+    # ------------------------------------------------------------------ #
     # Capability and credential handling
     # ------------------------------------------------------------------ #
 
@@ -603,28 +983,44 @@ class OnboardingManager:
         *,
         expiry_days: int = 30,
         role_id: Optional[str] = None,
+        template_key: str = "require_template",
+        log_step: str = "capabilities_applied",
     ) -> bool:
-        """Generate a require token for *org_did* using the active role profile."""
+        """Generate a require token for *org_did* using the active role profile.
+        
+        Args:
+            org_did: The organization DID to generate the token for
+            expiry_days: Number of days until token expires (default 30)
+            role_id: Role ID to use (defaults to selected role)
+            template_key: Which template to use from the role profile. Options:
+                - "require_template" (legacy, includes all caps)
+                - "contract_require_template" (contract caps only)
+                - "deployment_require_template" (deployment caps only)
+            log_step: Step name to use for logging (default "capabilities_applied")
+        """
         role_id = role_id or self.get_selected_role_id()
         profiles = self.get_role_profiles()
         profile = profiles.get(role_id) if role_id else {}
         require_template: Dict[str, Any] = {}
         if isinstance(profile, dict):
-            require_template = profile.get("require_template") or {}
+            # Try the requested template_key first, fall back to require_template for backwards compatibility
+            require_template = profile.get(template_key) or profile.get("require_template") or {}
 
         topics = self._extract_topics(require_template)
         if role_id and (not require_template or not topics):
             reason = "template missing" if not require_template else "topics missing"
             logger.info(
-                "Role profile for org=%s role=%s has %s; reloading from known organizations.",
+                "Role profile for org=%s role=%s template_key=%s has %s; reloading from known organizations.",
                 org_did,
                 role_id,
+                template_key,
                 reason,
             )
             refreshed_profile = self._load_role_profile_from_known(org_did, role_id)
             if refreshed_profile:
                 profile = refreshed_profile
-                require_template = profile.get("require_template") or {}
+                # Try the requested template_key first, fall back to require_template
+                require_template = profile.get(template_key) or profile.get("require_template") or {}
                 topics = self._extract_topics(require_template)
                 if isinstance(profiles, dict):
                     profiles[role_id] = profile
@@ -639,7 +1035,7 @@ class OnboardingManager:
         if not caps:
             label = (profile or {}).get("label") if isinstance(profile, dict) else None
             role_label = label or role_id or "active role"
-            raise RuntimeError(f"Role '{role_label}' is missing require_template.caps; cannot generate require token.")
+            raise RuntimeError(f"Role '{role_label}' is missing {template_key}.caps; cannot generate require token.")
 
         source_path = self._active_known_orgs_path()
         logger.info(
@@ -649,35 +1045,37 @@ class OnboardingManager:
             source_path or "<not found>",
         )
         logger.debug(
-            "Role require_template for org=%s role=%s -> %s",
+            "Role %s for org=%s role=%s -> %s",
+            template_key,
             org_did,
             role_id or "<default>",
             require_template,
         )
         topic_log_target = topics if topics else ["<none>"]
         logger.info(
-            "Preparing require token org=%s role=%s caps=%s topics=%s",
+            "Preparing require token org=%s role=%s template=%s caps=%s topics=%s",
             org_did,
             role_id or "<default>",
+            template_key,
             caps,
             topic_log_target,
         )
         if topics:
             self.append_log(
-                "capabilities_applied",
+                log_step,
                 f"Require token topics for role '{role_id or 'default'}': {', '.join(topics)}",
             )
         else:
             self.append_log(
-                "capabilities_applied",
+                log_step,
                 f"No topics configured for role '{role_id or 'default'}'; continuing without --topic flags.",
             )
 
         expiry = (datetime.utcnow() + timedelta(days=expiry_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         if role_id:
-            self.append_log("capabilities_applied", f"Generating require token for role '{role_id}' (expires {expiry})")
+            self.append_log(log_step, f"Generating require token for role '{role_id}' (expires {expiry})")
         else:
-            self.append_log("capabilities_applied", f"Generating require token with default profile (expires {expiry})")
+            self.append_log(log_step, f"Generating require token with default profile (expires {expiry})")
 
         cmd = [
             "nunet",
@@ -703,7 +1101,7 @@ class OnboardingManager:
         if not token:
             raise RuntimeError("Require token generation produced no output.")
 
-        self.append_log("capabilities_applied", "Anchoring require token...")
+        self.append_log(log_step, "Anchoring require token...")
         run_dms_command_with_passphrase(
             ["nunet", "cap", "anchor", "-c", context, "--require", token],
             capture_output=True,

@@ -1,8 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, RefreshCw, Eye } from "lucide-react";
 import { organizationsApi } from "../../api/organizations";
+import { contractsApi, extractHostDid, type ContractMetadata } from "../../api/contracts";
 import { Button } from "../ui/button";
+import { ContractDetailsDrawer } from "../contracts/ContractDetailsDrawer";
 import {
   Dialog,
   DialogContent,
@@ -142,11 +144,15 @@ export function OnboardingFlow({
   const displayStep = processedOk ? "complete" : currentStep;
   const isApproved = apiStatus === "ready" || apiStatus === "approved";
   const isRejected = displayStep === "rejected";
+  const isContractRequiredMismatch =
+    status?.api_status === "contract_required_mismatch" ||
+    status?.raw?.contract_required_mismatch === true;
   const isComplete = displayStep === "complete";
 
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [forceOrgSelect, setForceOrgSelect] = useState(false);
+  const [contractDetailsOpen, setContractDetailsOpen] = useState(false);
   const [renewingOrgDid, setRenewingOrgDid] = useState<string | null>(null);
   const [renewalModal, setRenewalModal] = useState<{
     open: boolean;
@@ -197,11 +203,22 @@ export function OnboardingFlow({
   const shouldPoll =
     currentStep === "join_data_sent" ||
     currentStep === "pending_authorization" ||
+    currentStep === "contract_caps_applied" ||
+    currentStep === "contract_created" ||
+    currentStep === "contract_received" ||
+    currentStep === "contract_signing" ||
+    currentStep === "contract_signed" ||
+    currentStep === "deployment_caps_applied" ||
     apiStatus === "email_sent" ||
     apiStatus === "email_verified" ||
     apiStatus === "pending" ||
     apiStatus === "processing" ||
-    // apiStatus === null ||
+    apiStatus === "contract_caps_ready" ||
+    apiStatus === "contract_caps_confirmed" ||
+    apiStatus === "contract_created" ||
+    apiStatus === "contract_received" ||
+    apiStatus === "contract_signed" ||
+    apiStatus === "deployment_caps_ready" ||
     apiStatus === "";
 
   useQuery({
@@ -229,6 +246,63 @@ export function OnboardingFlow({
   const joinMutation = useMutation({
     mutationFn: (data: any) => organizationsApi.postJoinSubmit(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["org-status"] }),
+  });
+
+  const signContractMutation = useMutation({
+    mutationFn: (contractDid: string) => organizationsApi.signContract(contractDid),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["org-status"] });
+      setContractDetailsOpen(false);
+      toast.success("Contract signed. Onboarding will continue automatically.");
+    },
+    onError: (error: Error) => {
+      toast.error(error?.message ?? "Failed to sign contract. Please try again.");
+    },
+  });
+
+  const pendingContractDid = status?.raw?.contract_did ?? null;
+  const incomingContractsQuery = useQuery({
+    queryKey: ["contracts", "incoming", pendingContractDid],
+    queryFn: ({ signal }) =>
+      contractsApi.getContracts("incoming", signal, pendingContractDid ?? undefined),
+    enabled: Boolean(displayStep === "contract_received" && pendingContractDid),
+  });
+  // Only use the contract that matches the onboarding contract_did (incoming list can have several)
+  const wantDid = pendingContractDid?.trim() ?? "";
+  const matchingContractFromList = useMemo(() => {
+    const contracts = incomingContractsQuery.data?.contracts ?? [];
+    if (!wantDid) return null;
+    return (
+      contracts.find((c) => {
+        const did = (c as ContractMetadata).contract_did ?? (c as { did?: string }).did;
+        return typeof did === "string" && did.trim() === wantDid;
+      }) ?? null
+    );
+  }, [incomingContractsQuery.data?.contracts, wantDid]);
+  const contractDataFromState = status?.raw?.contract_data as Record<string, unknown> | null | undefined;
+  const contractDataMatchesDid = useMemo(() => {
+    if (!contractDataFromState || !wantDid) return false;
+    const did = contractDataFromState.contract_did ?? contractDataFromState.did;
+    return typeof did === "string" && String(did).trim() === wantDid;
+  }, [contractDataFromState, wantDid]);
+  const matchingContract = useMemo(() => {
+    if (matchingContractFromList) return matchingContractFromList;
+    if (contractDataMatchesDid && contractDataFromState) return contractDataFromState;
+    return null;
+  }, [matchingContractFromList, contractDataMatchesDid, contractDataFromState]);
+  // Contract host DID (solution enabler) from the matching contract only; same as Contracts page
+  const pendingHostDid = useMemo(
+    () => (matchingContract ? extractHostDid(matchingContract as ContractMetadata) : null),
+    [matchingContract]
+  );
+  const contractStateQuery = useQuery({
+    queryKey: ["contracts", pendingContractDid, "state", pendingHostDid],
+    queryFn: ({ signal }) =>
+      contractsApi.getContractState(pendingContractDid!, {
+        hostDid: pendingHostDid ?? undefined,
+        signal,
+      }),
+    enabled: Boolean(contractDetailsOpen && pendingContractDid && pendingHostDid),
   });
 
   // --- UI flags ---
@@ -356,10 +430,14 @@ export function OnboardingFlow({
       )}
       {!forceOrgSelect &&
         displayStep !== "init" &&
-        displayStep !== "select_org" && (
+        displayStep !== "select_org" &&
+        !isContractRequiredMismatch && (
         <>
           <div className="text-muted-foreground text-sm mb-2">
             Joining {status?.raw?.org_data?.name ?? "organization"}
+            {activeOrgDid && knownOrgs?.[activeOrgDid]?.contract_required === false && (
+              <span className="ml-2 text-muted-foreground/80">(This organization does not require a contract)</span>
+            )}
           </div>
           <Card>
             <CardContent className="py-4">
@@ -414,8 +492,69 @@ export function OnboardingFlow({
         />
       )}
 
-      {!showSelect && !showForm && !showComplete && !isRejected && (
-        <Card data-testid="onboarding-next-steps">
+      {!showSelect && !showForm && !showComplete && !isRejected && displayStep === "contract_received" && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle>Next Steps</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="text-muted-foreground">
+                The contract has been received. Review the details and approve the contract to continue onboarding.
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setContractDetailsOpen(true)}
+                disabled={!pendingContractDid}
+                className="gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                Details
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pendingContractDid) signContractMutation.mutate(pendingContractDid);
+                }}
+                disabled={!pendingContractDid || signContractMutation.isPending}
+                className="gap-2"
+              >
+                {signContractMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Approving...
+                  </>
+                ) : (
+                  "Approve"
+                )}
+              </Button>
+            </CardFooter>
+          </Card>
+          <ContractDetailsDrawer
+            open={contractDetailsOpen}
+            onOpenChange={(open) => setContractDetailsOpen(open)}
+            baseContract={
+              matchingContract ??
+              contractStateQuery.data?.contract ??
+              (pendingContractDid ? { contract_did: pendingContractDid, current_state: "DRAFT" } : null)
+            }
+            state={contractStateQuery.data ?? null}
+            isLoading={contractStateQuery.isFetching && Boolean(pendingContractDid)}
+            error={
+              contractStateQuery.error
+                ? contractStateQuery.error instanceof Error
+                  ? contractStateQuery.error.message
+                  : String(contractStateQuery.error)
+                : null
+            }
+            onRefresh={pendingContractDid ? () => contractStateQuery.refetch() : undefined}
+          />
+        </>
+      )}
+
+      {!showSelect && !showForm && !showComplete && !isRejected && displayStep !== "contract_received" && (
+        <Card>
           <CardHeader>
             <CardTitle>Next Steps</CardTitle>
           </CardHeader>
@@ -452,7 +591,35 @@ export function OnboardingFlow({
         </Card>
       )}
 
-      {!forceOrgSelect && isRejected && (
+      {!forceOrgSelect && isContractRequiredMismatch && (
+        <Card className="border-amber-300">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+              <CardTitle className="text-base md:text-lg">
+                Request Pending Manual Review
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div className="text-amber-700 dark:text-amber-400 break-words whitespace-pre-wrap">
+              {status?.raw?.status_message || status?.ui_message || "Contract required setting mismatch between organization and appliance. An administrator will resolve this; no action needed from you."}
+            </div>
+          </CardContent>
+          <CardFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setIsCancelDialogOpen(true)}
+              disabled={isCancelling}
+            >
+              Cancel
+            </Button>
+          </CardFooter>
+        </Card>
+      )}
+
+      {!forceOrgSelect && isRejected && !isContractRequiredMismatch && (
         <Card className="border-red-300">
           <CardHeader>
             <div className="flex items-center gap-2">

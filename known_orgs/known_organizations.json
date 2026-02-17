@@ -2,6 +2,7 @@
   "did:key:zzCHUyXYM1LteZh6AXso45QPCUGFePCe6PTmamewb4Rb9CZKdX": {
     "name": "NuNet SPO's",
     "onboarding_api_url": "https://spo.parallelvector.com/api",
+    "contract_required": true,
     "join_fields": [
       {
         "name": "email",
@@ -67,6 +68,7 @@
   "did:key:z6MkoZmD4Q48D9C1V9RMwFvz3Y1oHX6Unsyk1drvYZPfU8Hh": {
     "name": "Auki Testnet ",
     "onboarding_api_url": "https://auki.nunet.network/api",
+    "contract_required": true,
     "tokenomics": {
       "enabled": true,
       "chain": "ethereum"
@@ -245,6 +247,7 @@
   "did:key:z6Mksf2cqTBTHE7nuKZiUEUn4Gnhdphmnn3GZXf12kqoz8Qj": {
     "name": "NuNet AI Workshop ",
     "onboarding_api_url": "https://aiworkshop.nunet.network/api",
+    "contract_required": true,
     "tokenomics": {
       "enabled": false,
       "chain": "ethereum"
@@ -314,6 +317,7 @@
   "did:key:z6MkmrJZqjwUQ5yy1Q8FMs9FXcX7kAsYNMr8wUWBPR8A4BRw": {
     "name": "Gaimin Testnet",
     "onboarding_api_url": "https://gaimin.nunet.network/api",
+    "contract_required": true,
     "tokenomics": {
       "enabled": false,
       "chain": "ethereum"
@@ -383,6 +387,7 @@
   "did:key:z6MknaPMu6ju2PNYWQ3wnshnLA8erLb5sauVgTtY7Ni18VyR": {
     "name": "NuTestNet",
     "onboarding_api_url": "https://onboarding.nunet.network/api",
+    "contract_required": true,
     "join_fields": [
       {
         "name": "email",

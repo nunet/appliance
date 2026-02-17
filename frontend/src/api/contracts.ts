@@ -154,6 +154,23 @@ export interface ContractStateResponse {
   command?: string | null;
 }
 
+/**
+ * Extract contract host DID from contract metadata (solution_enabler or participants).
+ * Shared by Contracts page and onboarding so display/state logic stays in sync.
+ */
+export function extractHostDid(contract: ContractMetadata | null | undefined): string | null {
+  if (!contract) return null;
+  const candidates = [
+    contract.solution_enabler_did?.uri,
+    contract.participants?.provider?.uri,
+    contract.participants?.requestor?.uri,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) return candidate.trim();
+  }
+  return null;
+}
+
 export interface ContractCreatePayload {
   contract: Record<string, unknown>;
   template_id?: string | null;
@@ -210,9 +227,15 @@ export interface ContractTemplateListResponse {
 }
 
 export const contractsApi = {
-  async getContracts(view: ContractListView = "all", signal?: AbortSignal): Promise<ContractListResponse> {
+  async getContracts(
+    view: ContractListView = "all",
+    signal?: AbortSignal,
+    contractDid?: string | null
+  ): Promise<ContractListResponse> {
+    const params: Record<string, string> = { view };
+    if (contractDid) params.contract_did = contractDid;
     const { data } = await api.get<ContractListResponse>("/api/contracts/", {
-      params: { view },
+      params,
       signal,
     });
     return data;

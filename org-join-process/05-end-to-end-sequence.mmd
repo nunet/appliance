@@ -1,0 +1,91 @@
+sequenceDiagram
+    participant User
+    participant Appliance as Appliance Frontend+Backend
+    participant OrgManager as Organization Manager
+    participant UserEmail as User Email
+    participant Email as Email Service
+    participant Worker as Onboarding Worker
+    participant DB as Database
+    participant NuNet as NuNet CLI
+    participant OpenBao as OpenBao PKI
+    participant Elastic as Elasticsearch
+
+    User->>Appliance: Select organization
+    Appliance->>Appliance: Load known organizations
+    Appliance->>Appliance: Update state: collect_join_data
+    
+    User->>Appliance: Fill and submit form
+    Appliance->>Appliance: Validate form
+    Appliance->>Appliance: Capture DMS resources
+    Appliance->>OrgManager: POST /onboarding/submit/
+    OrgManager->>DB: Create OnboardingRequest
+    OrgManager->>DB: Store hardware resources
+    OrgManager->>DB: Enrich with GeoIP data
+    OrgManager->>Email: Send verification email
+    Email-->>UserEmail: Email sent
+    Email-->>OrgManager: Email sent
+    OrgManager->>DB: Update status: email_sent
+    OrgManager-->>Appliance: {id, status_token, status: "email_sent"}
+    Appliance->>Appliance: Update state: join_data_sent
+    
+    Note over Appliance: Appliance polls for status
+    Appliance->>OrgManager: GET /status/id/ with status_token
+    OrgManager->>DB: Retrieve request
+    OrgManager-->>Appliance: id, status_token, status email_sent
+    
+    Note over UserEmail: User clicks verification link
+    UserEmail->>OrgManager: GET /verify-email/id/token/
+    OrgManager->>DB: Validate token
+    OrgManager->>DB: Update status: email_verified
+    OrgManager-->>UserEmail: Email verified
+    
+    Note over Appliance: Appliance polls for status
+    Appliance->>OrgManager: GET /status/id/ with status_token
+    OrgManager->>DB: Retrieve request
+    OrgManager-->>Appliance: id, status_token, status email_verified
+    
+    loop Worker polling loop
+        Worker->>OrgManager: POST /worker/heartbeat/
+        OrgManager->>DB: Update worker heartbeat
+        Worker->>OrgManager: GET /worker/available-requests/
+        OrgManager->>DB: Check round-robin this worker turn
+        alt Worker's turn
+            OrgManager-->>Worker: request available
+            Worker->>OrgManager: PUT /worker/claim-request/id/
+            OrgManager->>DB: Set claimed_by, status: processing
+            
+            Worker->>NuNet: nunet cap delegate
+            NuNet-->>Worker: Capability token
+            
+            Worker->>OpenBao: Issue client certificate
+            OpenBao-->>Worker: client.crt, client.key, CA bundle
+            
+            Worker->>Elastic: Create API key
+            Elastic-->>Worker: API key
+            
+            Worker->>OrgManager: PUT /worker/complete-request/id/
+            OrgManager->>DB: Store results, status: ready
+        else Not worker's turn
+            OrgManager-->>Worker: no request
+        end
+    end
+    
+    loop Appliance polling loop
+        Appliance->>OrgManager: GET /status/id/ with status_token
+        OrgManager->>DB: Retrieve request
+        OrgManager-->>Appliance: status capability_token and other data
+        alt Status: ready
+            Appliance->>Appliance: Process payload
+            Note over Appliance: Apply tokens, certs, config
+            Appliance->>NuNet: nunet cap grant (require token)
+            Appliance->>NuNet: nunet cap anchor (provide token)
+            Appliance->>Appliance: Configure observability
+            Appliance->>Appliance: Write mTLS certificates
+            Appliance->>Appliance: Copy tokens to DMS user
+            Appliance->>Appliance: Onboard compute
+            Appliance->>Appliance: Update state: complete
+        end
+    end
+    
+    User->>Appliance: Restart DMS
+    Appliance->>Appliance: systemctl restart nunetdms
