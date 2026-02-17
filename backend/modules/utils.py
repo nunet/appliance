@@ -7,13 +7,23 @@ removed along with the legacy UI.
 """
 
 import json
+import re
 import socket
 import subprocess
+import tempfile
 import time
+from datetime import datetime
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from .path_constants import APPLIANCE_PUBLIC_IP_CACHE, GITLAB_PACKAGES_URL, GITLAB_DMS_PACKAGES_URL
+from .path_constants import (
+    APPLIANCE_PUBLIC_IP_CACHE,
+    APPLIANCE_UPDATE_CACHE,
+    GITLAB_PACKAGES_URL,
+    GITLAB_DMS_PACKAGES_URL,
+)
 
 try:
     from backend import __version__
@@ -68,9 +78,27 @@ def get_public_ip(cache_ttl: int = 3600) -> str:
 
 def _resolve_appliance_version() -> str:
     """
-    Best-effort loader for the backend package version that tolerates various
-    import contexts (e.g., running from backend/, repo root, or an installed wheel).
+    Best-effort loader for the appliance version that tolerates various
+    import contexts (installed package, repo root, or PEX builds).
     """
+    # Prefer the installed Debian package version when available.
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Version}", "nunet-appliance-web"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            raw_version = (result.stdout or "").strip()
+            if raw_version:
+                # Strip Debian epoch (e.g., "1:0.6.4") for semver comparisons.
+                if ":" in raw_version:
+                    raw_version = raw_version.split(":", 1)[1].strip()
+                return raw_version
+    except Exception:
+        pass
+
     try:
         from backend import __version__ as version  # type: ignore
 
@@ -93,12 +121,96 @@ def _resolve_appliance_version() -> str:
     return "Unknown"
 
 
-APPLIANCE_VERSION = _resolve_appliance_version()
-
-
 def get_appliance_version() -> str:
     """Read the appliance version from the package metadata."""
-    return APPLIANCE_VERSION
+    return _resolve_appliance_version()
+
+
+def _parse_version_parts(value: str) -> Optional[list[int]]:
+    match = re.match(r"\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", value)
+    if not match:
+        return None
+    return [
+        int(match.group(1) or 0),
+        int(match.group(2) or 0),
+        int(match.group(3) or 0),
+    ]
+
+
+def _normalize_version(value: str) -> str:
+    return value.strip().lower().lstrip("v")
+
+
+def _read_update_cache() -> Dict[str, Any]:
+    if not APPLIANCE_UPDATE_CACHE.exists():
+        return {}
+    try:
+        return json.loads(APPLIANCE_UPDATE_CACHE.read_text())
+    except Exception:
+        return {}
+
+
+def _write_update_cache(cache: Dict[str, Any]) -> None:
+    APPLIANCE_UPDATE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    APPLIANCE_UPDATE_CACHE.write_text(json.dumps(cache))
+
+
+def _deb_version_from_url(url: str, cache_key: str) -> str:
+    """
+    Fetch a .deb version from a URL, caching by ETag/Last-Modified to avoid
+    repeated large downloads.
+    """
+    try:
+        req = Request(url, method="HEAD")
+        with urlopen(req, timeout=5) as response:
+            etag = response.headers.get("ETag") or ""
+            last_modified = response.headers.get("Last-Modified") or ""
+            content_length = response.headers.get("Content-Length") or ""
+    except URLError:
+        return ""
+
+    cache = _read_update_cache()
+    cache_entry = cache.get(cache_key, {})
+    cache_etag = cache_entry.get("etag") or ""
+    cache_last_modified = cache_entry.get("last_modified") or ""
+    cache_length = cache_entry.get("content_length") or ""
+    cached_version = cache_entry.get("version") or ""
+
+    if cached_version and etag and etag == cache_etag:
+        return cached_version
+    if cached_version and not etag and last_modified and last_modified == cache_last_modified:
+        return cached_version
+    if cached_version and not etag and not last_modified and content_length == cache_length:
+        return cached_version
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".deb", delete=True) as tmp_file:
+            with urlopen(url, timeout=15) as response:
+                tmp_file.write(response.read())
+                tmp_file.flush()
+            result = subprocess.run(
+                ["dpkg-deb", "-f", tmp_file.name, "Version"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        if result.returncode != 0:
+            return ""
+        raw_version = (result.stdout or "").strip()
+        if ":" in raw_version:
+            raw_version = raw_version.split(":", 1)[1].strip()
+    except Exception:
+        return ""
+
+    cache[cache_key] = {
+        "version": raw_version,
+        "etag": etag,
+        "last_modified": last_modified,
+        "content_length": content_length,
+        "checked_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    _write_update_cache(cache)
+    return raw_version
 
 
 def get_ssh_status() -> str:
@@ -190,10 +302,22 @@ def trigger_dms_update() -> Dict[str, Any]:
 def fetch_latest_appliance() -> str:
     """Fetch the latest appliance version from the Gitlab package registry."""
     try:
-        import urllib.request
-        import json
+        arch = subprocess.run(
+            ["dpkg", "--print-architecture"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if arch:
+            deb_url = f"https://d.nunet.io/nunet-appliance-web-{arch}-latest.deb"
+            deb_version = _deb_version_from_url(deb_url, f"appliance:{arch}")
+            if deb_version:
+                return deb_version
+    except Exception:
+        pass
 
-        with urllib.request.urlopen(GITLAB_PACKAGES_URL, timeout=5) as response:
+    try:
+        with urlopen(GITLAB_PACKAGES_URL, timeout=5) as response:
             packages = json.loads(response.read().decode("utf-8"))
             if packages:
                 return packages[0]["version"].strip()
@@ -213,15 +337,13 @@ def get_updates() -> str:
     if latest_version == current_version:
         return json.dumps({"available": False, "current": current_version, "latest": latest_version})
 
-    try:
-        # Compare versions like "1.2.3" > "1.2.2"
-        latest_parts = [int(p) for p in latest_version.split(".")]
-        current_parts = [int(p) for p in current_version.split(".")]
+    latest_parts = _parse_version_parts(latest_version)
+    current_parts = _parse_version_parts(current_version)
+    if latest_parts and current_parts:
         available = latest_parts > current_parts
-    except (ValueError, IndexError):
+    else:
         # Fallback for non-numeric versions (e.g. "Unknown", or "1.2.3-beta")
-        # We already checked for equality, so if they differ, we'll suggest an update.
-        available = True
+        available = _normalize_version(latest_version) != _normalize_version(current_version)
 
     return json.dumps({
         "available": available,
@@ -233,9 +355,22 @@ def get_updates() -> str:
 def fetch_latest_dms_version() -> str:
     """Fetch the latest DMS version from the Gitlab package registry."""
     try:
-        import urllib.request
+        arch = subprocess.run(
+            ["dpkg", "--print-architecture"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if arch:
+            deb_url = f"https://d.nunet.io/nunet-dms-{arch}-latest.deb"
+            deb_version = _deb_version_from_url(deb_url, f"dms:{arch}")
+            if deb_version:
+                return deb_version
+    except Exception:
+        pass
 
-        with urllib.request.urlopen(GITLAB_DMS_PACKAGES_URL, timeout=5) as response:
+    try:
+        with urlopen(GITLAB_DMS_PACKAGES_URL, timeout=5) as response:
             packages = json.loads(response.read().decode("utf-8"))
             if packages:
                 return packages[0]["version"].strip()
@@ -266,15 +401,13 @@ def get_dms_updates() -> str:
             "latest": latest_version
         })
 
-    try:
-        # Compare versions like "1.2.3" > "1.2.2"
-        latest_parts = [int(p) for p in latest_version.split(".")]
-        current_parts = [int(p) for p in current_version.split(".")]
+    latest_parts = _parse_version_parts(latest_version)
+    current_parts = _parse_version_parts(current_version)
+    if latest_parts and current_parts:
         available = latest_parts > current_parts
-    except (ValueError, IndexError):
+    else:
         # Fallback for non-numeric versions (e.g. "Unknown", or "1.2.3-beta")
-        # We already checked for equality, so if they differ, we'll suggest an update.
-        available = latest_version != current_version
+        available = _normalize_version(latest_version) != _normalize_version(current_version)
 
     return json.dumps({
         "available": available,

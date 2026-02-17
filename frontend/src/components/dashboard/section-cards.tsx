@@ -286,13 +286,9 @@ export function SectionCards() {
         setIsPollingApplianceVersion(false);
         setTargetApplianceVersion(null);
       }, 600000);
-      toast.info("Appliance is being updated. Please refresh the page.", {
-        duration: Infinity,
+      toast.info("Appliance update started. This can take a few minutes.", {
+        duration: 10000,
         closeButton: true,
-        action: {
-          label: "Refresh",
-          onClick: () => window.location.reload(),
-        },
       });
     },
     onError: (error) => {
