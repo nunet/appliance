@@ -31,6 +31,26 @@ DEFAULT_ENSEMBLE_JSON_TEMPLATE = ENSEMBLE_TEMPLATE_ROOT / "default-ensemble.json
 DEFAULT_CONTRACT_JSON_TEMPLATE = ENSEMBLE_TEMPLATE_ROOT / "default-contract.json"
 CONTRACTS_DIR = Path("/home/ubuntu/contracts")
 
+# Filesystem root for UI file browser operations (override with FILESYSTEM_ROOT env)
+FILESYSTEM_ROOT = Path(os.environ.get("FILESYSTEM_ROOT", "/home/ubuntu"))
+
+# Filesystem allowlist roots for the UI file browser (override with FILESYSTEM_ALLOWED_ROOTS env).
+# Comma-separated absolute paths, for example:
+#   FILESYSTEM_ALLOWED_ROOTS=/home/ubuntu/nunet/appliance,/home/ubuntu/ensembles,/home/ubuntu/contracts
+_filesystem_allowed_roots_env = os.environ.get("FILESYSTEM_ALLOWED_ROOTS")
+if _filesystem_allowed_roots_env:
+    FILESYSTEM_ALLOWED_ROOTS = [
+        Path(value.strip()).expanduser()
+        for value in _filesystem_allowed_roots_env.split(",")
+        if value.strip()
+    ]
+else:
+    FILESYSTEM_ALLOWED_ROOTS = [
+        APPLIANCE_DIR,
+        ENSEMBLES_DIR,
+        CONTRACTS_DIR,
+    ]
+
 # DMS artefacts / defaults
 DMS_DEFAULT_CONTEXT = "dms"
 DMS_SERVICE_HOME = Path("/home/nunet")
@@ -72,6 +92,8 @@ __all__ = [
     "ONBOARDING_LOG_FILE",
     "KNOWN_ORGS_FILE",
     "CONTRACTS_DIR",
+    "FILESYSTEM_ROOT",
+    "FILESYSTEM_ALLOWED_ROOTS",
     "DMS_DEFAULT_CONTEXT",
     "DMS_SERVICE_HOME",
     "ROLE_METADATA_FILE",

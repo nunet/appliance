@@ -28,6 +28,16 @@ __all__ = [
     "CopyResponse",
     "DownloadExamplesRequest",
     "SimpleStatusResponse",
+    "FilesystemEntry",
+    "FilesystemListResponse",
+    "FilesystemUploadItem",
+    "FilesystemUploadResponse",
+    "FilesystemOperationItem",
+    "FilesystemOperationResponse",
+    "FilesystemCopyRequest",
+    "FilesystemMoveRequest",
+    "FilesystemDeleteRequest",
+    "FilesystemCreateFolderRequest",
     "TokenConfig",
     "CardanoTokenConfig",
     "PaymentsConfig",
@@ -203,6 +213,7 @@ class ResourcesInfo(BaseModel):
 
 class ContractState(str, Enum):
     UNKNOWN = "UNKNOWN"
+    DRAFT = "DRAFT"
     ACCEPTED = "ACCEPTED"
     APPROVED = "APPROVED"
     SIGNED = "SIGNED"
@@ -523,6 +534,77 @@ class DownloadExamplesRequest(BaseModel):
 class SimpleStatusResponse(BaseModel):
     status: str
     message: str
+
+
+class FilesystemEntry(BaseModel):
+    name: str
+    path: str
+    relative_path: str
+    is_dir: bool
+    is_file: bool
+    is_symlink: bool
+    size: Optional[int] = None
+    modified_at: Optional[str] = None
+
+
+class FilesystemListResponse(BaseModel):
+    root: str
+    path: str
+    relative_path: str
+    parent: Optional[str] = None
+    items: List[FilesystemEntry]
+
+
+class FilesystemUploadItem(BaseModel):
+    name: str
+    path: str
+    relative_path: str
+    size: Optional[int] = None
+    modified_at: Optional[str] = None
+    overwritten: bool = False
+
+
+class FilesystemUploadResponse(BaseModel):
+    status: str
+    message: str
+    items: List[FilesystemUploadItem]
+    errors: Optional[List[str]] = None
+
+
+class FilesystemOperationItem(BaseModel):
+    source: str
+    destination: Optional[str] = None
+    status: str
+    message: Optional[str] = None
+
+
+class FilesystemOperationResponse(BaseModel):
+    status: str
+    message: str
+    items: List[FilesystemOperationItem]
+
+
+class FilesystemCopyRequest(BaseModel):
+    sources: List[str]
+    destination: str
+    overwrite: bool = False
+
+
+class FilesystemMoveRequest(BaseModel):
+    sources: List[str]
+    destination: str
+    overwrite: bool = False
+
+
+class FilesystemDeleteRequest(BaseModel):
+    paths: List[str]
+    recursive: bool = False
+
+
+class FilesystemCreateFolderRequest(BaseModel):
+    path: str
+    parents: bool = True
+    exist_ok: bool = False
 
 
 class ConnectedPeer(BaseModel):

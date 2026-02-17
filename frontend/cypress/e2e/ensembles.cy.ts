@@ -64,9 +64,11 @@ function visitEnsembles() {
   cy.loginOrInitialize({ password: TEST_PASSWORD, backendBaseUrl });
   cy.ensureAppMode("simple");
   cy.logStep("Opening Ensembles page");
-  cy.visit("/#/ensembles");
+  cy.visit("/#/");
+  cy.get('[data-slot="sidebar"]').contains("span", /^Ensembles$/).click({ force: true });
+  cy.location("hash", { timeout: 20000 }).should("match", /^#\/ensembles\/?$/);
   cy.logStep("Waiting for ensembles list");
-  cy.get('[data-testid="ensembles-card"]', { timeout: 20000 }).should("exist");
+  cy.get('[data-testid="ensembles-card"]', { timeout: 20000 }).should("be.visible");
 }
 
 function openCreateDialog() {

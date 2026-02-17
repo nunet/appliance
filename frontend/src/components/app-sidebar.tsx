@@ -10,6 +10,7 @@ import {
   IconNetwork,
   IconBrowser,
   IconCoins,
+  IconFolder,
 } from "@tabler/icons-react";
 import {
   Sidebar,
@@ -71,6 +72,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       title: "Payments",
       url: "/payments",
       icon: IconCoins,
+    },
+    {
+      title: "File System",
+      url: "/appliance/filesystem",
+      icon: IconFolder,
     },
   ];
 

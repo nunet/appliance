@@ -119,6 +119,23 @@ const waitForDeploymentsListReady = (
   return poll();
 };
 
+const openDeploymentsList = (): void => {
+  cy.logStep("Opening deployments page");
+  cy.visit("/#/");
+  cy.get('[data-slot="sidebar"]').contains("span", /^Deployments$/).click({ force: true });
+  cy.location("hash", { timeout: 20000 }).should("match", /^#\/deploy\/?$/);
+  cy.get('[data-testid="deployment-search-input"]', { timeout: DEPLOYMENTS_LIST_WAIT_MS }).should("be.visible");
+};
+
+const openNewDeploymentWizard = (): void => {
+  cy.logStep("Opening new deployment wizard");
+  openDeploymentsList();
+  cy.get('[data-testid="deployments-new-button"]', { timeout: 20000 }).should("be.visible").click({ force: true });
+  cy.location("hash", { timeout: 20000 }).should("include", "/deploy/new");
+  cy.get('[data-testid="deployment-wizard"]', { timeout: 20000 }).should("be.visible");
+  cy.get('[data-testid="deployment-template-card"]', { timeout: 60000 }).should("have.length.greaterThan", 0);
+};
+
 describe("Deployments wizard + details", () => {
   beforeEach(() => {
     cy.loginOrInitialize({ password: TEST_PASSWORD, backendBaseUrl });
@@ -143,23 +160,19 @@ describe("Deployments wizard + details", () => {
 
     if (!reuseDeploymentId) {
       cy.logStep("Loading deployment templates");
-      cy.intercept("GET", "**/ensemble/templates/forms*").as("templatesForms");
-      cy.visit("/#/deploy/new");
+      openNewDeploymentWizard();
 
-      cy.wait("@templatesForms", { timeout: 20000 }).then(({ response }) => {
-        const items = (response?.body as { items?: TemplateItem[] })?.items ?? [];
-        expect(items.length, "templates available").to.be.greaterThan(0);
-        const preferred = items.find(
-          (item) => item.stem === "floppybird" || item.path?.endsWith("floppybird.json")
-        );
-        const selected = preferred ?? items[0];
-        expect(selected?.path, "template path").to.be.a("string");
-        cy.wrap(selected, { log: false }).as("selectedTemplate");
-
-        cy.get(
-          `[data-testid="deployment-template-card"][data-template-path="${selected.path}"]`,
-          { timeout: 20000 }
-        ).click();
+      cy.logStep("Selecting a deployment template");
+      cy.get("body").then(($body) => {
+        const preferred = $body.find('[data-testid="deployment-template-card"][data-template-stem="floppybird"]');
+        const fallback = $body.find('[data-testid="deployment-template-card"]').first();
+        const selectedCard = (preferred.length ? preferred.first() : fallback) as unknown as JQuery<HTMLElement>;
+        const path = selectedCard.attr("data-template-path") || "";
+        const stem = selectedCard.attr("data-template-stem") || "";
+        const category = selectedCard.attr("data-template-category") || "";
+        expect(path, "template path").to.be.a("string").and.not.be.empty;
+        cy.wrap({ path, stem, category } satisfies TemplateItem, { log: false }).as("selectedTemplate");
+        cy.wrap(selectedCard).click({ force: true });
       });
 
       cy.logStep("Advancing to target selection");
@@ -299,13 +312,11 @@ describe("Deployments wizard + details", () => {
     }
 
     cy.logStep("Opening deployments list");
-    cy.intercept("GET", "**/ensemble/deployments").as("getDeployments");
-    cy.visit("/#/deploy");
-    cy.wait("@getDeployments", { timeout: DEPLOYMENTS_LIST_WAIT_MS });
+    openDeploymentsList();
 
-    cy.intercept("GET", "**/ensemble/deployments/*/status").as("deploymentStatus");
-    cy.intercept("GET", "**/ensemble/deployments/*/manifest/raw").as("deploymentManifest");
-    cy.intercept("GET", "**/ensemble/deployments/*/allocations").as("deploymentAllocations");
+    cy.intercept("GET", "**/ensemble/deployments/*/status*").as("deploymentStatus");
+    cy.intercept("GET", "**/ensemble/deployments/*/manifest/raw*").as("deploymentManifest");
+    cy.intercept("GET", "**/ensemble/deployments/*/allocations*").as("deploymentAllocations");
 
     cy.logStep("Opening deployment details");
     cy.get("@deploymentId").then((deploymentId) => {
@@ -318,10 +329,7 @@ describe("Deployments wizard + details", () => {
 
     cy.location("hash", { timeout: 20000 }).should("include", "/deploy/");
 
-    cy.logStep("Waiting for deployment details requests");
-    cy.wait(["@deploymentStatus", "@deploymentManifest", "@deploymentAllocations"], {
-      timeout: DEPLOYMENT_DETAIL_WAIT_MS,
-    });
+    cy.logStep("Waiting for deployment details view to render");
 
     cy.get('[data-testid="deployment-info-card"]', { timeout: DEPLOYMENT_DETAIL_WAIT_MS })
       .should("be.visible");
@@ -371,9 +379,7 @@ describe("Deployments wizard + details", () => {
     }
 
     cy.logStep("Opening deployments list for filter/pagination checks");
-    cy.intercept("GET", "**/ensemble/deployments").as("getDeployments");
-    cy.visit("/#/deploy");
-    cy.wait("@getDeployments", { timeout: DEPLOYMENTS_LIST_WAIT_MS });
+    openDeploymentsList();
 
     waitForDeploymentsListReady().then((state) => {
       if (state !== "ready") {

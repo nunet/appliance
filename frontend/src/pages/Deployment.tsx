@@ -999,7 +999,7 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
             />
           ))}
 
-          <div className="mt-4">
+          <div className="mt-4" data-testid="deployment-logs-dms">
             {renderDmsControls()}
             <DmsLogSection
               title="DMS Logs"
