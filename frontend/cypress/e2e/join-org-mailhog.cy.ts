@@ -8,6 +8,12 @@ const DEFAULT_CAPABILITIES = [
   "/public",
 ];
 
+function openOrganizationsPage() {
+  cy.visit("/#/");
+  cy.get('[data-slot="sidebar"]').contains("span", /^Organizations$/).click({ force: true });
+  cy.location("hash", { timeout: 20000 }).should("match", /^#\/organizations\/?$/);
+}
+
 describe("Join organization with Mailhog confirmation", () => {
   const backendBaseUrl = (Cypress.env("BACKEND_BASE_URL") as string) || "http://localhost:8080";
   const orgDid = (Cypress.env("NUTEST_ORG_DID") as string) || DEFAULT_ORG_DID;
@@ -22,7 +28,7 @@ describe("Join organization with Mailhog confirmation", () => {
   it("validates join form fields and cancel flow", function () {
     cy.logStep("Opening organizations page for validation checks");
     cy.resetOnboarding(backendBaseUrl);
-    cy.visit("/#/organizations");
+    openOrganizationsPage();
 
     const cardSelector = `[data-testid="org-card"][data-org-did="${orgDid}"]`;
     const joinSelector = `[data-testid="org-join-button"][data-org-did="${orgDid}"]`;
@@ -73,7 +79,12 @@ describe("Join organization with Mailhog confirmation", () => {
     cy.get(joinSelector, { timeout: 120000 }).should("be.visible");
   });
 
-  it("submits a join request and follows the Mailhog verification link", () => {
+  it("submits a join request and follows the Mailhog verification link", function () {
+    // Mailhog requires credentials in most environments; skip unless explicitly configured.
+    if (!Cypress.env("MAILHOG_USERNAME")) {
+      this.skip();
+    }
+
     const mailbox = `join-${Date.now()}`;
     const inboxDomain = (Cypress.env("MAIL_INBOX_DOMAIN") as string) || "mailhog.nunet.network";
     const email = `${mailbox}@${inboxDomain}`;
@@ -86,7 +97,7 @@ describe("Join organization with Mailhog confirmation", () => {
 
     cy.resetOnboarding(backendBaseUrl);
 
-    cy.visit("/#/organizations");
+    openOrganizationsPage();
     cy.logStep("Visiting organizations page");
 
     const cardSelector = `[data-testid="org-card"][data-org-did="${orgDid}"]`;
@@ -191,7 +202,7 @@ describe("Join organization with Mailhog confirmation", () => {
       );
     });
 
-    cy.visit("/#/organizations");
+    openOrganizationsPage();
     cy.logStep("Back to organizations, waiting for status banner and restart prompt");
 
     cy.logStep("Waiting for status banner / restart prompt");

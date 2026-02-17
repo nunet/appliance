@@ -33,6 +33,7 @@ const LoginPage = lazy(() => import("./pages/Login"));
 const SetupAdmin = lazy(() => import("./pages/SetupAdmin"));
 const UPnPPage = lazy(() => import("./pages/UPnP"));
 const Appliance = lazy(() => import("./pages/Appliance"));
+const Filesystem = lazy(() => import("./pages/Filesystem"));
 
 function Layout() {
   return (
@@ -142,6 +143,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     <Route path="/appliance" element={<Appliance />} />
                     <Route path="/appliance/dms" element={<DMS />} />
                     <Route path="/appliance/upnp" element={<UPnPPage />} />
+                    <Route path="/appliance/filesystem" element={<Filesystem />} />
                     <Route path="/payments" element={<PaymentsPage />} />
                     <Route path="/contracts" element={<Contracts />} />
                     <Route path="/contracts/new" element={<NewContractPage />} />

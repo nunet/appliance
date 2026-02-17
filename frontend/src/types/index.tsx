@@ -84,3 +84,52 @@ export interface YamlTemplatesResponse {
   category_totals: Record<string, number>;
   items: YamlTemplateItem[];
 }
+
+// ---------- Filesystem ----------
+export interface FilesystemEntry {
+  name: string;
+  path: string;
+  relative_path: string;
+  is_dir: boolean;
+  is_file: boolean;
+  is_symlink: boolean;
+  size?: number | null;
+  modified_at?: string | null;
+}
+
+export interface FilesystemListResponse {
+  root: string;
+  path: string;
+  relative_path: string;
+  parent?: string | null;
+  items: FilesystemEntry[];
+}
+
+export interface FilesystemUploadItem {
+  name: string;
+  path: string;
+  relative_path: string;
+  size?: number | null;
+  modified_at?: string | null;
+  overwritten: boolean;
+}
+
+export interface FilesystemUploadResponse {
+  status: string;
+  message: string;
+  items: FilesystemUploadItem[];
+  errors?: string[] | null;
+}
+
+export interface FilesystemOperationItem {
+  source: string;
+  destination?: string | null;
+  status: string;
+  message?: string | null;
+}
+
+export interface FilesystemOperationResponse {
+  status: string;
+  message: string;
+  items: FilesystemOperationItem[];
+}

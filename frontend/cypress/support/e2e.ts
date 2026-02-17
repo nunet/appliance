@@ -234,57 +234,24 @@ Cypress.Commands.add("loginOrInitialize", (options: LoginOptions = {}) => {
 });
 
 Cypress.Commands.add("ensureAppMode", (mode: Mode = "simple") => {
-  const selector = `[data-testid="mode-card-${mode}"]`;
   cy.logStep(`Ensuring app mode: ${mode}`);
-  const selectModeCard = () => {
-    cy.logStep(`Selecting ${mode} mode card`);
-    cy.get(selector, { timeout: 60000 }).should("be.visible").scrollIntoView().click({ force: true });
-    cy.logStep("Mode card selected; waiting for redirect");
-    return cy.location("hash", { timeout: 20000 }).should((nextHash) => {
-      expect(nextHash || "").to.not.include("wizzard");
-    });
-  };
-
-  const openWizard = () => {
-    cy.logStep("Opening wizard for mode selection");
-    cy.visit("/#/wizzard");
-    return cy.location("hash", { timeout: 30000 }).should((hash) => {
-      expect(hash || "").to.include("wizzard");
-    }).then(() => selectModeCard());
-  };
-
-  return cy.location("hash", { log: false }).then((hash) => {
-    if ((hash || "").includes("wizzard")) {
-      cy.logStep("Wizard detected on current page");
-      return selectModeCard().then(() => {
-        persistAppMode(mode);
-        cy.visit("/#/organizations");
-      });
+  // The mode selector UI is not always routed in the app. Keep tests stable by forcing
+  // the persisted Zustand value directly.
+  return cy.window({ log: false }).then((win) => {
+    const raw = win.localStorage.getItem("app-mode-storage");
+    if (raw) {
+      try {
+        const storedMode = (JSON.parse(raw) as { state?: { mode?: string } })?.state?.mode;
+        if (storedMode === mode) {
+          return;
+        }
+      } catch {
+        // ignore parse errors and overwrite below
+      }
     }
 
-    return cy.window({ log: false }).then((win) => {
-      const raw = win.localStorage.getItem("app-mode-storage");
-      let storedMode: string | undefined;
-      if (raw) {
-        try {
-          storedMode = (JSON.parse(raw) as { state?: { mode?: string } })?.state?.mode;
-        } catch (error) {
-          cy.logStep("Failed to parse app-mode-storage; resetting");
-        }
-      }
-
-      if (storedMode === mode) {
-        cy.logStep(`App mode already set to ${mode}; skipping wizard`);
-        return;
-      }
-
-      cy.logStep(`App mode missing or different (${storedMode || "unset"}); selecting ${mode}`);
-      win.localStorage.removeItem("app-mode-storage");
-      return openWizard().then(() => {
-        persistAppMode(mode);
-        cy.visit("/#/organizations");
-      });
-    });
+    const payload = { state: { mode }, version: 0 };
+    win.localStorage.setItem("app-mode-storage", JSON.stringify(payload));
   });
 });
 
