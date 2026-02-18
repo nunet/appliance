@@ -7,7 +7,6 @@ import {
 } from "./ui/sidebar";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { useIsMobile } from "../hooks/use-mobile";
 
 export function NavMain({
   items,
@@ -16,6 +15,7 @@ export function NavMain({
     title: string;
     url: string;
     icon: React.ElementType;
+    badge?: number | string;
     items?: { title: string; url: string; icon: React.ElementType }[];
   }[];
 }) {
@@ -35,6 +35,10 @@ export function NavMain({
       {items.map((item) => {
         const Icon = item.icon;
         const isOpen = openMenus.includes(item.title);
+        const badgeText =
+          item.badge === undefined || item.badge === null ? "" : String(item.badge);
+        const hasBadge = badgeText.length > 0 && badgeText !== "0";
+        const badgeTestId = `sidebar-badge-${item.title.toLowerCase().replace(/\s+/g, "-")}`;
 
         return (
           <React.Fragment key={item.title}>
@@ -51,11 +55,19 @@ export function NavMain({
                 }}
                 className="flex justify-between items-center"
               >
-                <a>
+                <a className="flex w-full items-center">
                   <span className="flex items-center gap-2">
                     <Icon className="w-4 h-4" />
                     {item.title}
                   </span>
+                  {hasBadge && (
+                    <span
+                      data-testid={badgeTestId}
+                      className="ml-auto mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground"
+                    >
+                      {badgeText}
+                    </span>
+                  )}
                   {item.items &&
                     (isOpen ? (
                       <ChevronDown className="w-4 h-4" />

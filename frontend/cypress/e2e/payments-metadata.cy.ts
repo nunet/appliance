@@ -205,10 +205,14 @@ const setupAuthAndShellInterceptors = () => {
   });
 };
 
-const buildEthereumProviderMock = (account: string) => ({
+const buildEthereumProviderMock = (options?: { account?: string; connected?: boolean }) => {
+  const account = options?.account ?? ("0x" + "d".repeat(40));
+  const connected = options?.connected ?? true;
+  return ({
   request: ({ method }: { method: string; params?: unknown[] }) => {
     switch (method) {
       case "eth_accounts":
+        return Promise.resolve(connected ? [account] : []);
       case "eth_requestAccounts":
         return Promise.resolve([account]);
       case "eth_chainId":
@@ -221,11 +225,12 @@ const buildEthereumProviderMock = (account: string) => ({
   },
   on: () => undefined,
   removeListener: () => undefined,
-});
+  });
+};
 
 const visitPayments = (
   listPayload: DmsPaymentsListResponse,
-  options?: { ethereumAccount?: string }
+  options?: { ethereumProvider?: { account?: string; connected?: boolean } }
 ) => {
   setupAuthAndShellInterceptors();
 
@@ -243,8 +248,8 @@ const visitPayments = (
     onBeforeLoad(win) {
       win.localStorage.setItem("nunet-admin-token", "e2e-token");
       win.localStorage.setItem("nunet-admin-expiry", String(Date.now() + 60 * 60 * 1000));
-      if (options?.ethereumAccount) {
-        (win as unknown as { ethereum?: unknown }).ethereum = buildEthereumProviderMock(options.ethereumAccount);
+      if (options?.ethereumProvider) {
+        (win as unknown as { ethereum?: unknown }).ethereum = buildEthereumProviderMock(options.ethereumProvider);
       }
     },
   });
@@ -258,6 +263,7 @@ const visitPayments = (
 describe("Payments metadata matrix", () => {
   it("renders metadata details for all six payment types (happy path)", () => {
     visitPayments(happyListResponse);
+    cy.get('[data-testid="sidebar-badge-payments"]').should("be.visible").and("contain.text", "6");
 
     const expectedSnippets: Array<{ id: string; snippets: string[] }> = [
       {
@@ -311,7 +317,6 @@ describe("Payments metadata matrix", () => {
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
       .contains("Raw Metadata JSON")
       .should("be.visible");
-
     cy.get('input[placeholder="Search by id address or status"]').clear().type("deployment-789");
     cy.get('[data-testid^="payment-card-"]').should("have.length", 1);
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440002"]').should("be.visible");
@@ -319,7 +324,7 @@ describe("Payments metadata matrix", () => {
 
   it("keeps Pay Now when connected wallet differs from metadata from_address", () => {
     visitPayments(happyListResponse, {
-      ethereumAccount: "0x" + "c".repeat(40),
+      ethereumProvider: { account: "0x" + "c".repeat(40), connected: true },
     });
 
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
@@ -332,6 +337,22 @@ describe("Payments metadata matrix", () => {
       .should("not.exist");
   });
 
+  it("keeps Pay Now when MetaMask is installed but not connected yet", () => {
+    visitPayments(happyListResponse, {
+      ethereumProvider: { account: "0x" + "e".repeat(40), connected: false },
+    });
+
+    cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
+      .contains("button", "Pay Now", { timeout: 10000 })
+      .should("be.visible")
+      .and("be.enabled");
+    cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
+      .contains("button", "Connect MetaMask")
+      .should("not.exist");
+    cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
+      .contains("button", "Use MetaMask")
+      .should("not.exist");
+  });
   it("handles missing/empty metadata and wallet restrictions without crashing (sad path)", () => {
     visitPayments(sadListResponse);
 
@@ -344,11 +365,11 @@ describe("Payments metadata matrix", () => {
     });
 
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440100"]').within(() => {
-      cy.contains("button", "Use MetaMask").should("be.disabled");
+      cy.contains("button", "Install MetaMask").should("be.disabled");
     });
 
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440101"]').within(() => {
-      cy.contains("button", "Use Eternl").should("be.disabled");
+      cy.contains("button", "Install Eternl").should("be.disabled");
     });
 
     cy.get('input[placeholder="Search by id address or status"]').clear().type("deployment-that-does-not-exist");

@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 const ERC20_ABI = [
   "function transfer(address to, uint256 amount) public returns (bool)",
   "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
   "error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed)",
   "error ERC20InvalidSender(address sender)",
   "error ERC20InvalidReceiver(address receiver)",
@@ -112,6 +113,34 @@ function decodeErc20TransferError(error: unknown, decimals: number): string | nu
   return decodeInsufficientBalanceSelector(dataHex, decimals);
 }
 
+function parseDecimalAmountToUnitsCeil(amountHuman: string, decimals: number): { units: bigint; rounded: boolean } {
+  const raw = amountHuman.trim();
+  if (!/^\d+(\.\d+)?$/.test(raw)) {
+    throw new Error(`Invalid amount format: ${amountHuman}`);
+  }
+
+  const [wholeRaw, fracRaw = ""] = raw.split(".");
+  const whole = wholeRaw.replace(/^0+/, "") || "0";
+  const base = 10n ** BigInt(decimals);
+  const wholeUnits = BigInt(whole) * base;
+
+  if (decimals === 0) {
+    const rounded = /[1-9]/.test(fracRaw);
+    return { units: wholeUnits + (rounded ? 1n : 0n), rounded };
+  }
+
+  const fracPadded = (fracRaw || "").padEnd(decimals, "0");
+  const fracTruncated = fracPadded.slice(0, decimals);
+  const fracUnits = BigInt(fracTruncated || "0");
+  const overflowPart = (fracRaw || "").slice(decimals);
+  const rounded = /[1-9]/.test(overflowPart);
+
+  return {
+    units: wholeUnits + fracUnits + (rounded ? 1n : 0n),
+    rounded,
+  };
+}
+
 export async function sendNTX(opts: {
   tokenAddress: string;
   to: string;
@@ -145,12 +174,32 @@ export async function sendNTX(opts: {
   // encode and send
   const token = new ethers.Contract(tokenAddress, ERC20_ABI, signer);
   const signerAddress = await signer.getAddress();
-  const amount = ethers.parseUnits(amountHuman, decimals);
+  let onChainDecimals = decimals;
+  try {
+    const onChainDecimalsRaw = await token.decimals() as bigint | number;
+    const parsed = Number(onChainDecimalsRaw);
+    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 36) {
+      throw new Error(`Invalid token decimals from contract: ${String(onChainDecimalsRaw)}`);
+    }
+    onChainDecimals = parsed;
+  } catch {
+    // Fallback to configured decimals if contract does not expose decimals().
+    onChainDecimals = decimals;
+  }
+
+  if (onChainDecimals !== decimals) {
+    console.warn(
+      `Token decimals mismatch for ${tokenAddress}: config=${decimals}, onchain=${onChainDecimals}. Using on-chain value.`
+    );
+  }
+
+  const { units: amount } = parseDecimalAmountToUnitsCeil(amountHuman, onChainDecimals);
+  const amountDisplay = ethers.formatUnits(amount, onChainDecimals);
   const currentBalance = await token.balanceOf(signerAddress) as bigint;
 
   if (currentBalance < amount) {
     throw new Error(
-      `Insufficient token balance for ${signerAddress}: have ${ethers.formatUnits(currentBalance, decimals)}, need ${amountHuman}.`
+      `Insufficient token balance for ${signerAddress}: have ${ethers.formatUnits(currentBalance, onChainDecimals)}, need ${amountDisplay}.`
     );
   }
 
@@ -160,7 +209,7 @@ export async function sendNTX(opts: {
     const receipt = await tx.wait();
     return { hash: tx.hash, receipt };
   } catch (error: unknown) {
-    const friendly = decodeErc20TransferError(error, decimals);
+    const friendly = decodeErc20TransferError(error, onChainDecimals);
     if (friendly) {
       throw new Error(friendly);
     }

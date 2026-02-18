@@ -9,7 +9,6 @@ CARDANO_ADDRESS = (
     "addr_test1qqm9ehanrh5rkukd0jwrl4j4zhnlzhkutwcukxqjdr3yfwydfmfydwq78revg8sx3wf3aj9gwn5kqyg0l2485zrj3mvsktcw4k"
 )
 
-
 def _tx(unique_id: str, to_address: str, amount: str, metadata, *, metadata_key: str = "metadata"):
     payload = {
         "unique_id": unique_id,
@@ -286,7 +285,6 @@ def test_list_payments_ignores_invalid_transaction_even_when_metadata_present():
     body = response.json()
     assert body["total_count"] == 0
     assert body["ignored_count"] == 1
-
 
 def test_list_payments_extracts_to_and_from_addresses():
     provider = "0x" + "b" * 40
