@@ -29,6 +29,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckCheckIcon, ChevronDown, CircleHelp, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { sendNTX } from "@/lib/sendNTX";
+import { buildCardanoConnection, getEternlNamespace } from "@/lib/cardano";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWalletStore, type WalletType } from "@/stores/walletStore";
@@ -324,7 +325,6 @@ function DetailFieldRow({ field }: { field: PaymentDetailField }) {
     </div>
   );
 }
-
 type StatusFilter = "all" | "paid" | "unpaid";
 
 export default function PaymentsPage() {
@@ -337,6 +337,8 @@ export default function PaymentsPage() {
 
   const activeWalletType = useWalletStore((state) => state.active);
   const walletConnections = useWalletStore((state) => state.connections);
+  const setWalletConnection = useWalletStore((state) => state.setConnection);
+  const activateWallet = useWalletStore((state) => state.activate);
 
   const cfgQ = useQuery({
     queryKey: ["payments", "config"],
@@ -399,6 +401,13 @@ export default function PaymentsPage() {
     });
   }, [items, search, statusFilter]);
 
+  const hasEthereumProvider =
+    typeof window !== "undefined" &&
+    Boolean((window as unknown as { ethereum?: { request?: unknown } }).ethereum?.request);
+  const hasCardanoProvider =
+    typeof window !== "undefined" &&
+    Boolean((window as unknown as { cardano?: { eternl?: unknown } }).cardano?.eternl);
+
   function walletTypeForPayment(item: DmsPaymentItem): WalletType | null {
     const bc = (item.blockchain || "").toUpperCase();
     if (bc === "CARDANO") return "cardano";
@@ -421,24 +430,38 @@ export default function PaymentsPage() {
     }
 
     const requiredWallet = walletTypeForPayment(p);
-    if (requiredWallet) {
-      const connection = walletConnections[requiredWallet];
-      if (!connection) {
-        toast.error(`Connect ${walletDisplayName(requiredWallet)} to continue`, errorToastStyles);
-        return;
-      }
-      if (activeWalletType !== requiredWallet) {
-        toast.error(`Activate ${walletDisplayName(requiredWallet)} before paying`, errorToastStyles);
-        return;
-      }
+    if (requiredWallet === "ethereum" && !hasEthereumProvider) {
+      toast.error("MetaMask extension not detected", {
+        ...errorToastStyles,
+        description: "Install MetaMask to continue with Ethereum payments.",
+      });
+      return;
+    }
+    if (requiredWallet === "cardano" && !hasCardanoProvider) {
+      toast.error("Eternl extension not detected", {
+        ...errorToastStyles,
+        description: "Install Eternl to continue with Cardano payments.",
+      });
+      return;
     }
 
     try {
       setSending((s) => ({ ...s, [p.unique_id]: true }));
 
       if (isCardano) {
-        const connection = walletConnections.cardano;
-        const api = connection?.cardanoApi as { signTx?: (tx: string, partialSign?: boolean) => Promise<string> } | undefined;
+        let connection = walletConnections.cardano;
+        let api = connection?.cardanoApi as { signTx?: (tx: string, partialSign?: boolean) => Promise<string> } | undefined;
+        if (!connection || !api?.signTx) {
+          const namespace = getEternlNamespace();
+          if (!namespace) {
+            throw new Error("Eternl wallet not found");
+          }
+          const enabledApi = await namespace.enable();
+          connection = await buildCardanoConnection(enabledApi);
+          setWalletConnection("cardano", connection);
+          activateWallet("cardano");
+          api = connection.cardanoApi as { signTx?: (tx: string, partialSign?: boolean) => Promise<string> } | undefined;
+        }
         if (!connection || !api?.signTx) {
           throw new Error("Cardano wallet connection missing");
         }
@@ -677,25 +700,24 @@ export default function PaymentsPage() {
                     ? `${chainConfig.explorer_base_url!.replace(/\/$/, "")}/tx/${txHash || p.tx_hash}`
                     : null;
                 const requiredWallet = walletTypeForPayment(p);
-                const requiredConnection = requiredWallet
-                  ? walletConnections[requiredWallet]
-                  : undefined;
+                const walletProviderMissing =
+                  requiredWallet === "ethereum"
+                    ? !hasEthereumProvider
+                    : requiredWallet === "cardano"
+                    ? !hasCardanoProvider
+                    : false;
                 const walletRestriction =
                   !chainConfig
                     ? "Payment config missing"
-                    : requiredWallet && !requiredConnection
-                    ? `Connect ${walletDisplayName(requiredWallet)} to continue`
-                    : requiredWallet && activeWalletType !== requiredWallet
-                    ? `Activate ${walletDisplayName(requiredWallet)} from the wallet menu`
+                    : requiredWallet && walletProviderMissing
+                    ? `${walletDisplayName(requiredWallet)} extension not detected`
                     : null;
                 const buttonDisabled =
                   isSending || p.status === "paid" || !chainConfig || Boolean(walletRestriction);
                 let buttonLabelOverride: string | null = null;
                 if (p.status === "unpaid" && walletRestriction) {
-                  if (requiredWallet === "cardano") {
-                    buttonLabelOverride = "Use Eternl";
-                  } else {
-                    buttonLabelOverride = "Use MetaMask";
+                  if (walletProviderMissing) {
+                    buttonLabelOverride = requiredWallet === "cardano" ? "Install Eternl" : "Install MetaMask";
                   }
                 } else if (!chainConfig) {
                   buttonLabelOverride = "Config missing";

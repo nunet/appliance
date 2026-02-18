@@ -25,21 +25,24 @@ import {
 import { NavMain } from "../components/nav-main";
 import { useNavigate } from "react-router-dom";
 import { useAppMode } from "@/hooks/useAppMode";
-import { CopyPlusIcon } from "lucide-react";
 import { AdvancedModeToggle } from "./global/ModeToggle";
 import { Button } from "./ui/button";
 import { useAuth } from "@/hooks/useAuth";
+import { useQuery } from "@tanstack/react-query";
+import { getPaymentsList } from "@/api/api";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navigate = useNavigate();
-  const { mode, setMode } = useAppMode();
+  const { mode } = useAppMode();
   const { isMobile, setOpenMobile } = useSidebar();
   const { logout } = useAuth();
-
-  const switchMode = () => {
-    setMode(mode === "simple" ? "advanced" : "simple");
-    navigate("/");
-  };
+  const paymentsQ = useQuery({
+    queryKey: ["payments", "list"],
+    queryFn: getPaymentsList,
+    refetchInterval: 30000,
+    refetchOnWindowFocus: false,
+  });
+  const unpaidPayments = paymentsQ.isError ? 0 : (paymentsQ.data?.unpaid_count ?? 0);
 
   // Build nav structure dynamically depending on mode
   const navMain = [
@@ -72,6 +75,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       title: "Payments",
       url: "/payments",
       icon: IconCoins,
+      badge: unpaidPayments > 0 ? (unpaidPayments > 99 ? "99+" : unpaidPayments) : undefined,
     },
     {
       title: "File System",
