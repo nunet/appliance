@@ -31,6 +31,7 @@ import {
 import {
   CircleMinusIcon,
   CirclePlusIcon,
+  ChevronDownIcon,
   DownloadCloudIcon,
   Loader2,
   LoaderPinwheelIcon,
@@ -43,8 +44,13 @@ import { SectionCardsSkeleton } from "./DashboardSkeleton";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../ui/collapsible";
 
 type ResourcePair = { label: string; value: string };
 
@@ -112,26 +118,150 @@ const compareVersions = (current?: string | null, latest?: string | null) => {
   return null;
 };
 
-const renderResourceGroup = (
-  pairs: ResourcePair[],
-  Icon: LucideIcon,
-  prefix: string,
-  colorClass: string
-) =>
-  pairs.map((pair, idx) => (
-    <Fragment key={`${prefix}-${pair.label}-${idx}`}>
-      <CardDescription
-        className={`${colorClass} flex items-center gap-1 py-1`}
-      >
-        <Icon className="size-4" />
-        {prefix} {pair.label}
-      </CardDescription>
-      <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-        {pair.value}
-      </CardTitle>
-      {idx < pairs.length - 1 && <Separator />}
-    </Fragment>
-  ));
+const normalizeResourceLabel = (label: string) => label.trim().toLowerCase();
+
+const getResourceValue = (pairs: ResourcePair[], acceptedLabels: string[]) => {
+  const accepted = acceptedLabels.map(normalizeResourceLabel);
+  const match = pairs.find((pair) => accepted.includes(normalizeResourceLabel(pair.label)));
+  if (!match) return null;
+  const value = (match.value ?? "").trim();
+  if (!value || value.toUpperCase() === "N/A") return null;
+  return value;
+};
+
+const getGpuCountValue = (pairs: ResourcePair[]) => {
+  const explicit = getResourceValue(pairs, ["gpu count", "gpus", "gpu"]);
+  if (explicit) return explicit;
+  const enumeratedGpus = pairs.filter((pair) => /^gpu\s+\d+/i.test(pair.label)).length;
+  return enumeratedGpus > 0 ? `${enumeratedGpus}` : null;
+};
+
+const buildResourceSummaryBadges = (pairs: ResourcePair[]) => {
+  const entries: Array<{ label: string; value: string | null }> = [
+    { label: "CPU", value: getResourceValue(pairs, ["cores", "cpu cores"]) },
+    { label: "RAM", value: getResourceValue(pairs, ["ram", "memory", "ram size"]) },
+    { label: "Disk", value: getResourceValue(pairs, ["disk", "disk size", "storage"]) },
+    { label: "GPU", value: getGpuCountValue(pairs) },
+  ];
+  return entries.filter((entry): entry is { label: string; value: string } => Boolean(entry.value));
+};
+
+type ResourceOverviewCardProps = {
+  resourceKey: "free" | "allocated" | "onboarded";
+  title: string;
+  description: string;
+  pairs: ResourcePair[];
+  Icon: LucideIcon;
+  colorClass: string;
+  accentClass: string;
+  cardClassName: string;
+  defaultOpen?: boolean;
+};
+
+function ResourceOverviewCard({
+  resourceKey,
+  title,
+  description,
+  pairs,
+  Icon,
+  colorClass,
+  accentClass,
+  cardClassName,
+  defaultOpen = false,
+}: ResourceOverviewCardProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  const summaryBadges = useMemo(() => buildResourceSummaryBadges(pairs), [pairs]);
+  const hasPairs = pairs.length > 0;
+
+  return (
+    <Card className={cardClassName} data-testid={`${resourceKey}-resources-card`}>
+      <CardHeader className="space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className={cn("rounded-md border p-2", accentClass)}>
+              <Icon className="size-4" />
+            </div>
+            <div>
+              <CardTitle className="text-base font-semibold">{title} Resources</CardTitle>
+              <CardDescription className="text-xs">{description}</CardDescription>
+            </div>
+          </div>
+          <Badge variant="outline" className="text-xs">
+            {pairs.length} {pairs.length === 1 ? "metric" : "metrics"}
+          </Badge>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {summaryBadges.length > 0 ? (
+            summaryBadges.map((entry) => (
+              <Badge
+                key={`${resourceKey}-summary-${entry.label}`}
+                variant="outline"
+                className={cn("text-xs", accentClass)}
+              >
+                <span className="font-semibold">{entry.label}:</span>&nbsp;
+                {entry.value}
+              </Badge>
+            ))
+          ) : (
+            <CardDescription className="text-xs text-muted-foreground">
+              No structured summary metrics available.
+            </CardDescription>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="pt-0">
+        <Collapsible open={open} onOpenChange={setOpen}>
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-between border border-blue-500/20 bg-muted/20 px-3"
+              data-testid={`${resourceKey}-resources-toggle`}
+              disabled={!hasPairs}
+            >
+              <span>{open ? "Hide details" : "Show details"}</span>
+              <ChevronDownIcon
+                className={cn("size-4 transition-transform", open && "rotate-180")}
+              />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent
+            className="mt-3 space-y-2"
+            data-testid={`${resourceKey}-resources-details`}
+          >
+            {hasPairs ? (
+              pairs.map((pair, idx) => (
+                <div
+                  key={`${resourceKey}-${pair.label}-${idx}`}
+                  className="flex items-start justify-between gap-3 rounded-md border border-blue-500/20 bg-muted/20 px-3 py-2"
+                >
+                  <span
+                    className={cn(
+                      "text-[11px] font-semibold uppercase tracking-wide",
+                      colorClass
+                    )}
+                  >
+                    {pair.label}
+                  </span>
+                  <span className="max-w-[70%] break-words text-right text-sm font-semibold">
+                    {pair.value}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <CardDescription className="text-xs text-muted-foreground">
+                No resource details reported.
+              </CardDescription>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function SectionCards() {
   const {
@@ -794,38 +924,38 @@ export function SectionCards() {
 
       {!((info?.free_resources ?? "").toLowerCase().includes("not")) && (
         <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2 xl:grid-cols-3 lg:px-6">
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
-            <CardHeader>
-              {renderResourceGroup(
-                freeResourcePairs,
-                CirclePlusIcon,
-                "Free",
-                "text-green-500"
-              )}
-            </CardHeader>
-          </Card>
+          <ResourceOverviewCard
+            resourceKey="free"
+            title="Free"
+            description="Capacity currently available for new jobs."
+            pairs={freeResourcePairs}
+            Icon={CirclePlusIcon}
+            colorClass="text-green-500"
+            accentClass="border-green-500/40 bg-green-500/10 text-green-400"
+            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
+          />
 
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
-            <CardHeader>
-              {renderResourceGroup(
-                allocatedResourcePairs,
-                CircleMinusIcon,
-                "Allocated",
-                "text-red-500"
-              )}
-            </CardHeader>
-          </Card>
+          <ResourceOverviewCard
+            resourceKey="allocated"
+            title="Allocated"
+            description="Capacity currently consumed by running jobs."
+            pairs={allocatedResourcePairs}
+            Icon={CircleMinusIcon}
+            colorClass="text-red-500"
+            accentClass="border-red-500/40 bg-red-500/10 text-red-400"
+            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
+          />
 
-          <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
-            <CardHeader>
-              {renderResourceGroup(
-                onboardedResourcePairs,
-                CircleMinusIcon,
-                "Onboarded",
-                "text-blue-500"
-              )}
-            </CardHeader>
-          </Card>
+          <ResourceOverviewCard
+            resourceKey="onboarded"
+            title="Onboarded"
+            description="Capacity currently published to NuNet."
+            pairs={onboardedResourcePairs}
+            Icon={CircleMinusIcon}
+            colorClass="text-blue-500"
+            accentClass="border-blue-500/40 bg-blue-500/10 text-blue-400"
+            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
+          />
         </div>
       )}
 

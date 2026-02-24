@@ -573,15 +573,99 @@ def _fmt_resources(resources_json: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             return 0
 
+    def _safe_float(val: Any) -> float:
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _clean_text(val: Any, fallback: str = "Unknown") -> str:
+        text = str(val or "").replace(",", " ").strip()
+        if not text:
+            return fallback
+        return " ".join(text.split())
+
+    def _extract_gpu_entries(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        for key in ("gpus", "gpu"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [entry for entry in value if isinstance(entry, dict)]
+            if isinstance(value, dict):
+                cards = value.get("cards")
+                if isinstance(cards, list):
+                    return [entry for entry in cards if isinstance(entry, dict)]
+        return []
+
+    def _extract_gpu_count(data: Dict[str, Any], gpu_entries: List[Dict[str, Any]]) -> Optional[float]:
+        if gpu_entries:
+            return float(len(gpu_entries))
+
+        # DMS can report GPU in different shapes:
+        # - "gpu_count": N
+        # - "gpus": {"count": N}
+        # - "gpu": {"count": N}
+        direct_count = data.get("gpu_count")
+        if direct_count is not None:
+            return _safe_float(direct_count)
+
+        for key in ("gpus", "gpu"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                for count_key in ("count", "size", "cards_count"):
+                    count_val = value.get(count_key)
+                    if count_val is not None:
+                        return _safe_float(count_val)
+            elif value is not None and not isinstance(value, list):
+                return _safe_float(value)
+
+        return None
+
     cores = resources.get("cpu", {}).get("cores")
     ram_bytes = _safe_int(resources.get("ram", {}).get("size"))
     disk_bytes = _safe_int(resources.get("disk", {}).get("size"))
+    gpu_entries = _extract_gpu_entries(resources)
+    gpu_count = _extract_gpu_count(resources, gpu_entries)
 
     cores_display = cores if cores not in (None, "") else "N/A"
     ram_gb = _bytes_to_gb(ram_bytes)
     disk_gb = _bytes_to_gb(disk_bytes)
 
-    return f"Cores: {cores_display}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
+    parts = [
+        f"Cores: {cores_display}",
+        f"RAM: {ram_gb} GB",
+        f"Disk: {disk_gb} GB",
+    ]
+    if gpu_count is not None:
+        if gpu_count.is_integer():
+            gpu_display = str(int(gpu_count))
+        else:
+            gpu_display = str(gpu_count)
+        parts.append(f"GPU Count: {gpu_display}")
+
+    for idx, gpu in enumerate(gpu_entries):
+        raw_gpu_index = gpu.get("index")
+        if isinstance(raw_gpu_index, int):
+            gpu_index = raw_gpu_index
+        elif isinstance(raw_gpu_index, str) and raw_gpu_index.isdigit():
+            gpu_index = int(raw_gpu_index)
+        else:
+            gpu_index = idx
+
+        model = _clean_text(gpu.get("model"), fallback="")
+        vendor = _clean_text(gpu.get("vendor"), fallback="")
+        if model:
+            descriptor = model
+        elif vendor:
+            descriptor = vendor
+        else:
+            descriptor = "Unknown GPU"
+
+        vram_bytes = _safe_int(gpu.get("vram"))
+        if vram_bytes > 0:
+            descriptor = f"{descriptor} ({_bytes_to_gb(vram_bytes)} GB VRAM)"
+        parts.append(f"GPU {gpu_index}: {descriptor}")
+
+    return ", ".join(parts)
 
 def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
     """
@@ -594,6 +678,65 @@ def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
     if isinstance(resources, dict):
         return resources
     return payload
+
+
+def _parse_onboarded_flag(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value)
+        return None
+    if isinstance(value, str):
+        normalized = _ANSI_RE.sub("", value).strip().upper()
+        if not normalized:
+            return None
+        if "NOT ONBOARD" in normalized:
+            return False
+        if "ONBOARDED" in normalized:
+            return True
+        if normalized in {"TRUE", "YES", "Y", "SUCCESS"}:
+            return True
+        if normalized in {"FALSE", "NO", "N", "PENDING", "PROCESSING", "ONBOARDING"}:
+            return False
+    return None
+
+
+def _extract_onboarded_flag(payload: Any) -> Optional[bool]:
+    direct_flag = _parse_onboarded_flag(payload)
+    if direct_flag is not None:
+        return direct_flag
+
+    if not isinstance(payload, dict):
+        return None
+
+    for key in (
+        "onboarded",
+        "Onboarded",
+        "is_onboarded",
+        "isOnboarded",
+        "onboarding_status",
+        "onboardingStatus",
+        "status",
+        "Status",
+        "state",
+        "State",
+    ):
+        if key not in payload:
+            continue
+        parsed = _parse_onboarded_flag(payload.get(key))
+        if parsed is not None:
+            return parsed
+
+    for nested_key in ("ok", "OK", "result", "Result", "data", "Data", "payload", "Payload"):
+        nested = payload.get(nested_key)
+        if nested is None:
+            continue
+        parsed = _extract_onboarded_flag(nested)
+        if parsed is not None:
+            return parsed
+
+    return None
 
 
 def get_dms_resource_info() -> Dict[str, Any]:
@@ -609,9 +752,12 @@ def get_dms_resource_info() -> Dict[str, Any]:
 
     onboarding = _call_actor_json("/dms/node/onboarding/status")
     onboarded = False
-    if onboarding is not None:
-        onboarded = bool(onboarding.get("onboarded", False))
-        info["onboarding_status"] = "ONBOARDED" if onboarded else "NOT ONBOARDED"
+    onboarded_flag = _extract_onboarded_flag(onboarding)
+    if onboarded_flag is True:
+        onboarded = True
+        info["onboarding_status"] = "ONBOARDED"
+    elif onboarded_flag is False:
+        info["onboarding_status"] = "NOT ONBOARDED"
     else:
         info["onboarding_status"] = "Unknown"
 
