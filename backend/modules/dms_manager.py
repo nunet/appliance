@@ -931,7 +931,46 @@ class DMSManager:
             f"Unsupported blockchain '{blockchain}'. Expected one of: {', '.join(sorted(SUPPORTED_BLOCKCHAINS))}"
         )
 
-    def confirm_transaction(self, unique_id: str, tx_hash: str, blockchain: Optional[str] = None) -> Dict[str, Any]:
+    @staticmethod
+    def _parse_json_output(stdout: str) -> Optional[Dict[str, Any]]:
+        if not stdout:
+            return None
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    @staticmethod
+    def _is_terminal_quote_error(message: Optional[str]) -> bool:
+        if not isinstance(message, str) or not message.strip():
+            return False
+        lowered = message.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "quote already used",
+                "quote not found",
+                "quote expired",
+            )
+        )
+
+    @staticmethod
+    def _is_idempotent_quote_cancel_error(message: Optional[str]) -> bool:
+        if not isinstance(message, str) or not message.strip():
+            return False
+        lowered = message.lower()
+        return "quote already used" in lowered or "quote not found" in lowered
+
+    def confirm_transaction(
+        self,
+        unique_id: str,
+        tx_hash: str,
+        blockchain: Optional[str] = None,
+        quote_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         try:
             normalized_blockchain = self._normalize_blockchain(blockchain)
         except ValueError as exc:
@@ -944,8 +983,12 @@ class DMSManager:
             "--unique-id", unique_id,
             "--tx-hash", tx_hash,
         ]
-        argv = base_argv + ["--blockchain", normalized_blockchain]
+        argv = list(base_argv)
+        if quote_id:
+            argv.extend(["--quote-id", quote_id])
+        argv.extend(["--blockchain", normalized_blockchain])
         supports_blockchain_flag = True
+        supports_quote_flag = bool(quote_id)
         last_error: Optional[str] = None
         max_attempts = 6  # allow longer for Cardano block times
         retry_delay_sec = 10
@@ -954,6 +997,7 @@ class DMSManager:
             stdout = (cp.stdout or "").strip()
             stderr = (cp.stderr or "").strip()
             error_text_lower = f"{stderr}\n{stdout}".lower()
+            command_error: Optional[str] = None
 
             # If the CLI returns JSON with {"error": ""}, treat it as success even if rc != 0.
             try:
@@ -967,22 +1011,167 @@ class DMSManager:
                 error_message = self._extract_error(stdout, stderr)
                 if not error_message:
                     return {"status": "success", "stdout": stdout, "stderr": stderr}
-                last_error = error_message
+                command_error = error_message
                 logger.debug("Confirm transaction returned error payload (attempt %s): %s", attempt, error_message)
             else:
+                if supports_quote_flag and "unknown flag: --quote-id" in error_text_lower:
+                    logger.warning("confirm_transaction: CLI does not support --quote-id flag, retrying without it")
+                    supports_quote_flag = False
+                    argv = list(base_argv)
+                    argv.extend(["--blockchain", normalized_blockchain])
+                    if attempt < max_attempts:
+                        continue
                 if supports_blockchain_flag and "unknown flag: --blockchain" in error_text_lower:
                     logger.warning("confirm_transaction: CLI does not support --blockchain flag, retrying without it")
                     supports_blockchain_flag = False
                     argv = list(base_argv)
+                    if quote_id and supports_quote_flag:
+                        argv.extend(["--quote-id", quote_id])
                     if attempt < max_attempts:
                         continue
-                last_error = stderr or stdout or f"Command failed with return code {cp.returncode}"
-                logger.debug("Confirm transaction failed (attempt %s): %s", attempt, last_error)
+                command_error = stderr or stdout or f"Command failed with return code {cp.returncode}"
+                logger.debug("Confirm transaction failed (attempt %s): %s", attempt, command_error)
+
+            last_error = command_error
+            if self._is_terminal_quote_error(command_error):
+                # If the quote has been consumed before this confirm returns, retry once
+                # without --quote-id so we can still attach tx_hash idempotently.
+                if quote_id and supports_quote_flag:
+                    logger.warning(
+                        "confirm_transaction: quote terminal error encountered (%s); retrying without --quote-id",
+                        command_error,
+                    )
+                    supports_quote_flag = False
+                    argv = list(base_argv)
+                    if supports_blockchain_flag:
+                        argv.extend(["--blockchain", normalized_blockchain])
+                    if attempt < max_attempts:
+                        continue
+                logger.info("confirm_transaction: stopping retries due to terminal quote error: %s", command_error)
+                break
+
             if attempt < max_attempts:
                 # For transient validation responses (e.g., "not verified" while waiting for block),
                 # back off before retrying.
                 time.sleep(retry_delay_sec)
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
+
+    def get_payment_quote(self, unique_id: str) -> Dict[str, Any]:
+        cmd = [
+            "nunet", "actor", "cmd", "--context", "dms",
+            "/dms/tokenomics/contract/payment/quote/get",
+            "--unique-id", unique_id,
+        ]
+        cp = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = (cp.stdout or "").strip()
+        stderr = (cp.stderr or "").strip()
+        parsed = self._parse_json_output(stdout)
+
+        if cp.returncode != 0:
+            message = (
+                (parsed or {}).get("error")
+                or (parsed or {}).get("message")
+                or stderr
+                or stdout
+                or f"Command failed with return code {cp.returncode}"
+            )
+            logger.error("Failed to get payment quote for %s: %s", unique_id, message)
+            return {"status": "error", "message": message}
+        if not parsed:
+            logger.error("Invalid JSON from payment quote get command: %s", stdout)
+            return {"status": "error", "message": "Invalid JSON from DMS payment quote get"}
+
+        error_message = parsed.get("error")
+        if isinstance(error_message, str) and error_message.strip():
+            logger.warning("Payment quote get returned error for %s: %s", unique_id, error_message.strip())
+            return {"status": "error", "message": error_message.strip()}
+
+        payload = {"status": "success"}
+        payload.update(parsed)
+        return payload
+
+    def validate_payment_quote(self, quote_id: str) -> Dict[str, Any]:
+        cmd = [
+            "nunet", "actor", "cmd", "--context", "dms",
+            "/dms/tokenomics/contract/payment/quote/validate",
+            "--quote-id", quote_id,
+        ]
+        cp = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = (cp.stdout or "").strip()
+        stderr = (cp.stderr or "").strip()
+        parsed = self._parse_json_output(stdout)
+
+        if cp.returncode != 0:
+            message = (
+                (parsed or {}).get("error")
+                or (parsed or {}).get("message")
+                or stderr
+                or stdout
+                or f"Command failed with return code {cp.returncode}"
+            )
+            logger.error("Failed to validate payment quote %s: %s", quote_id, message)
+            return {"status": "error", "message": message}
+        if not parsed:
+            logger.error("Invalid JSON from payment quote validate command: %s", stdout)
+            return {"status": "error", "message": "Invalid JSON from DMS payment quote validate"}
+
+        payload = {"status": "success"}
+        payload.update(parsed)
+        return payload
+
+    def cancel_payment_quote(self, quote_id: str) -> Dict[str, Any]:
+        cmd = [
+            "nunet", "actor", "cmd", "--context", "dms",
+            "/dms/tokenomics/contract/payment/quote/cancel",
+            "--quote-id", quote_id,
+        ]
+        cp = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        stdout = (cp.stdout or "").strip()
+        stderr = (cp.stderr or "").strip()
+        parsed = self._parse_json_output(stdout)
+
+        if cp.returncode != 0:
+            message = (
+                (parsed or {}).get("error")
+                or (parsed or {}).get("message")
+                or stderr
+                or stdout
+                or f"Command failed with return code {cp.returncode}"
+            )
+            if self._is_idempotent_quote_cancel_error(message):
+                logger.info("Payment quote cancel is idempotent for %s: %s", quote_id, message)
+                return {"status": "success", "message": message}
+            logger.error("Failed to cancel payment quote %s: %s", quote_id, message)
+            return {"status": "error", "message": message}
+        if parsed and isinstance(parsed.get("error"), str) and parsed.get("error", "").strip():
+            message = parsed["error"].strip()
+            if self._is_idempotent_quote_cancel_error(message):
+                logger.info("Payment quote cancel is idempotent for %s: %s", quote_id, message)
+                payload = {"status": "success"}
+                payload.update(parsed)
+                return payload
+            logger.warning("Payment quote cancel returned error for %s: %s", quote_id, message)
+            return {"status": "error", "message": message}
+
+        payload = {"status": "success"}
+        if parsed:
+            payload.update(parsed)
+        return payload
 
     def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
         base_cmd = [

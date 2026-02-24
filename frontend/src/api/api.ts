@@ -385,6 +385,9 @@ export interface DmsPaymentItem {
   to_address: string;
   from_address?: string;
   amount: string;
+  original_amount?: string;
+  pricing_currency?: string;
+  requires_conversion?: boolean;
   status: "paid" | "unpaid";
   tx_hash: string; // can be empty string when unpaid
   blockchain?: string;
@@ -413,6 +416,7 @@ export interface PaymentReport {
   amount: string;
   payment_provider: string; // maps to unique_id
   blockchain?: string;
+  quote_id?: string;
 }
 
 export interface CardanoBuildPayload {
@@ -437,6 +441,41 @@ export interface CardanoSubmitPayload {
   payment_provider: string;
   to_address: string;
   amount: string;
+  quote_id?: string;
+}
+
+export interface PaymentQuoteGetPayload {
+  unique_id: string;
+}
+
+export interface PaymentQuote {
+  quote_id: string;
+  original_amount: string;
+  converted_amount: string;
+  pricing_currency: string;
+  payment_currency: string;
+  exchange_rate: string;
+  expires_at: string;
+}
+
+export interface PaymentQuoteValidatePayload {
+  quote_id: string;
+}
+
+export interface PaymentQuoteValidation {
+  valid: boolean;
+  quote_id?: string;
+  original_amount?: string;
+  converted_amount?: string;
+  pricing_currency?: string;
+  payment_currency?: string;
+  exchange_rate?: string;
+  expires_at?: string;
+  error?: string;
+}
+
+export interface PaymentQuoteCancelPayload {
+  quote_id: string;
 }
 
 // ==== PAYMENTS ENDPOINTS ====
@@ -451,6 +490,15 @@ export const getPaymentsList = () =>
 // Report endpoint (replaces old /payments/report)
 export const reportToDms = (payload: PaymentReport) =>
   api.post<PaymentReport>("/payments/report_to_dms", payload).then((res) => res.data);
+
+export const getPaymentQuote = (payload: PaymentQuoteGetPayload) =>
+  api.post<PaymentQuote>("/payments/quote/get", payload).then((res) => res.data);
+
+export const validatePaymentQuote = (payload: PaymentQuoteValidatePayload) =>
+  api.post<PaymentQuoteValidation>("/payments/quote/validate", payload).then((res) => res.data);
+
+export const cancelPaymentQuote = (payload: PaymentQuoteCancelPayload) =>
+  api.post<{ status: string }>("/payments/quote/cancel", payload).then((res) => res.data);
 
 export const buildCardanoTx = (payload: CardanoBuildPayload) =>
   api.post<CardanoBuildResponse>("/payments/cardano/build", payload).then((res) => res.data);

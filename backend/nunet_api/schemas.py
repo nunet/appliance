@@ -49,6 +49,12 @@ __all__ = [
     "CardanoBuildResponse",
     "CardanoSubmitRequest",
     "CardanoSubmitResponse",
+    "PaymentQuoteGetRequest",
+    "PaymentQuoteGetResponse",
+    "PaymentQuoteValidateRequest",
+    "PaymentQuoteValidateResponse",
+    "PaymentQuoteCancelRequest",
+    "PaymentQuoteCancelResponse",
     "DmsTransaction",
     "DmsTransactionsList",
     "FormFieldOption", "FormField", "FormSchema",
@@ -115,6 +121,7 @@ class PaymentReportIn(BaseModel):
     amount: str
     payment_provider: str  # maps to DMS unique_id
     blockchain: str = "ETHEREUM"
+    quote_id: Optional[str] = None
 
 class PaymentReportOut(BaseModel):
     tx_hash: str
@@ -122,6 +129,7 @@ class PaymentReportOut(BaseModel):
     amount: str
     payment_provider: str
     blockchain: str
+    quote_id: Optional[str] = None
 
 
 class CardanoBuildRequest(BaseModel):
@@ -146,10 +154,49 @@ class CardanoSubmitRequest(BaseModel):
     payment_provider: str
     to_address: str
     amount: str
+    quote_id: Optional[str] = None
 
 
 class CardanoSubmitResponse(PaymentReportOut):
     fee_lovelace: Optional[str] = None
+
+
+class PaymentQuoteGetRequest(BaseModel):
+    unique_id: str
+
+
+class PaymentQuoteGetResponse(BaseModel):
+    quote_id: str
+    original_amount: str
+    converted_amount: str
+    pricing_currency: str
+    payment_currency: str
+    exchange_rate: str
+    expires_at: datetime
+
+
+class PaymentQuoteValidateRequest(BaseModel):
+    quote_id: str
+
+
+class PaymentQuoteValidateResponse(BaseModel):
+    valid: bool
+    quote_id: Optional[str] = None
+    original_amount: Optional[str] = None
+    converted_amount: Optional[str] = None
+    pricing_currency: Optional[str] = None
+    payment_currency: Optional[str] = None
+    exchange_rate: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class PaymentQuoteCancelRequest(BaseModel):
+    quote_id: str
+
+
+class PaymentQuoteCancelResponse(BaseModel):
+    status: str = "success"
 
 class DmsTransaction(BaseModel):
     unique_id: str
@@ -311,6 +358,7 @@ class ContractPaymentDetails(BaseModel):
     requester_addr: Optional[str] = None
     provider_addr: Optional[str] = None
     currency: Optional[str] = None
+    pricing_currency: Optional[str] = None
     fees_per_allocation: Optional[str] = None
     timestamp: Optional[datetime] = None
     blockchain: Optional[ContractBlockchain] = None

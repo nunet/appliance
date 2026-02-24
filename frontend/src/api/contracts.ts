@@ -78,6 +78,7 @@ export interface ContractPaymentDetails {
   requester_addr?: string | null;
   provider_addr?: string | null;
   currency?: string | null;
+  pricing_currency?: string | null;
   fees_per_allocation?: string | null;
   fee_per_allocation?: string | null;
   fee_per_deployment?: string | null;

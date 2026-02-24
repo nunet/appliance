@@ -574,7 +574,7 @@ def test_payments_list_payments_normalizes_transactions(authed_client):
     assert body["items"][0]["metadata"]["deployment_id"] == "deployment-123"
 
 
-def test_payments_list_payments_normalizes_metadata_variants(client):
+def test_payments_list_payments_normalizes_metadata_variants(authed_client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
@@ -605,11 +605,11 @@ def test_payments_list_payments_normalizes_metadata_variants(client):
                 ],
             }
 
-    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
     try:
-        response = client.get("/payments/list_payments")
+        response = authed_client.get("/payments/list_payments")
     finally:
-        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -725,6 +725,119 @@ def test_payments_list_payments_supports_cardano(authed_client):
     assert body["total_count"] == 1
     assert body["items"][0]["blockchain"] == "CARDANO"
     assert body["items"][0]["to_address"] == cardano_addr
+
+
+def test_payments_quote_endpoints(authed_client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    class StubPaymentsManager:
+        def get_payment_quote(self, unique_id: str):
+            assert unique_id == "tx-quote-1"
+            return {
+                "status": "success",
+                "quote_id": "quote-tx-quote-1",
+                "original_amount": "10.00",
+                "converted_amount": "123.45000000",
+                "pricing_currency": "USDT",
+                "payment_currency": "NTX",
+                "exchange_rate": "0.08100000",
+                "expires_at": "2026-02-20T10:30:00Z",
+            }
+
+        def validate_payment_quote(self, quote_id: str):
+            assert quote_id == "quote-tx-quote-1"
+            return {
+                "status": "success",
+                "valid": True,
+                "quote_id": "quote-tx-quote-1",
+                "original_amount": "10.00",
+                "converted_amount": "123.45000000",
+                "pricing_currency": "USDT",
+                "payment_currency": "NTX",
+                "exchange_rate": "0.08100000",
+                "expires_at": "2026-02-20T10:30:00Z",
+            }
+
+        def cancel_payment_quote(self, quote_id: str):
+            assert quote_id == "quote-tx-quote-1"
+            return {"status": "success"}
+
+    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        quote_res = authed_client.post("/payments/quote/get", json={"unique_id": "tx-quote-1"})
+        validate_res = authed_client.post("/payments/quote/validate", json={"quote_id": "quote-tx-quote-1"})
+        cancel_res = authed_client.post("/payments/quote/cancel", json={"quote_id": "quote-tx-quote-1"})
+    finally:
+        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert quote_res.status_code == 200
+    quote_body = quote_res.json()
+    assert quote_body["quote_id"] == "quote-tx-quote-1"
+    assert quote_body["pricing_currency"] == "USDT"
+    assert quote_body["converted_amount"] == "123.45000000"
+
+    assert validate_res.status_code == 200
+    validate_body = validate_res.json()
+    assert validate_body["valid"] is True
+    assert validate_body["quote_id"] == "quote-tx-quote-1"
+
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["status"] == "success"
+
+
+def test_payments_quote_get_returns_conflict_on_active_quote(authed_client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    class StubPaymentsManager:
+        def get_payment_quote(self, unique_id: str):
+            return {
+                "status": "error",
+                "message": "active quote already exists for this transaction (quote_id: quote_existing)",
+            }
+
+    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = authed_client.post("/payments/quote/get", json={"unique_id": "tx-quote-2"})
+    finally:
+        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 409
+    assert "active quote already exists" in response.json()["detail"]
+
+
+def test_report_to_dms_forwards_quote_id(authed_client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    seen = {}
+
+    class StubPaymentsManager:
+        def confirm_transaction(self, unique_id: str, tx_hash: str, blockchain=None, quote_id=None):
+            seen["unique_id"] = unique_id
+            seen["tx_hash"] = tx_hash
+            seen["blockchain"] = blockchain
+            seen["quote_id"] = quote_id
+            return {"status": "success"}
+
+    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = authed_client.post(
+            "/payments/report_to_dms",
+            json={
+                "tx_hash": "0x" + "1" * 64,
+                "to_address": "0x" + "2" * 40,
+                "amount": "12.34",
+                "payment_provider": "payment-1",
+                "blockchain": "ETHEREUM",
+                "quote_id": "quote-123",
+            },
+        )
+    finally:
+        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    assert seen["unique_id"] == "payment-1"
+    assert seen["quote_id"] == "quote-123"
+    assert response.json()["quote_id"] == "quote-123"
 
 
 def test_organizations_status_includes_timeline(authed_client, monkeypatch):
