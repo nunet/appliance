@@ -49,6 +49,32 @@ def _deep_copy(data: Dict[str, Any]) -> Dict[str, Any]:
         return dict(data)
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r; using default %s", name, raw, default)
+        return default
+
+
+def _env_float(name: str, default: float, *, minimum: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        logger.warning("Invalid float for %s=%r; using default %s", name, raw, default)
+        return default
+
+
+ONBOARDING_STATUS_ATTEMPTS = _env_int("NUNET_ONBOARDING_STATUS_ATTEMPTS", 24)
+ONBOARDING_STATUS_DELAY_SEC = _env_float("NUNET_ONBOARDING_STATUS_DELAY_SEC", 5.0)
+
+
 class OnboardingManager:
     _STATE_DIR = APPLIANCE_DIR
     STATE_PATH = ONBOARDING_STATE_FILE
@@ -103,15 +129,21 @@ class OnboardingManager:
             return cleaned == "ONBOARDED"
         return False
 
-    def _wait_for_onboarded(self, attempts: int = 6, delay: float = 5.0) -> Dict[str, Any]:
+    def _wait_for_onboarded(
+        self,
+        attempts: Optional[int] = None,
+        delay: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """
         After running the onboarding script, poll the DMS until the node reports
         itself as ONBOARDED (or we give up). Returns the latest snapshot.
         """
+        max_attempts = max(1, int(attempts if attempts is not None else ONBOARDING_STATUS_ATTEMPTS))
+        poll_delay = max(0.1, float(delay if delay is not None else ONBOARDING_STATUS_DELAY_SEC))
         latest: Dict[str, Any] = {}
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, max_attempts + 1):
             if attempt > 1:
-                time.sleep(delay)
+                time.sleep(poll_delay)
             latest = get_dms_resource_info()
             if self._is_onboarded_status(latest.get("onboarding_status")):
                 if attempt > 1:
@@ -120,6 +152,13 @@ class OnboardingManager:
                         f"Compute onboarding reported ONBOARDED after {attempt} checks.",
                     )
                 return latest
+
+            if attempt in (1, max_attempts):
+                status_display = latest.get("onboarding_status", "Unknown")
+                self.append_log(
+                    "submit_data",
+                    f"Onboarding status check {attempt}/{max_attempts}: {status_display}",
+                )
         return latest
 
     # ------------------------------------------------------------------ #
@@ -476,7 +515,12 @@ class OnboardingManager:
         if result.get("status") != "success":
             message = result.get("message", "Compute onboarding failed")
             raise RuntimeError(message)
-        self.append_log("submit_data", "Compute onboarding script finished. Waiting for DMS to report ONBOARDED...")
+        wait_window_sec = int(round(ONBOARDING_STATUS_ATTEMPTS * ONBOARDING_STATUS_DELAY_SEC))
+        self.append_log(
+            "submit_data",
+            "Compute onboarding script finished. "
+            f"Waiting for DMS to report ONBOARDED (up to {ONBOARDING_STATUS_ATTEMPTS} checks / ~{wait_window_sec}s)...",
+        )
 
         refreshed = self._wait_for_onboarded()
         if not self._is_onboarded_status(refreshed.get("onboarding_status")):
