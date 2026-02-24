@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  cancelPaymentQuote,
   getPaymentsConfig,
+  getPaymentQuote,
   getPaymentsList,
   DmsPaymentMetadata,
   DmsPaymentItem,
@@ -11,6 +13,7 @@ import {
   reportToDms,
   buildCardanoTx,
   submitCardanoTx,
+  validatePaymentQuote,
 } from "@/api/api";
 import {
   Card,
@@ -27,12 +30,89 @@ import { Label } from "@/components/ui/label";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { CheckCheckIcon, ChevronDown, CircleHelp, Loader2, RefreshCw, Send, Wallet } from "lucide-react";
 import { sendNTX } from "@/lib/sendNTX";
 import { buildCardanoConnection, getEternlNamespace } from "@/lib/cardano";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWalletStore, type WalletType } from "@/stores/walletStore";
+
+const ACTIVE_QUOTES_STORAGE_KEY = "nunet-payments-active-quotes-v1";
+
+type StoredPaymentQuote = {
+  uniqueId: string;
+  quoteId: string;
+  originalAmount: string;
+  convertedAmount: string;
+  pricingCurrency: string;
+  paymentCurrency: string;
+  exchangeRate: string;
+  expiresAt: string;
+};
+
+type QuoteConfirmationState = {
+  payment: DmsPaymentItem;
+  quote: StoredPaymentQuote;
+};
+
+type QuoteIssueState = {
+  payment: DmsPaymentItem;
+  message: string;
+};
+
+function readActiveQuotesFromStorage(): Record<string, StoredPaymentQuote> {
+  try {
+    const raw = localStorage.getItem(ACTIVE_QUOTES_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const output: Record<string, StoredPaymentQuote> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        continue;
+      }
+      const entry = value as Record<string, unknown>;
+      const uniqueId = typeof entry.uniqueId === "string" ? entry.uniqueId.trim() : "";
+      const quoteId = typeof entry.quoteId === "string" ? entry.quoteId.trim() : "";
+      if (!key.trim() || !uniqueId || !quoteId) {
+        continue;
+      }
+      output[key] = {
+        uniqueId,
+        quoteId,
+        originalAmount: typeof entry.originalAmount === "string" ? entry.originalAmount : "",
+        convertedAmount: typeof entry.convertedAmount === "string" ? entry.convertedAmount : "",
+        pricingCurrency: typeof entry.pricingCurrency === "string" ? entry.pricingCurrency : "",
+        paymentCurrency: typeof entry.paymentCurrency === "string" ? entry.paymentCurrency : "",
+        exchangeRate: typeof entry.exchangeRate === "string" ? entry.exchangeRate : "",
+        expiresAt: typeof entry.expiresAt === "string" ? entry.expiresAt : "",
+      };
+    }
+    return output;
+  } catch {
+    return {};
+  }
+}
+
+function writeActiveQuotesToStorage(quotes: Record<string, StoredPaymentQuote>): void {
+  try {
+    localStorage.setItem(ACTIVE_QUOTES_STORAGE_KEY, JSON.stringify(quotes));
+  } catch {
+    // best effort only
+  }
+}
 
 function middleEllipsis(value: string, head = 6, tail = 4) {
   if (!value) return "";
@@ -60,6 +140,37 @@ function inferWalletType(address: string): WalletType | null {
 
 function walletDisplayName(type: WalletType) {
   return type === "ethereum" ? "MetaMask" : "Eternl";
+}
+
+function isConversionPayment(item: DmsPaymentItem): boolean {
+  return Boolean(item.requires_conversion || (item.pricing_currency ?? "").trim());
+}
+
+function extractQuoteId(message: string): string | null {
+  const match = message.match(/quote[_\s-]?id[:=]\s*([A-Za-z0-9._:-]+)/i);
+  return match?.[1] ?? null;
+}
+
+function getRawErrorMessage(error: unknown): string {
+  const errorLike = error as {
+    response?: { data?: { detail?: unknown; message?: string } };
+    message?: string;
+  };
+  const detail = errorLike?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (detail && typeof detail === "object" && "message" in detail) {
+    const nestedMessage = (detail as { message?: unknown }).message;
+    if (typeof nestedMessage === "string" && nestedMessage.trim()) {
+      return nestedMessage;
+    }
+  }
+  const message = errorLike?.response?.data?.message;
+  if (typeof message === "string" && message.trim()) {
+    return message;
+  }
+  return errorLike?.message || "Something went wrong";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -334,6 +445,13 @@ export default function PaymentsPage() {
   const [sent, setSent] = useState<Record<string, string>>({});
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [activeQuotes, setActiveQuotes] = useState<Record<string, StoredPaymentQuote>>(() =>
+    readActiveQuotesFromStorage()
+  );
+  const [quoteConfirmation, setQuoteConfirmation] = useState<QuoteConfirmationState | null>(null);
+  const [quoteConfirming, setQuoteConfirming] = useState(false);
+  const [quoteIssue, setQuoteIssue] = useState<QuoteIssueState | null>(null);
+  const recoveryCheckedRef = useRef(false);
 
   const activeWalletType = useWalletStore((state) => state.active);
   const walletConnections = useWalletStore((state) => state.connections);
@@ -377,6 +495,64 @@ export default function PaymentsPage() {
 
   const items = useMemo(() => list?.items ?? [], [list?.items]);
 
+  useEffect(() => {
+    writeActiveQuotesToStorage(activeQuotes);
+  }, [activeQuotes]);
+
+  useEffect(() => {
+    if (!list || recoveryCheckedRef.current) {
+      return;
+    }
+    recoveryCheckedRef.current = true;
+
+    const runRecovery = async () => {
+      const entries = Object.values(activeQuotes);
+      if (entries.length === 0) {
+        return;
+      }
+      const unpaidIds = new Set(
+        items.filter((entry) => entry.status === "unpaid").map((entry) => entry.unique_id)
+      );
+
+      const recovered: Record<string, StoredPaymentQuote> = {};
+      for (const quote of entries) {
+        if (!unpaidIds.has(quote.uniqueId)) {
+          continue;
+        }
+        try {
+          const validation = await validatePaymentQuote({ quote_id: quote.quoteId });
+          if (!validation.valid) {
+            await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+            toast.info(`Recovered quote ${quote.quoteId} is no longer valid and was cancelled.`);
+            continue;
+          }
+          recovered[quote.uniqueId] = {
+            uniqueId: quote.uniqueId,
+            quoteId: validation.quote_id ?? quote.quoteId,
+            originalAmount: validation.original_amount ?? quote.originalAmount,
+            convertedAmount: validation.converted_amount ?? quote.convertedAmount,
+            pricingCurrency: validation.pricing_currency ?? quote.pricingCurrency,
+            paymentCurrency: validation.payment_currency ?? quote.paymentCurrency,
+            exchangeRate: validation.exchange_rate ?? quote.exchangeRate,
+            expiresAt: validation.expires_at ?? quote.expiresAt,
+          };
+        } catch {
+          await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+          toast.info(`Recovered quote ${quote.quoteId} could not be validated and was cancelled.`);
+        }
+      }
+      setActiveQuotes(recovered);
+
+      const count = Object.keys(recovered).length;
+      if (count > 0) {
+        const plural = count === 1 ? "" : "s";
+        toast.info(`${count} active quote${plural} recovered. Resume payment to continue.`);
+      }
+    };
+
+    void runRecovery();
+  }, [activeQuotes, items, list]);
+
   const errorToastStyles = {
     className: "text-white [&_*]:!text-white",
     descriptionClassName: "text-white/80",
@@ -394,6 +570,8 @@ export default function PaymentsPage() {
         (p.from_address ?? "").toLowerCase().includes(term) ||
         p.status.toLowerCase().includes(term) ||
         (p.blockchain ?? "").toLowerCase().includes(term) ||
+        (p.pricing_currency ?? "").toLowerCase().includes(term) ||
+        (p.original_amount ?? "").toLowerCase().includes(term) ||
         metadataText.includes(term);
       const matchesStatus =
         statusFilter === "all" ? true : p.status === statusFilter;
@@ -415,18 +593,36 @@ export default function PaymentsPage() {
     return inferWalletType(item.to_address);
   }
 
-  async function handlePay(p: DmsPaymentItem) {
+  function upsertActiveQuote(quote: StoredPaymentQuote): void {
+    setActiveQuotes((prev) => ({ ...prev, [quote.uniqueId]: quote }));
+  }
+
+  function removeActiveQuote(uniqueId: string): void {
+    setActiveQuotes((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, uniqueId)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[uniqueId];
+      return next;
+    });
+  }
+
+  async function executePayment(
+    p: DmsPaymentItem,
+    amountToPay: string,
+    quoteId?: string
+  ): Promise<boolean> {
     const chain = (p.blockchain || "ETHEREUM").toUpperCase();
     const isCardano = chain === "CARDANO";
     const chainConfig = isCardano ? cardanoConfig : ethConfig;
-
     if (!chainConfig) {
       toast.error("Missing token config", errorToastStyles);
-      return;
+      return false;
     }
     if (p.status === "paid") {
       toast.info("This item is already marked paid");
-      return;
+      return false;
     }
 
     const requiredWallet = walletTypeForPayment(p);
@@ -435,14 +631,14 @@ export default function PaymentsPage() {
         ...errorToastStyles,
         description: "Install MetaMask to continue with Ethereum payments.",
       });
-      return;
+      return false;
     }
     if (requiredWallet === "cardano" && !hasCardanoProvider) {
       toast.error("Eternl extension not detected", {
         ...errorToastStyles,
         description: "Install Eternl to continue with Cardano payments.",
       });
-      return;
+      return false;
     }
 
     try {
@@ -470,7 +666,7 @@ export default function PaymentsPage() {
           from_address: connection.address,
           change_address: connection.changeAddress ?? connection.address,
           to_address: p.to_address,
-          amount: p.amount,
+          amount: amountToPay,
           payment_provider: p.unique_id,
         });
 
@@ -481,7 +677,8 @@ export default function PaymentsPage() {
           witness_set_cbor: witness,
           payment_provider: p.unique_id,
           to_address: p.to_address,
-          amount: p.amount,
+          amount: amountToPay,
+          quote_id: quoteId,
         });
 
         const txHash = submitRes.tx_hash ?? build.tx_hash;
@@ -494,7 +691,7 @@ export default function PaymentsPage() {
         const { hash } = await sendNTX({
           tokenAddress: chainConfig.token_address,
           to: p.to_address,
-          amountHuman: p.amount,
+          amountHuman: amountToPay,
           decimals: chainConfig.token_decimals,
           chainIdWanted: chainConfig.chain_id,
         });
@@ -504,9 +701,10 @@ export default function PaymentsPage() {
         await reportToDms({
           tx_hash: hash,
           to_address: p.to_address,
-          amount: p.amount,
+          amount: amountToPay,
           payment_provider: p.unique_id,
-          blockchain: "ETHEREUM",
+          blockchain: chain,
+          quote_id: quoteId,
         });
 
         toast.success("Transaction sent", {
@@ -515,16 +713,9 @@ export default function PaymentsPage() {
       }
 
       listQ.refetch();
+      return true;
     } catch (err: unknown) {
-      const errorLike = err as {
-        response?: { data?: { detail?: string; message?: string } };
-        message?: string;
-      };
-      const rawMessage =
-        errorLike?.response?.data?.detail ||
-        errorLike?.response?.data?.message ||
-        errorLike?.message ||
-        "Something went wrong";
+      const rawMessage = getRawErrorMessage(err);
 
       const toAda = (lovelace: number | string | null | undefined) => {
         const n = Number(lovelace);
@@ -560,8 +751,204 @@ export default function PaymentsPage() {
         ...errorToastStyles,
         description: friendlyMessage,
       });
+      return false;
     } finally {
       setSending((s) => ({ ...s, [p.unique_id]: false }));
+    }
+  }
+
+  async function validateStoredQuoteForPayment(
+    p: DmsPaymentItem,
+    quote: StoredPaymentQuote
+  ): Promise<StoredPaymentQuote | null> {
+    try {
+      const validation = await validatePaymentQuote({ quote_id: quote.quoteId });
+      if (!validation.valid) {
+        await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+        removeActiveQuote(p.unique_id);
+        setQuoteIssue({
+          payment: p,
+          message: validation.error || "Quote expired or is no longer valid.",
+        });
+        return null;
+      }
+
+      const convertedAmount = (validation.converted_amount ?? quote.convertedAmount).trim();
+      if (!convertedAmount) {
+        await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+        removeActiveQuote(p.unique_id);
+        setQuoteIssue({
+          payment: p,
+          message: "Quote did not include a converted amount.",
+        });
+        return null;
+      }
+
+      const refreshed: StoredPaymentQuote = {
+        uniqueId: p.unique_id,
+        quoteId: validation.quote_id ?? quote.quoteId,
+        originalAmount: (validation.original_amount ?? quote.originalAmount).trim(),
+        convertedAmount,
+        pricingCurrency: (validation.pricing_currency ?? quote.pricingCurrency).trim(),
+        paymentCurrency: (validation.payment_currency ?? quote.paymentCurrency).trim(),
+        exchangeRate: (validation.exchange_rate ?? quote.exchangeRate).trim(),
+        expiresAt: validation.expires_at ?? quote.expiresAt,
+      };
+      upsertActiveQuote(refreshed);
+      return refreshed;
+    } catch (error) {
+      setQuoteIssue({
+        payment: p,
+        message: getRawErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  async function prepareConversionQuote(p: DmsPaymentItem): Promise<StoredPaymentQuote | null> {
+    const chain = (p.blockchain || "ETHEREUM").toUpperCase();
+    const chainConfig = chain === "CARDANO" ? cardanoConfig : ethConfig;
+    const tokenSymbol = chainConfig?.token_symbol ?? "NTX";
+
+    const fetchQuote = async () => {
+      try {
+        return await getPaymentQuote({ unique_id: p.unique_id });
+      } catch (error) {
+        const message = getRawErrorMessage(error);
+        const activeQuoteId = extractQuoteId(message);
+        if (activeQuoteId) {
+          await cancelPaymentQuote({ quote_id: activeQuoteId }).catch(() => {});
+          return getPaymentQuote({ unique_id: p.unique_id });
+        }
+        throw error;
+      }
+    };
+
+    try {
+      const quote = await fetchQuote();
+      const validation = await validatePaymentQuote({ quote_id: quote.quote_id });
+      if (!validation.valid) {
+        await cancelPaymentQuote({ quote_id: quote.quote_id }).catch(() => {});
+        setQuoteIssue({
+          payment: p,
+          message: validation.error || "Quote expired or is no longer valid.",
+        });
+        return null;
+      }
+
+      const convertedAmount = (validation.converted_amount ?? quote.converted_amount ?? "").trim();
+      if (!convertedAmount) {
+        await cancelPaymentQuote({ quote_id: quote.quote_id }).catch(() => {});
+        setQuoteIssue({
+          payment: p,
+          message: "Quote did not include a converted amount.",
+        });
+        return null;
+      }
+
+      const preparedQuote: StoredPaymentQuote = {
+        uniqueId: p.unique_id,
+        quoteId: quote.quote_id,
+        originalAmount: (validation.original_amount ?? quote.original_amount ?? p.original_amount ?? p.amount).trim(),
+        convertedAmount,
+        pricingCurrency: (validation.pricing_currency ?? quote.pricing_currency ?? p.pricing_currency ?? "USDT").trim(),
+        paymentCurrency: (validation.payment_currency ?? quote.payment_currency ?? tokenSymbol).trim(),
+        exchangeRate: (validation.exchange_rate ?? quote.exchange_rate ?? "").trim(),
+        expiresAt: validation.expires_at ?? quote.expires_at,
+      };
+      upsertActiveQuote(preparedQuote);
+      return preparedQuote;
+    } catch (error) {
+      setQuoteIssue({
+        payment: p,
+        message: getRawErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  async function handlePay(p: DmsPaymentItem) {
+    const chain = (p.blockchain || "ETHEREUM").toUpperCase();
+    const isCardano = chain === "CARDANO";
+    const chainConfig = isCardano ? cardanoConfig : ethConfig;
+
+    if (!chainConfig) {
+      toast.error("Missing token config", errorToastStyles);
+      return;
+    }
+    if (p.status === "paid") {
+      toast.info("This item is already marked paid");
+      return;
+    }
+
+    const requiredWallet = walletTypeForPayment(p);
+    if (requiredWallet) {
+      const connection = walletConnections[requiredWallet];
+      if (!connection) {
+        toast.error(`Connect ${walletDisplayName(requiredWallet)} to continue`, errorToastStyles);
+        return;
+      }
+      if (activeWalletType !== requiredWallet) {
+        toast.error(`Activate ${walletDisplayName(requiredWallet)} before paying`, errorToastStyles);
+        return;
+      }
+    }
+
+    if (!isConversionPayment(p)) {
+      await executePayment(p, p.amount);
+      return;
+    }
+
+    const existingQuote = activeQuotes[p.unique_id];
+    if (existingQuote) {
+      const validatedQuote = await validateStoredQuoteForPayment(p, existingQuote);
+      if (validatedQuote) {
+        setQuoteConfirmation({ payment: p, quote: validatedQuote });
+      }
+      return;
+    }
+
+    const preparedQuote = await prepareConversionQuote(p);
+    if (preparedQuote) {
+      setQuoteConfirmation({ payment: p, quote: preparedQuote });
+    }
+  }
+
+  async function handleConfirmQuotePayment() {
+    if (!quoteConfirmation) {
+      return;
+    }
+    const { payment, quote } = quoteConfirmation;
+    setQuoteConfirming(true);
+    try {
+      const validatedQuote = await validateStoredQuoteForPayment(payment, quote);
+      if (!validatedQuote) {
+        setQuoteConfirmation(null);
+        return;
+      }
+      const success = await executePayment(payment, validatedQuote.convertedAmount, validatedQuote.quoteId);
+      if (success) {
+        removeActiveQuote(payment.unique_id);
+        setQuoteConfirmation(null);
+      }
+    } finally {
+      setQuoteConfirming(false);
+    }
+  }
+
+  async function handleCancelQuoteConfirmation() {
+    if (!quoteConfirmation) {
+      return;
+    }
+    const { payment, quote } = quoteConfirmation;
+    setQuoteConfirming(true);
+    try {
+      await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+      removeActiveQuote(payment.unique_id);
+      setQuoteConfirmation(null);
+      toast.info("Payment quote cancelled.");
+    } finally {
+      setQuoteConfirming(false);
     }
   }
 
@@ -706,6 +1093,8 @@ export default function PaymentsPage() {
                     : requiredWallet === "cardano"
                     ? !hasCardanoProvider
                     : false;
+                const recoverableQuote = activeQuotes[p.unique_id];
+                const recoverableQuoteExpiry = recoverableQuote ? formatTime(recoverableQuote.expiresAt) : null;
                 const walletRestriction =
                   !chainConfig
                     ? "Payment config missing"
@@ -719,6 +1108,8 @@ export default function PaymentsPage() {
                   if (walletProviderMissing) {
                     buttonLabelOverride = requiredWallet === "cardano" ? "Install Eternl" : "Install MetaMask";
                   }
+                } else if (recoverableQuote && p.status === "unpaid") {
+                  buttonLabelOverride = "Resume payment";
                 } else if (!chainConfig) {
                   buttonLabelOverride = "Config missing";
                 }
@@ -726,6 +1117,15 @@ export default function PaymentsPage() {
                   chain === "CARDANO"
                     ? cardanoConfig?.token_symbol ?? "NTX"
                     : ethConfig?.token_symbol ?? "NTX";
+                const conversionRequired = isConversionPayment(p);
+                const pricingCurrency = (p.pricing_currency ?? "").trim();
+                const originalAmount = (p.original_amount ?? p.amount).trim();
+                const amountPrimaryLabel = conversionRequired
+                  ? `${pricingCurrency || "QUOTE"} ${originalAmount}`
+                  : `${tokenSymbol} ${p.amount}`;
+                const amountSecondaryLabel = conversionRequired
+                  ? `Converted to ${tokenSymbol} at pay time`
+                  : null;
                 const metadataDetails = summarizePaymentMetadata(p.metadata);
                 const metadataSummary = metadataDetails.join(" | ");
                 const detailFields: PaymentDetailField[] = [];
@@ -734,7 +1134,20 @@ export default function PaymentsPage() {
                 addDetailField(detailFields, "Validator DID", p.payment_validator_did, "DID of the validator that created/validates this payment.");
                 addDetailField(detailFields, "Blockchain", chain, "Target blockchain network for settlement.");
                 addDetailField(detailFields, "Status", p.status, "Current settlement status from DMS.");
-                addDetailField(detailFields, "Amount", `${tokenSymbol} ${p.amount}`, "Invoice amount to be paid.");
+                addDetailField(
+                  detailFields,
+                  "Amount",
+                  amountPrimaryLabel,
+                  conversionRequired
+                    ? "Original invoice amount in pricing currency. Final payment amount is quoted in payment currency right before payment."
+                    : "Invoice amount to be paid."
+                );
+                if (conversionRequired) {
+                  addDetailField(detailFields, "Requires conversion", "Yes", "Price conversion is required at payment time.");
+                  addDetailField(detailFields, "Pricing currency", pricingCurrency || "Unknown", "Stable currency used for invoice pricing.");
+                  addDetailField(detailFields, "Original amount", originalAmount, "Amount denominated in pricing currency before conversion.");
+                  addDetailField(detailFields, "Payment currency", tokenSymbol, "Token used for blockchain settlement.");
+                }
                 addDetailField(detailFields, "To Address", p.to_address, "Provider destination address that receives payment.");
                 addDetailField(detailFields, "From Address", p.from_address, "Requester/source address associated with this payment.");
                 addDetailField(detailFields, "Transaction Hash", txHash || p.tx_hash, "On-chain transaction hash after submission.");
@@ -798,9 +1211,18 @@ export default function PaymentsPage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-medium text-foreground">Amount:</span>
                                 <code className="bg-muted px-2 py-1 rounded text-green-500">
-                                  {tokenSymbol} {p.amount}
+                                  {amountPrimaryLabel}
                                 </code>
+                                {amountSecondaryLabel && (
+                                  <span className="text-xs text-muted-foreground">{amountSecondaryLabel}</span>
+                                )}
                               </div>
+                              {recoverableQuote && (
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <span>Recovered quote ready</span>
+                                  {recoverableQuoteExpiry && <span>expires {recoverableQuoteExpiry}</span>}
+                                </div>
+                              )}
                               {requiredWallet && (
                                 <div className="flex flex-wrap items-center gap-2">
                                   <span className="font-medium text-foreground">Wallet:</span>
@@ -918,8 +1340,16 @@ export default function PaymentsPage() {
                               Amount
                             </span>
                             <code className="bg-muted px-1 py-0.5 rounded text-green-600 text-xs">
-                              {tokenSymbol} {p.amount}
+                              {amountPrimaryLabel}
                             </code>
+                            {amountSecondaryLabel && (
+                              <span className="text-[10px] text-muted-foreground">{amountSecondaryLabel}</span>
+                            )}
+                            {recoverableQuote && (
+                              <span className="text-[10px] text-muted-foreground">
+                                recovered quote{recoverableQuoteExpiry ? ` (expires ${recoverableQuoteExpiry})` : ""}
+                              </span>
+                            )}
                             {requiredWallet && (
                               <>
                                 <span className="ml-3 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -1090,6 +1520,105 @@ export default function PaymentsPage() {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={Boolean(quoteConfirmation)}
+        onOpenChange={(open) => {
+          if (!open && quoteConfirmation && !quoteConfirming) {
+            void handleCancelQuoteConfirmation();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm conversion quote</DialogTitle>
+            <DialogDescription>
+              Review conversion details before opening your wallet.
+            </DialogDescription>
+          </DialogHeader>
+          {quoteConfirmation && (
+            <div className="space-y-2 text-sm">
+              <div className="rounded border border-border/60 bg-muted/20 p-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Transaction</div>
+                <div className="font-mono text-xs break-all">{quoteConfirmation.payment.unique_id}</div>
+              </div>
+              <div className="rounded border border-border/60 bg-muted/20 p-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Original amount</div>
+                <div className="font-semibold">
+                  {quoteConfirmation.quote.pricingCurrency || "USDT"} {quoteConfirmation.quote.originalAmount}
+                </div>
+              </div>
+              <div className="rounded border border-border/60 bg-muted/20 p-3">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">Payment amount</div>
+                <div className="font-semibold">
+                  {quoteConfirmation.quote.paymentCurrency || "NTX"} {quoteConfirmation.quote.convertedAmount}
+                </div>
+                {quoteConfirmation.quote.exchangeRate && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Exchange rate: {quoteConfirmation.quote.exchangeRate}
+                  </div>
+                )}
+                {quoteConfirmation.quote.expiresAt && (
+                  <div className="text-xs text-muted-foreground mt-1">
+                    Expires: {formatTime(quoteConfirmation.quote.expiresAt) ?? quoteConfirmation.quote.expiresAt}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                void handleCancelQuoteConfirmation();
+              }}
+              disabled={quoteConfirming}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                void handleConfirmQuotePayment();
+              }}
+              disabled={quoteConfirming}
+            >
+              {quoteConfirming ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing
+                </>
+              ) : (
+                "Continue to wallet"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(quoteIssue)} onOpenChange={(open) => !open && setQuoteIssue(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Quote validation failed</DialogTitle>
+            <DialogDescription>{quoteIssue?.message ?? "Unable to continue with this quote."}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQuoteIssue(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const pending = quoteIssue;
+                setQuoteIssue(null);
+                if (pending) {
+                  void handlePay(pending.payment);
+                }
+              }}
+            >
+              Try again
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

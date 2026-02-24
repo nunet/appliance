@@ -38,6 +38,7 @@ interface ContractFormState {
   paymentRequesterAddr: string;
   paymentProviderAddr: string;
   paymentCurrency: string;
+  paymentPricingCurrency: string;
   paymentBlockchain: string;
   paymentType: string;
   paymentModel: string;
@@ -267,6 +268,7 @@ function extractFormState(detail: ContractTemplateDetail): ContractFormState {
     paymentRequesterAddr: toFormString(payment.requester_addr ?? primaryAddress?.requester_addr),
     paymentProviderAddr: toFormString(payment.provider_addr ?? primaryAddress?.provider_addr),
     paymentCurrency: toFormString(payment.currency ?? primaryAddress?.currency),
+    paymentPricingCurrency: toFormString(payment.pricing_currency),
     paymentBlockchain: normalizeWithDefault(payment.blockchain ?? primaryAddress?.blockchain, "ETHEREUM").toUpperCase(),
     paymentType: PAYMENT_TYPE_OPTIONS.some((option) => option.value === paymentTypeValue)
       ? paymentTypeValue
@@ -391,11 +393,13 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
   const normalizedRequesterAddr = form.paymentRequesterAddr.trim();
   const normalizedProviderAddr = form.paymentProviderAddr.trim();
   const normalizedCurrency = form.paymentCurrency.trim();
+  const normalizedPricingCurrency = form.paymentPricingCurrency.trim();
   const normalizedBlockchain = (form.paymentBlockchain ?? "").trim().toUpperCase();
 
   applyStringField(payment, "requester_addr", form.paymentRequesterAddr);
   applyStringField(payment, "provider_addr", form.paymentProviderAddr);
   applyStringField(payment, "currency", form.paymentCurrency);
+  applyStringField(payment, "pricing_currency", form.paymentPricingCurrency);
   applyStringField(payment, "payment_model", form.paymentModel.toLowerCase());
   applyStringField(payment, "payment_type", form.paymentType.toLowerCase());
   applyStringField(payment, "payment_period", form.paymentPeriod.toLowerCase());
@@ -469,6 +473,9 @@ function buildContractPayload(detail: ContractTemplateDetail, form: ContractForm
     payment.addresses = [addressPayload];
   } else {
     delete payment.addresses;
+  }
+  if (!normalizedPricingCurrency) {
+    delete payment.pricing_currency;
   }
   const timestamp = coerceIsoTimestamp(payment.timestamp);
   payment.timestamp = timestamp ?? new Date().toISOString();
@@ -1138,6 +1145,12 @@ function ConfigureTemplateStep({
               onChange={(value) => onChange({ paymentCurrency: value })}
               placeholder={placeholderValue(payment.currency ?? paymentAddress?.currency, "NTX")}
             />
+            <TextField
+              label="Pricing currency (optional)"
+              value={formState.paymentPricingCurrency}
+              onChange={(value) => onChange({ paymentPricingCurrency: value })}
+              placeholder={placeholderValue(payment.pricing_currency, "USDT")}
+            />
             <div className="space-y-2">
               <Label>Blockchain</Label>
               <Select
@@ -1435,6 +1448,7 @@ function ReviewTemplateStep({ detail, payload, formState, onBack, onSubmit, isSu
   addPaymentRow("Requester address", payment.requester_addr ?? paymentAddress?.requester_addr);
   addPaymentRow("Provider address", payment.provider_addr ?? paymentAddress?.provider_addr);
   addPaymentRow("Currency", payment.currency ?? paymentAddress?.currency);
+  addPaymentRow("Pricing currency", payment.pricing_currency);
   addPaymentRow("Blockchain", payment.blockchain ?? paymentAddress?.blockchain);
   addPaymentRow("Fees per allocation", payment.fees_per_allocation ?? payment.fee_per_allocation);
   addPaymentRow("Fee per deployment", payment.fee_per_deployment);

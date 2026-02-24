@@ -382,3 +382,59 @@ def test_list_payments_accepts_16_decimal_amounts_and_rejects_17():
     assert body["ignored_count"] == 1
     ignored_ids = {item["unique_id"] for item in (body.get("ignored") or [])}
     assert "550e8400-e29b-41d4-a716-446655441002" in ignored_ids
+
+
+def test_norm_tx_keys_includes_conversion_fields():
+    raw = {
+        "unique_id": "550e8400-e29b-41d4-a716-446655441111",
+        "payment_validator_did": "did:prism:validator",
+        "contract_did": "did:prism:contract",
+        "to_address": "0x" + "1" * 40,
+        "amount": "10.00",
+        "status": "unpaid",
+        "tx_hash": "",
+        "OriginalAmount": "10.00",
+        "PricingCurrency": "USDT",
+        "RequiresConversion": "true",
+    }
+
+    normalized = payments_router._norm_tx_keys(raw)
+    assert normalized["original_amount"] == "10.00"
+    assert normalized["pricing_currency"] == "USDT"
+    assert normalized["requires_conversion"] is True
+
+
+def test_list_payments_returns_conversion_fields():
+    txs = [
+        {
+            "unique_id": "550e8400-e29b-41d4-a716-446655441112",
+            "payment_validator_did": "did:prism:validator",
+            "contract_did": "did:prism:contract",
+            "to_address": "0x" + "2" * 40,
+            "amount": "10.00",
+            "status": "unpaid",
+            "tx_hash": "",
+            "original_amount": "10.00",
+            "pricing_currency": "USDT",
+            "requires_conversion": True,
+        }
+    ]
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None):
+            return {"status": "success", "transactions": txs}
+
+    app = FastAPI()
+    app.include_router(payments_router.router, prefix="/payments")
+    app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+
+    with TestClient(app) as client:
+        response = client.get("/payments/list_payments")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    item = body["items"][0]
+    assert item["original_amount"] == "10.00"
+    assert item["pricing_currency"] == "USDT"
+    assert item["requires_conversion"] is True

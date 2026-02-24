@@ -240,6 +240,7 @@ type PaymentDetailsView = {
   requester_addr?: string | null;
   provider_addr?: string | null;
   currency?: string | null;
+  pricing_currency?: string | null;
   fees_per_allocation?: string | null;
   fee_per_deployment?: string | null;
   fee_per_time_unit?: string | null;
@@ -420,6 +421,7 @@ function toPaymentDetailsView(detailsSource: unknown): PaymentDetailsView | null
   const requester = pickFirstValue(details, "requester_addr", "requesterAddress", "requestor_addr", "requestorAddress");
   const provider = pickFirstValue(details, "provider_addr", "providerAddress");
   const currency = pickFirstValue(details, "currency", "token");
+  const pricingCurrency = pickFirstValue(details, "pricing_currency", "pricingCurrency");
   const blockchain = pickFirstValue(details, "blockchain", "chain");
   const feesPerAllocation = pickFirstValue(details, "fees_per_allocation", "fee_per_allocation", "feesPerAllocation");
   const feePerDeployment = pickFirstValue(details, "fee_per_deployment", "feePerDeployment");
@@ -440,6 +442,7 @@ function toPaymentDetailsView(detailsSource: unknown): PaymentDetailsView | null
     requester,
     provider,
     currency,
+    pricingCurrency,
     blockchain,
     feesPerAllocation,
     feePerDeployment,
@@ -464,6 +467,7 @@ function toPaymentDetailsView(detailsSource: unknown): PaymentDetailsView | null
     requester_addr: normalizeDisplayValue(requester) ?? primary?.requester_addr ?? null,
     provider_addr: normalizeDisplayValue(provider) ?? primary?.provider_addr ?? null,
     currency: normalizeDisplayValue(currency) ?? primary?.currency ?? null,
+    pricing_currency: normalizeDisplayValue(pricingCurrency),
     fees_per_allocation: normalizeDisplayValue(feesPerAllocation),
     fee_per_deployment: normalizeDisplayValue(feePerDeployment),
     fee_per_time_unit: normalizeDisplayValue(feePerTimeUnit),
@@ -592,6 +596,7 @@ export function ContractDetailsDrawer({
     addTextRow("Payment period", paymentDetails.payment_period);
     addTextRow("Payment period count", paymentDetails.payment_period_count);
     addTextRow("Currency", paymentDetails.currency);
+    addTextRow("Pricing currency", paymentDetails.pricing_currency);
     addDidRow("Requester address", paymentDetails.requester_addr);
     addDidRow("Provider address", paymentDetails.provider_addr);
     addTextRow("Fees per allocation", paymentDetails.fees_per_allocation);

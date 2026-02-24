@@ -11,6 +11,12 @@ from ..schemas import (
     CardanoSubmitRequest,
     CardanoSubmitResponse,
     CardanoTokenConfig,
+    PaymentQuoteCancelRequest,
+    PaymentQuoteCancelResponse,
+    PaymentQuoteGetRequest,
+    PaymentQuoteGetResponse,
+    PaymentQuoteValidateRequest,
+    PaymentQuoteValidateResponse,
     PaymentReportIn,
     PaymentReportOut,
     PaymentsConfig,
@@ -174,6 +180,21 @@ def _coerce_metadata(value: Any) -> Optional[Dict[str, Any]]:
             return parsed
     return None
 
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y"}:
+            return True
+        if lowered in {"false", "0", "no", "n"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     """
     Normalize DMS transaction keys (handles TitleCase and snake_case).
@@ -186,6 +207,13 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
     if metadata_raw is None:
         metadata_raw = d.get("Metadata")
     metadata = _coerce_metadata(metadata_raw)
+    requires_conversion_raw = (
+        d.get("requires_conversion")
+        if "requires_conversion" in d
+        else d.get("RequiresConversion")
+        if "RequiresConversion" in d
+        else d.get("requiresConversion")
+    )
 
     return {
         "unique_id": d.get("unique_id") or d.get("UniqueID") or d.get("uniqueId") or "",
@@ -202,6 +230,9 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         "tx_hash": d.get("tx_hash") or d.get("TxHash") or "",
         "blockchain": blockchain,
         "metadata": metadata,
+        "original_amount": d.get("original_amount") or d.get("OriginalAmount") or d.get("originalAmount") or "",
+        "pricing_currency": d.get("pricing_currency") or d.get("PricingCurrency") or d.get("pricingCurrency") or "",
+        "requires_conversion": _coerce_bool(requires_conversion_raw, False),
     }
 
 
@@ -287,6 +318,53 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
     }
 
 
+@router.post("/quote/get", response_model=PaymentQuoteGetResponse)
+def get_payment_quote(body: PaymentQuoteGetRequest, mgr: DMSManager = Depends(get_mgr)):
+    result = mgr.get_payment_quote(body.unique_id)
+    if result.get("status") != "success":
+        message = result.get("message", "Failed to get payment quote")
+        status_code = 409 if isinstance(message, str) and "active quote already exists" in message.lower() else 502
+        raise HTTPException(status_code=status_code, detail=message)
+    if not result.get("quote_id") or not result.get("expires_at"):
+        raise HTTPException(status_code=502, detail="Invalid quote response from DMS")
+    return PaymentQuoteGetResponse(
+        quote_id=str(result.get("quote_id") or ""),
+        original_amount=str(result.get("original_amount") or ""),
+        converted_amount=str(result.get("converted_amount") or ""),
+        pricing_currency=str(result.get("pricing_currency") or ""),
+        payment_currency=str(result.get("payment_currency") or ""),
+        exchange_rate=str(result.get("exchange_rate") or ""),
+        expires_at=result.get("expires_at"),
+    )
+
+
+@router.post("/quote/validate", response_model=PaymentQuoteValidateResponse)
+def validate_payment_quote(body: PaymentQuoteValidateRequest, mgr: DMSManager = Depends(get_mgr)):
+    result = mgr.validate_payment_quote(body.quote_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=502, detail=result.get("message", "Failed to validate payment quote"))
+
+    return PaymentQuoteValidateResponse(
+        valid=bool(result.get("valid", False)),
+        quote_id=result.get("quote_id"),
+        original_amount=result.get("original_amount"),
+        converted_amount=result.get("converted_amount"),
+        pricing_currency=result.get("pricing_currency"),
+        payment_currency=result.get("payment_currency"),
+        exchange_rate=result.get("exchange_rate"),
+        expires_at=result.get("expires_at"),
+        error=result.get("error"),
+    )
+
+
+@router.post("/quote/cancel", response_model=PaymentQuoteCancelResponse)
+def cancel_payment_quote(body: PaymentQuoteCancelRequest, mgr: DMSManager = Depends(get_mgr)):
+    result = mgr.cancel_payment_quote(body.quote_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=502, detail=result.get("message", "Failed to cancel payment quote"))
+    return PaymentQuoteCancelResponse(status="success")
+
+
 @router.post("/cardano/build", response_model=CardanoBuildResponse)
 def build_cardano_tx(body: CardanoBuildRequest):
     """
@@ -334,6 +412,7 @@ def submit_cardano_tx(body: CardanoSubmitRequest, mgr: DMSManager = Depends(get_
         unique_id=body.payment_provider,
         tx_hash=tx_hash,
         blockchain="CARDANO",
+        quote_id=body.quote_id,
     )
     if dms_res.get("status") != "success":
         raise HTTPException(status_code=502, detail=dms_res.get("message", "DMS confirm failed"))
@@ -344,6 +423,7 @@ def submit_cardano_tx(body: CardanoSubmitRequest, mgr: DMSManager = Depends(get_
         amount=body.amount,
         payment_provider=body.payment_provider,
         blockchain="CARDANO",
+        quote_id=body.quote_id,
         fee_lovelace=None,
     )
 
@@ -367,7 +447,6 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
     if body.tx_hash and not _txhash_re.match(body.tx_hash):
         # raise HTTPException(status_code=400, detail="Invalid tx_hash format")
         pass
-    print(body)
     # Call DMS confirm; payment_provider maps to unique_id
     blockchain = (body.blockchain or PAY_BLOCKCHAIN).strip().upper()
     if blockchain not in ALLOWED_BLOCKCHAINS:
@@ -377,6 +456,7 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
         unique_id=body.payment_provider,
         tx_hash=body.tx_hash,
         blockchain=blockchain,
+        quote_id=body.quote_id,
     )
     if dms_res.get("status") != "success":
         raise HTTPException(status_code=502, detail=dms_res.get("message", "DMS confirm failed"))
@@ -387,4 +467,5 @@ def report_to_dms(body: PaymentReportIn, mgr: DMSManager = Depends(get_mgr)):
         amount=body.amount,
         payment_provider=body.payment_provider,
         blockchain=blockchain,
+        quote_id=body.quote_id,
     )
