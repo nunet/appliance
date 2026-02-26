@@ -244,6 +244,115 @@
       }
     ]
   },
+  "did:key:z6Mkm12vXF4DryrDkTY1gEkmEbtTvjRa27eCY3iRBZ4aB3EH": {
+    "name": "NuNet Live - Staging ",
+    "onboarding_api_url": "https://nunetlive.orgs.staging.nunet.online/api",
+    "tokenomics": {
+      "enabled": true,
+      "chain": "ethereum"
+    },
+    "join_fields": [
+      {
+        "name": "email",
+        "label": "Email",
+        "type": "email",
+        "required": true
+      },
+      {
+        "name": "location",
+        "label": "Location (City, Country)",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "discord",
+        "label": "Discord Username (Optional)",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "roles": [
+      {
+        "id": "compute_provider",
+        "label": "Compute Provider",
+        "description": "A Compute provider provides resources to the network",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast/contract/computeprovider",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/dms/deployment",
+            "/broadcast/deployment/computeprovider",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      },
+      {
+        "id": "Orchestrator",
+        "label": "Orchestrator",
+        "description": "An Orchestrator can deploy ensembles on the network,  This role requires more trust and will need manual approval by the organization",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "contract_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/tokenomics/contract",
+            "/broadcast/contract/orchestrator",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        },
+        "deployment_require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/broadcast/deployment/orchestrator",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      }
+    ]
+  },
   "did:key:z6Mksf2cqTBTHE7nuKZiUEUn4Gnhdphmnn3GZXf12kqoz8Qj": {
     "name": "NuNet AI Workshop ",
     "onboarding_api_url": "https://aiworkshop.nunet.network/api",
