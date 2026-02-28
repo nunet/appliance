@@ -762,7 +762,7 @@ class OnboardingManager:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=15
+                timeout=60
             )
             
             if result.returncode != 0:

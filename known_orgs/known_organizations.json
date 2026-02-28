@@ -1,142 +1,6 @@
 {
-  "did:key:zzCHUyXYM1LteZh6AXso45QPCUGFePCe6PTmamewb4Rb9CZKdX": {
-    "name": "NuNet SPO's",
-    "onboarding_api_url": "https://spo.parallelvector.com/api",
-    "contract_required": true,
-    "join_fields": [
-      {
-        "name": "email",
-        "label": "Email",
-        "type": "email",
-        "required": true
-      },
-      {
-        "name": "location",
-        "label": "Location (City, Country)",
-        "type": "text",
-        "required": true
-      },
-      {
-        "name": "discord",
-        "label": "Discord Username (Optional)",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "roles": [
-      {
-        "id": "compute_provider",
-        "label": "Compute Provider",
-        "description": "",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      }
-    ]
-  },
-  "did:key:z6MkoZmD4Q48D9C1V9RMwFvz3Y1oHX6Unsyk1drvYZPfU8Hh": {
-    "name": "Auki Testnet ",
-    "onboarding_api_url": "https://auki.nunet.network/api",
-    "contract_required": true,
-    "tokenomics": {
-      "enabled": true,
-      "chain": "ethereum"
-    },
-    "join_fields": [
-      {
-        "name": "email",
-        "label": "Email",
-        "type": "email",
-        "required": true
-      },
-      {
-        "name": "location",
-        "label": "Location (City, Country)",
-        "type": "text",
-        "required": true
-      },
-      {
-        "name": "discord",
-        "label": "Discord Username (Optional)",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "roles": [
-      {
-        "id": "compute_provider",
-        "label": "Compute Provider",
-        "description": "",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      }
-    ]
-  },
   "did:key:z6MksnDmmfFkEU4a71du26wuE2fecDNgWfn4h8A3txQAHHyT": {
-    "name": "NuNet Contract Test ",
+    "name": "NuNet Contract Test",
     "onboarding_api_url": "https://contract-testnet.nunet.network/api",
     "tokenomics": {
       "enabled": true,
@@ -245,7 +109,7 @@
     ]
   },
   "did:key:z6Mkm12vXF4DryrDkTY1gEkmEbtTvjRa27eCY3iRBZ4aB3EH": {
-    "name": "NuNet Live - Staging ",
+    "name": "NuNet Live - Staging",
     "onboarding_api_url": "https://nunetlive.orgs.staging.nunet.online/api",
     "tokenomics": {
       "enabled": true,
@@ -281,7 +145,7 @@
           "caps": [
             "/dms/deployment",
             "/dms/tokenomics/contract",
-            "/broadcast",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
@@ -292,7 +156,7 @@
           "context": "dms",
           "caps": [
             "/dms/tokenomics/contract",
-            "/broadcast/contract/computeprovider",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
@@ -304,7 +168,7 @@
           "caps": [
             "/dms/tokenomics/contract",
             "/dms/deployment",
-            "/broadcast/deployment/computeprovider",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
@@ -319,9 +183,9 @@
         "require_template": {
           "context": "dms",
           "caps": [
-            "/dms/deployment",
+            "/dms/deployment/bid",
             "/dms/tokenomics/contract",
-            "/broadcast",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
@@ -332,213 +196,7 @@
           "context": "dms",
           "caps": [
             "/dms/tokenomics/contract",
-            "/broadcast/contract/orchestrator",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast/deployment/orchestrator",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      }
-    ]
-  },
-  "did:key:z6Mksf2cqTBTHE7nuKZiUEUn4Gnhdphmnn3GZXf12kqoz8Qj": {
-    "name": "NuNet AI Workshop ",
-    "onboarding_api_url": "https://aiworkshop.nunet.network/api",
-    "contract_required": true,
-    "tokenomics": {
-      "enabled": false,
-      "chain": "ethereum"
-    },
-    "join_fields": [
-      {
-        "name": "email",
-        "label": "Email",
-        "type": "email",
-        "required": true
-      },
-      {
-        "name": "location",
-        "label": "Location (City, Country)",
-        "type": "text",
-        "required": true
-      },
-      {
-        "name": "discord",
-        "label": "Discord Username (Optional)",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "roles": [
-      {
-        "id": "compute_provider",
-        "label": "Compute Provider",
-        "description": "",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      }
-    ]
-  },
-  "did:key:z6MkmrJZqjwUQ5yy1Q8FMs9FXcX7kAsYNMr8wUWBPR8A4BRw": {
-    "name": "Gaimin Testnet",
-    "onboarding_api_url": "https://gaimin.nunet.network/api",
-    "contract_required": true,
-    "tokenomics": {
-      "enabled": false,
-      "chain": "ethereum"
-    },
-    "join_fields": [
-      {
-        "name": "email",
-        "label": "Email",
-        "type": "email",
-        "required": true
-      },
-      {
-        "name": "location",
-        "label": "Location (City, Country)",
-        "type": "text",
-        "required": true
-      },
-      {
-        "name": "discord",
-        "label": "Discord Username (Optional)",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "roles": [
-      {
-        "id": "compute_provider",
-        "label": "Compute Provider",
-        "description": "",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      }
-    ]
-  },
-  "did:key:z6MknaPMu6ju2PNYWQ3wnshnLA8erLb5sauVgTtY7Ni18VyR": {
-    "name": "NuTestNet",
-    "onboarding_api_url": "https://onboarding.nunet.network/api",
-    "contract_required": true,
-    "join_fields": [
-      {
-        "name": "email",
-        "label": "Email",
-        "type": "email",
-        "required": true
-      },
-      {
-        "name": "location",
-        "label": "Location (City, Country)",
-        "type": "text",
-        "required": true
-      },
-      {
-        "name": "discord",
-        "label": "Discord Username (Optional)",
-        "type": "text",
-        "required": false
-      }
-    ],
-    "roles": [
-      {
-        "id": "compute_provider",
-        "label": "Compute Provider",
-        "description": "bid",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
@@ -549,121 +207,13 @@
           "context": "dms",
           "caps": [
             "/dms/deployment/bid",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      },
-      {
-        "id": "orchestrator",
-        "label": "Orchestrator",
-        "description": "deploy",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
             "/dms/tokenomics/contract",
-            "/broadcast",
+            "/broadcast/hello",
             "/public"
           ],
           "topics": [
             "/nunet"
           ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      },
-      {
-        "id": "contract-host",
-        "label": "Contract Host",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        }
-      },
-      {
-        "id": "payment-provider",
-        "label": "Payment Provider",
-        "require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/deployment",
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "contract_require_template": {
-          "context": "dms",
-          "caps": [
-            "/dms/tokenomics/contract",
-            "/broadcast",
-            "/public"
-          ],
-          "topics": [
-            "/nunet"
-          ]
-        },
-        "deployment_require_template": {
-          "context": "dms",
-          "caps": [],
-          "topics": []
         }
       }
     ]
