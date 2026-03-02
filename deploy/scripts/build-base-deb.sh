@@ -154,59 +154,98 @@ chmod 0755 "$ROOT/home/nunet/scripts/rundms.sh"
 # DMS config
 cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
 {
-  "apm": {
-    "api_key": "",
-    "environment": "production",
-    "server_url": "https://apm.telemetry.nunet.io",
-    "service_name": "nunet-dms"
-  },
-  "general": {
-    "env": "production",
-    "data_dir": "/home/nunet/nunet/data",
-    "debug": false,
-    "port_available_range_from": 1024,
-    "port_available_range_to": 32768,
-    "user_dir": "/home/nunet/.nunet",
-    "work_dir": "/home/nunet/nunet"
-  },
-  "job": {
-    "allow_privileged_docker": false
-  },
-  "observability": {
-    "elasticsearch_api_key": "",
-    "elasticsearch_enabled": false,
-    "elasticsearch_index": "nunet-dms",
-    "elasticsearch_url": "http://localhost:9200",
-    "flush_interval": 5,
-    "insecure_skip_verify": true,
-    "log_file": "/home/nunet/logs/nunet-dms.log",
-    "log_level": "DEBUG",
-    "max_age": 28,
-    "max_backups": 3,
-    "max_size": 100
-  },
-  "p2p": {
-    "bootstrap_peers": [
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWHzew9HTYzywFuvTHGK5Yzoz7qAhMfxagtCvhvjheoBQ3",
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWJMtMN1mTNRfgMqUygT7eSXamVzc9ihpSjeairm9PebmB",
-      "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWKjSodxxi7UfRHzuk7eGgUF49MoPUCJvtva9K12TqDDsi"
-    ],
-    "fd": 512,
-    "listen_address": [
-      "/ip4/0.0.0.0/tcp/9000",
-      "/ip4/0.0.0.0/udp/9000/quic-v1"
-    ],
-    "memory": 1024
-  },
-  "profiler": {
-    "addr": "127.0.0.1",
-    "enabled": true,
-    "port": 6060
-  },
-  "rest": {
-    "addr": "127.0.0.1",
-    "port": 9999
-  }
+    "profiler": {
+        "enabled": true,
+        "addr": "127.0.0.1",
+        "port": 6060
+    },
+    "general": {
+        "env": "production",
+        "user_dir": "/home/nunet/.nunet",
+        "work_dir": "/home/nunet/nunet",
+        "data_dir": "/home/nunet/nunet/data",
+        "debug": false,
+        "host_city": "",
+        "host_country": "",
+        "host_continent": "",
+        "port_available_range_from": 1024,
+        "port_available_range_to": 32768,
+        "storage_mode": false,
+        "storage_ca_directory": "/home/nunet/.nunet/storage_ca_directory",
+        "storage_bricks_dir": "/home/nunet/.nunet/storage_bricks_dir",
+        "storage_glusterfs_hostname": "",
+        "compute_gateway": false,
+        "providers": null,
+        "payment_provider": {
+            "mode": false,
+            "ethereum_rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+            "ethereum_rpc_token": "",
+            "ntx_contract_address": "0xB37216b70a745129966E553cF8Ee2C51e1cB359A",
+            "block_frost_api_url": "",
+            "block_frost_api_key": "",
+            "cardano_asset_name": "",
+            "cardano_asset_policy_id": ""
+        }
+    },
+    "rest": {
+        "addr": "127.0.0.1",
+        "port": 9999
+    },
+    "p2p": {
+        "listen_address": [
+            "/ip4/0.0.0.0/tcp/9000",
+            "/ip4/0.0.0.0/udp/9000/quic-v1"
+        ],
+        "bootstrap_peers": [
+            "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWHzew9HTYzywFuvTHGK5Yzoz7qAhMfxagtCvhvjheoBQ3",
+            "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWJMtMN1mTNRfgMqUygT7eSXamVzc9ihpSjeairm9PebmB",
+            "/dnsaddr/bootstrap.p2p.nunet.io/p2p/12D3KooWKjSodxxi7UfRHzuk7eGgUF49MoPUCJvtva9K12TqDDsi"
+        ],
+        "memory": 1024,
+        "fd": 512
+    },
+    "job": {
+        "allow_privileged_docker": false,
+        "require_contracts_for_deployment": false
+    },
+    "observability": {
+        "logging": {
+            "level": "DEBUG",
+            "file": "/home/nunet/logs/nunet-dms.log",
+            "rotation": {
+                "max_size_mb": 100,
+                "max_backups": 3,
+                "max_age_days": 28
+            }
+        },
+        "elastic": {
+            "url": "https://telemetry.nunet.io",
+            "index": "nunet-dms",
+            "flush_interval": 5,
+            "enabled": false,
+            "api_key": "",
+            "insecure_skip_verify": true
+        },
+        "otel": {
+            "enabled": true,
+            "endpoint": "otel.nunet.network:4317",
+            "insecure": true
+        }
+    },
+    "apm": {
+        "server_url": "https://apm.telemetry.nunet.io",
+        "service_name": "nunet-dms",
+        "environment": "production",
+        "api_key": "",
+        "secret_token": ""
+    },
+    "coinmarketcap": {
+        "api_key": "",
+        "base_url": "",
+        "endpoint_path": "",
+        "cache_ttl": "",
+        "quote_ttl": ""
+    }
 }
 EOF
 
