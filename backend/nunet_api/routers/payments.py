@@ -29,12 +29,12 @@ router = APIRouter()
 
 # --------- hard-coded token configs (testing defaults) ---------
 ETH_TOKEN_CONFIG = TokenConfig(
-    chain_id=11155111,
-    token_address="0xB37216b70a745129966E553cF8Ee2C51e1cB359A",
-    token_symbol="TSTNTX",
+    chain_id=1,
+    token_address="0xF0d33BeDa4d734C72684b5f9abBEbf715D0a7935",
+    token_symbol="NTX",
     token_decimals=16,
-    explorer_base_url="https://sepolia.etherscan.io/",
-    network_name="Ethereum Sepolia",
+    explorer_base_url="https://etherscan.io/",
+    network_name="Ethereum Mainnet",
 )
 
 CARDANO_TOKEN_CONFIG = CardanoTokenConfig(
