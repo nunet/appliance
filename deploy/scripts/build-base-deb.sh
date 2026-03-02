@@ -206,7 +206,7 @@ cat > "$ROOT/home/nunet/config/dms_config.json" <<'EOF'
     },
     "job": {
         "allow_privileged_docker": false,
-        "require_contracts_for_deployment": false
+        "require_contracts_for_deployment": true
     },
     "observability": {
         "logging": {
