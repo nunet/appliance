@@ -1,0 +1,94 @@
+{
+  "did:key:z6MksqN98v97yXtaGkuJWeK5yJ9EejZEi6xM19oZa8t4zL5a": {
+    "name": "NuTestNet",
+    "onboarding_api_url": "https://e2etests.nunet.network/api",
+    "join_fields": [
+      {
+        "name": "email",
+        "label": "Email",
+        "type": "email",
+        "required": true
+      },
+      {
+        "name": "location",
+        "label": "Location (City, Country)",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "discord",
+        "label": "Discord Username (Optional)",
+        "type": "text",
+        "required": false
+      }
+    ],
+    "roles": [
+      {
+        "id": "compute_provider",
+        "label": "Compute Provider",
+        "description": "bid",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      },
+      {
+        "id": "orchestrator",
+        "label": "Orchestrator",
+        "description": "deploy",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      },
+      {
+        "id": "contract-host",
+        "label": "Contract Host",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      },
+      {
+        "id": "payment-provider",
+        "label": "Payment Provider",
+        "require_template": {
+          "context": "dms",
+          "caps": [
+            "/dms/deployment",
+            "/dms/tokenomics/contract",
+            "/broadcast",
+            "/public"
+          ],
+          "topics": [
+            "/nunet"
+          ]
+        }
+      }
+    ]
+  }
+}

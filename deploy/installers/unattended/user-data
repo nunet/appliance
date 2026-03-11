@@ -1,0 +1,232 @@
+#cloud-config
+autoinstall:
+  version: 1
+  identity:
+    hostname: nunet-appliance
+    username: ubuntu
+    password: "$6$exDY1mhS4KUYCE/2$zmn9ToZwTKLhCw.b4/b.ZRTIZM30JZ4QrOQ2aOXJ8yk96xpcCof0kxKwuX1kqLG/ygbJ1f8wxED22bTL4F46P0"
+  user-data:
+    package_update: true
+    package_upgrade: true
+    packages:
+      - wget
+      - ca-certificates
+      - curl
+      - gnupg
+      - keyutils
+      - jq
+      - gnuplot
+      - htop
+      - acl
+      - lnav
+      - python3-qrcode
+
+    users:
+      - name: ubuntu
+        passwd: "$6$exDY1mhS4KUYCE/2$zmn9ToZwTKLhCw.b4/b.ZRTIZM30JZ4QrOQ2aOXJ8yk96xpcCof0kxKwuX1kqLG/ygbJ1f8wxED22bTL4F46P0"
+        lock_passwd: false
+        shell: /bin/bash
+        sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+        groups: sudo, adm
+
+    write_files:
+      # Autologin on TTY1
+      - path: /etc/systemd/system/getty@tty1.service.d/override.conf
+        owner: root:root
+        permissions: '0644'
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty --autologin ubuntu --noclear %I $TERM
+
+      # DMS Installer Script
+      - path: /tmp/install-dms.sh
+        permissions: '0644'
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          echo "Detecting system architecture..."
+          ARCH=$(dpkg --print-architecture)
+          if [ "$ARCH" = "amd64" ]; then
+            PACKAGE_URL="https://d.nunet.io/nunet-dms-amd64-stable.deb"
+          elif [ "$ARCH" = "arm64" ]; then
+            PACKAGE_URL="https://d.nunet.io/nunet-dms-arm64-stable.deb"
+          else
+            echo "❌ Unsupported architecture: $ARCH"
+            exit 1
+          fi
+          echo "Downloading NuNet DMS package for $ARCH..."
+          wget -O /tmp/nunet-dms.deb "$PACKAGE_URL"
+          echo "Installing NuNet DMS..."
+          apt install -y /tmp/nunet-dms.deb
+          mkdir -p /home/ubuntu/bin /home/ubuntu/.config/nunet /home/ubuntu/.secrets
+          chown ubuntu:ubuntu /home/ubuntu/.bashrc
+          chown -R ubuntu:ubuntu /home/ubuntu/bin /home/ubuntu/.config /home/ubuntu/.secrets
+          echo "✅ DMS installation complete."
+
+      # Netplan metric tweaker
+      - path: /usr/local/bin/fix-default-route.sh
+        permissions: '0755'
+        owner: root:root
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          NETPLAN_FILE="/etc/netplan/50-cloud-init.yaml"
+          BACKUP_FILE="${NETPLAN_FILE}.bak.$(date +%F_%T)"
+          cp "$NETPLAN_FILE" "$BACKUP_FILE" || true
+          chmod 600 "$NETPLAN_FILE" || true
+          awk '
+          BEGIN { found_default=0; found_extra0=0 }
+          /default:/ { found_default=1 }
+          /extra0:/ { found_extra0=1 }
+          /dhcp4: true/ {
+              print
+              if (found_default) {
+                  print "      dhcp4-overrides:"
+                  print "        route-metric: 200"
+                  found_default=0
+              }
+              next
+          }
+          /route-metric: 200/ {
+              if (found_extra0) {
+                  print "        route-metric: 100"
+                  found_extra0=0
+                  next
+              }
+          }
+          { print }
+          ' "$NETPLAN_FILE" > "${NETPLAN_FILE}.tmp" || true
+          mv "${NETPLAN_FILE}.tmp" "$NETPLAN_FILE" || true
+          chmod 600 "$NETPLAN_FILE" || true
+          netplan apply || true
+          echo "Netplan configuration updated."
+
+      # First boot script (runs as ubuntu)
+      - path: /var/lib/cloud/instance/run-on-appliance-boot.sh
+        permissions: '0755'
+        owner: root:root
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          update_progress(){ :; }
+
+          # Random password for ubuntu
+          PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
+          echo "ubuntu:${PASSWORD}" | sudo chpasswd
+          echo "Password reset completed on appliance boot." | sudo tee /root/appliance-boot.log >/dev/null
+
+          # Generate and store DMS passphrase in ubuntu user keyring and persist
+          PASS_PHRASE=$(openssl rand -base64 16 | tr -d '/+=' | cut -c1-16)
+          echo "Your DMS Passphrase is: ${PASS_PHRASE}"
+          echo "Write this down or store it in a password manager."
+          keyctl add user dms_passphrase "${PASS_PHRASE}" @u
+          keyctl list @u || true
+          echo "${PASS_PHRASE}" > /home/ubuntu/.secrets/dms_passphrase
+          chmod 600 /home/ubuntu/.secrets/dms_passphrase
+          export DMS_PASSPHRASE="${PASS_PHRASE}"
+
+          # Create new DMS context
+          DMS_DID=$(nunet key new dms)
+          nunet cap new dms
+          echo "This is your DMS DID: ${DMS_DID}"
+          export DMS_DID="${DMS_DID}"
+
+          echo "Copy DMS config to nunet home"
+          sudo install -D -m 0660 -o nunet -g nunet /home/ubuntu/.nunet/key/dms.json /home/nunet/.nunet/key/dms.json
+          sudo install -D -m 0660 -o nunet -g nunet /home/ubuntu/.nunet/cap/dms.cap /home/nunet/.nunet/cap/dms.cap
+          echo "${PASS_PHRASE}" | sudo tee /home/nunet/.secrets/dms_passphrase >/dev/null
+          sudo chown nunet:nunet /home/nunet/.secrets/dms_passphrase
+          sudo chmod 660 /home/nunet/.secrets/dms_passphrase
+
+          # Enable services (guard if missing)
+          update_progress 90 "Enabling services..."
+          echo "enable DMS services" | sudo tee -a /root/appliance-boot.log >/dev/null
+          sudo systemctl enable loadubuntukeyring.service >/dev/null 2>&1 || true
+          sudo systemctl enable loadnunetkeyring.service  >/dev/null 2>&1 || true
+          sudo systemctl enable nunetdms.service          >/dev/null 2>&1 || true
+          sudo systemctl enable nunet-web-manager.service >/dev/null 2>&1 || true
+          echo "Systemd services enabled (if present)." | sudo tee -a /root/appliance-boot.log >/dev/null
+
+          sleep 2
+          echo "clean up after the jobs have been done" | sudo tee -a /root/appliance-boot.log >/dev/null
+          sudo systemctl disable appliance-first-boot.service || true
+          sudo rm -f /etc/systemd/system/appliance-first-boot.service
+          sudo rm -f /var/lib/cloud/instance/run-on-appliance-boot.sh
+          sudo rm -f /tmp/boot_progress.txt || true
+
+          sudo reboot now
+
+      # First-boot systemd unit (runs as ubuntu; guard matches script)
+      - path: /etc/systemd/system/appliance-first-boot.service
+        permissions: '0644'
+        owner: root:root
+        content: |
+          [Unit]
+          Description=Run Script on appliance first boot
+          After=network.target
+          ConditionPathExists=!/var/lib/cloud/instance/first_boot_complete
+
+          [Service]
+          Type=oneshot
+          User=ubuntu
+          Group=ubuntu
+          ExecStart=/var/lib/cloud/instance/run-on-appliance-boot.sh
+          RemainAfterExit=no
+
+          [Install]
+          WantedBy=multi-user.target
+
+    runcmd:
+      # (Optional) remove systemd-resolved & set resolv.conf 
+      - systemctl stop systemd-resolved || true
+      - systemctl disable systemd-resolved || true
+      - apt remove -y systemd-resolved || true
+      - rm -f /etc/resolv.conf
+      - echo "nameserver 8.8.8.8" > /etc/resolv.conf
+      - echo "nameserver 1.1.1.1" >> /etc/resolv.conf
+      - chmod 0644 /etc/resolv.conf
+      - cat /etc/resolv.conf
+      - sleep 5
+
+      # Docker
+      - install -m 0755 -d /etc/apt/keyrings
+      - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | tee /etc/apt/keyrings/docker.asc > /dev/null
+      - chmod a+r /etc/apt/keyrings/docker.asc
+      - sh -c "echo 'deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable' | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+      - apt update
+      - apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      - systemctl enable --now docker
+
+      # Ensure nunet user exists before first-boot script copies files there
+      - useradd -m -d /home/nunet -s /usr/sbin/nologin nunet || true
+      - mkdir -p /home/nunet/.nunet/key /home/nunet/.nunet/cap /home/nunet/.secrets
+      - chown -R nunet:nunet /home/nunet
+      - chmod -R 0770 /home/nunet
+      - usermod -aG nunet ubuntu || true
+      - usermod -aG docker ubuntu || true
+      - usermod -aG docker nunet || true
+
+      # Install DMS
+      - echo "Installing DMS."
+      - sh -c "if [ -s /tmp/install-dms.sh ]; then chmod +x /tmp/install-dms.sh && bash /tmp/install-dms.sh; else echo '❌ Installation script missing' && exit 1; fi"
+      - echo "DMS installation complete."
+
+      # Install NuNet appliance debs (optional/local)
+      - echo "Downloading and installing nunet-appliance-base..."
+      - wget -O /tmp/nunet-appliance-base_2.0.0_amd64.deb "http://192.168.88.172:8080/nunet-appliance-base_2.0.0_amd64.deb" || true
+      - dpkg -i /tmp/nunet-appliance-base_2.0.0_amd64.deb || apt -f install -y || true
+      - echo "Downloading and installing nunet-appliance-web..."
+      - wget -O /tmp/nunet-appliance-web_2.0.0_amd64.deb "http://192.168.88.172:8080/nunet-appliance-web_2.0.0_amd64.deb" || true
+      - dpkg -i /tmp/nunet-appliance-web_2.0.0_amd64.deb || apt -f install -y || true
+
+      # Netplan metrics tweak
+      - bash /usr/local/bin/fix-default-route.sh
+
+      # Make sure first-boot script is executable
+      - chmod +x /var/lib/cloud/instance/run-on-appliance-boot.sh
+
+      # Reload units & enable first-boot
+      - systemctl daemon-reload
+      - systemctl enable appliance-first-boot.service
+

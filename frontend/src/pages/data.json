@@ -1,0 +1,32 @@
+[
+  {
+    "id": "0",
+    "dms_status": "Active",
+    "dms_version": "1.0.3",
+    "dms_running": true,
+    "dms_context": "Main",
+    "dms_did": "did:example:123456789abcdefghi",
+    "dms_peer_id": "peer-001",
+    "dms_is_relayed": false
+  },
+  {
+    "id": "1",
+    "dms_status": "Inactive",
+    "dms_version": "1.1.0",
+    "dms_running": false,
+    "dms_context": "Backup",
+    "dms_did": "did:example:abcdefghijk123456789",
+    "dms_peer_id": "peer-002",
+    "dms_is_relayed": true
+  },
+  {
+    "id": "2",
+    "dms_status": "Maintenance",
+    "dms_version": "2.0.0",
+    "dms_running": true,
+    "dms_context": "Test",
+    "dms_did": "did:example:987654321hgfedcba",
+    "dms_peer_id": "peer-003",
+    "dms_is_relayed": false
+  }
+]

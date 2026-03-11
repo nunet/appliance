@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NuNet Appliance Deployments</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='dark-theme.css') }}" rel="stylesheet">
+    
+    <style>
+        body {
+            background-color: #212529;
+            color: #f8f9fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header img {
+            max-width: 200px;
+            margin-bottom: 20px;
+        }
+        
+        .deployments-table {
+            background-color: #343a40;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .deployments-table th {
+            background-color: #495057;
+            color: #f8f9fa;
+            border: none;
+            padding: 15px;
+            font-weight: 600;
+        }
+        
+        .deployments-table td {
+            border: none;
+            border-bottom: 1px solid #495057;
+            padding: 15px;
+            vertical-align: middle;
+        }
+        
+        .deployments-table tbody tr:hover {
+            background-color: #495057;
+        }
+        
+        .status-running {
+            color: #ffc107;
+            font-weight: bold;
+        }
+        
+        .status-completed {
+            color: #28a745;
+            font-weight: bold;
+        }
+        
+        .status-failed {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        
+        .status-pending {
+            color: #6c757d;
+            font-weight: bold;
+        }
+        
+        .action-btn {
+            padding: 6px 12px;
+            margin: 2px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-manifest {
+            background-color: #17a2b8;
+            color: white;
+        }
+        
+        .btn-logs {
+            background-color: #6c757d;
+            color: white;
+        }
+        
+        .btn-manifest:hover {
+            background-color: #138496;
+            color: white;
+        }
+        
+        .btn-logs:hover {
+            background-color: #545b62;
+            color: white;
+        }
+        
+        .modal-content {
+            background-color: #343a40;
+            color: #f8f9fa;
+            border: 1px solid #495057;
+        }
+        
+        .modal-header {
+            border-bottom: 1px solid #495057;
+        }
+        
+        .modal-footer {
+            border-top: 1px solid #495057;
+        }
+        
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: #f8f9fa;
+        }
+        
+        .refresh-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        
+        .refresh-btn:hover {
+            background-color: #0056b3;
+            color: white;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+        }
+        
+        .error {
+            color: #dc3545;
+            padding: 10px;
+            background-color: rgba(220, 53, 69, 0.1);
+            border: 1px solid #dc3545;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            color: #28a745;
+            padding: 10px;
+            background-color: rgba(40, 167, 69, 0.1);
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        pre {
+            background-color: #212529;
+            color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            border: 1px solid #495057;
+        }
+        
+        .deployment-id {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #adb5bd;
+        }
+        
+        .ensemble-file {
+            font-weight: 500;
+        }
+        
+        .timestamp {
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+        
+        .filters {
+            background-color: #343a40;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .filter-group {
+            margin-bottom: 15px;
+        }
+        
+        .filter-group label {
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+        
+        .filter-group select,
+        .filter-group input {
+            background-color: #495057;
+            border: 1px solid #6c757d;
+            color: #f8f9fa;
+        }
+        
+        .filter-group select:focus,
+        .filter-group input:focus {
+            background-color: #495057;
+            border-color: #007bff;
+            color: #f8f9fa;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        
+        /* Mobile card layout */
+        .deployment-card {
+            background-color: #343a40;
+            border: 1px solid #495057;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .deployment-card:hover {
+            background-color: #495057;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .deployment-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .deployment-card-id {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #adb5bd;
+            font-weight: 600;
+        }
+        
+        .deployment-card-status {
+            font-size: 0.8em;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+        
+        .deployment-card-body {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .deployment-card-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .deployment-card-label {
+            font-size: 0.8em;
+            color: #6c757d;
+            font-weight: 500;
+        }
+        
+        .deployment-card-value {
+            font-size: 0.9em;
+            color: #f8f9fa;
+        }
+        
+        .deployment-cards {
+            display: block;
+            margin-top: 10px;
+        }
+        
+        /* Manifest table styling */
+        .manifest-table {
+            background-color: #212529;
+            border: 1px solid #495057;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .manifest-table th {
+            background-color: #343a40;
+            color: #f8f9fa;
+            padding: 10px;
+            font-weight: 600;
+            border-bottom: 1px solid #495057;
+        }
+        
+        .manifest-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #495057;
+            color: #f8f9fa;
+        }
+        
+        .manifest-table tr:hover {
+            background-color: #2c3034;
+        }
+        
+        /* Filter collapse for mobile */
+        .filters-collapse {
+            display: none;
+        }
+        
+        .filters-toggle {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 15px;
+            margin-top: 10px;
+            width: 100%;
+            text-align: left;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .filters-toggle:hover, .filters-toggle:focus {
+            background-color: #0056b3;
+            color: #fff;
+        }
+        
+        /* Manifest Table Dark Theme */
+        .manifest-table {
+            background: #23272b !important;
+            color: #f8f9fa !important;
+            border: none !important;
+        }
+        .manifest-table th, .manifest-table td {
+            background: #23272b !important;
+            color: #f8f9fa !important;
+            border: none !important;
+            font-size: 0.97em;
+            padding: 6px 10px !important;
+            vertical-align: top;
+            word-break: break-all;
+        }
+        .manifest-table thead th {
+            background: #343a40 !important;
+            color: #f8f9fa !important;
+            border-bottom: 1px solid #495057 !important;
+            font-weight: 600;
+        }
+        .manifest-table tbody tr {
+            border-bottom: 1px solid #343a40 !important;
+        }
+        .manifest-table h6 {
+            color: #b8c1ec !important;
+            margin-top: 1em;
+        }
+        
+        /* Modal and manifest table font adjustments for better mobile view */
+        .modal-content, .manifest-table, .manifest-table th, .manifest-table td {
+            font-size: 0.97em;
+            font-weight: 400;
+        }
+        .manifest-table th {
+            font-weight: 500;
+        }
+        .manifest-table td, .manifest-table th {
+            word-break: break-word;
+            white-space: normal;
+        }
+        @media (max-width: 600px) {
+            .modal-content, .manifest-table, .manifest-table th, .manifest-table td {
+                font-size: 0.89em;
+            }
+            .modal-title {
+                font-size: 1.1em;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .deployment-cards {
+                display: block;
+            }
+            .deployment-card {
+                margin-bottom: 10px;
+                width: 100%;
+            }
+        }
+        
+        @media (min-width: 769px) {
+            .deployment-cards {
+                display: block;
+            }
+            .deployment-card {
+                width: 100%;
+                margin-bottom: 20px;
+            }
+        }
+        /* Peer ID wrapping and monospace */
+        .peer-id {
+            font-family: monospace;
+            word-break: break-all;
+            white-space: pre-wrap;
+            font-size: 0.97em;
+        }
+        /* Allocation status chip colors */
+        .alloc-status-chip.bg-success {
+            background-color: #198754 !important;
+            color: #fff !important;
+        }
+        .alloc-status-chip.bg-secondary {
+            background-color: #6c757d !important;
+            color: #fff !important;
+        }
+        /* Blue close button */
+        .modal-footer .btn.btn-secondary {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+            color: #fff;
+        }
+        .modal-footer .btn.btn-secondary:hover {
+            background-color: #0b5ed7;
+            border-color: #0a58ca;
+        }
+    </style>
+</head>
+<body>
+    {% include "navbar.html" %}
+    
+    <div class="container">
+        <div class="header">
+            <h1>Deployments</h1>
+            <p class="text-muted">Monitor and manage your ensemble deployments</p>
+        </div>
+        
+        <!-- Filter toggle button: always visible -->
+        <div class="filters-collapse">
+            <button class="filters-toggle" onclick="toggleFilters()">
+                <i class="bi bi-funnel"></i> Filters
+                <i class="bi bi-chevron-down float-end" id="filterChevron"></i>
+            </button>
+        </div>
+        <div class="filters" id="filters" style="display: none;">
+            <div class="row">
+                <div class="col-md-3">
+                    <div class="filter-group">
+                        <label for="statusFilter">Status Filter:</label>
+                        <select class="form-control" id="statusFilter">
+                            <option value="">All Statuses</option>
+                            <option value="running">Running</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                            <option value="pending">Pending</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="filter-group">
+                        <label for="typeFilter">Type Filter:</label>
+                        <select class="form-control" id="typeFilter">
+                            <option value="">All Types</option>
+                            <option value="active">Active</option>
+                            <option value="historical">Historical</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="filter-group">
+                        <label for="searchFilter">Search:</label>
+                        <input type="text" class="form-control" id="searchFilter" placeholder="Search deployments...">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="filter-group">
+                        <label>&nbsp;</label>
+                        <button class="btn btn-primary w-100" onclick="loadDeployments()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading" style="display: none;">
+            <i class="bi bi-arrow-clockwise spin"></i> Loading deployments...
+        </div>
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <!-- Card view (now always visible) -->
+        <div class="deployment-cards" id="deploymentCards">
+            <!-- Deployment cards will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Modal for deployment details -->
+    <div class="modal fade" id="deploymentModal" tabindex="-1" aria-labelledby="modalTitle" aria-hidden="true">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalTitle">Deployment Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="modalContent">
+                    <!-- Content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let deployments = [];
+        let autoRefreshInterval;
+        let filteredDeployments = [];
+
+        function loadDeployments() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            
+            fetch('/api/deployments')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    if (data.status === 'success') {
+                        deployments = data.deployments;
+                        applyFilters();
+                    } else {
+                        showError(data.message || 'Failed to load deployments');
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('loading').style.display = 'none';
+                    showError('Failed to load deployments: ' + error.message);
+                });
+        }
+
+        function applyFilters() {
+            const statusFilter = document.getElementById('statusFilter').value;
+            const typeFilter = document.getElementById('typeFilter').value;
+            const searchFilter = document.getElementById('searchFilter').value.toLowerCase();
+            
+            filteredDeployments = deployments.filter(deployment => {
+                const matchesStatus = !statusFilter || deployment.status === statusFilter;
+                const matchesType = !typeFilter || deployment.type === typeFilter;
+                const matchesSearch = !searchFilter || 
+                    deployment.id.toLowerCase().includes(searchFilter) ||
+                    deployment.ensemble_file.toLowerCase().includes(searchFilter);
+                
+                return matchesStatus && matchesType && matchesSearch;
+            });
+            
+            renderDeployments();
+        }
+
+        function renderDeployments() {
+            renderCardDeployments();
+        }
+
+        function renderCardDeployments() {
+            const cardsContainer = document.getElementById('deploymentCards');
+            cardsContainer.innerHTML = '';
+            
+            if (filteredDeployments.length === 0) {
+                cardsContainer.innerHTML = '<div class="text-center text-muted">No deployments found</div>';
+                return;
+            }
+            
+            filteredDeployments.forEach(deployment => {
+                const card = document.createElement('div');
+                const timestamp = new Date(deployment.timestamp).toLocaleString();
+                const statusClass = `status-${deployment.status}`;
+                const shortId = deployment.id.slice(-5); // Last 5 characters
+                
+                card.className = 'deployment-card';
+                // Always add click handler - CSS will handle visibility
+                card.onclick = () => {
+                    console.log('Card clicked for deployment:', deployment.id); // Debug
+                    showDeploymentDetails(deployment);
+                };
+                
+                card.innerHTML = `
+                    <div class="deployment-card-header">
+                        <span class="deployment-card-id">...${shortId}</span>
+                        <span class="deployment-card-status ${statusClass}">${deployment.status}</span>
+                    </div>
+                    <div class="deployment-card-body">
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">Type:</span>
+                            <span class="deployment-card-value">${deployment.type}</span>
+                        </div>
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">File:</span>
+                            <span class="deployment-card-value">${deployment.ensemble_file}</span>
+                        </div>
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">Time:</span>
+                            <span class="deployment-card-value">${timestamp}</span>
+                        </div>
+                    </div>
+                `;
+                
+                cardsContainer.appendChild(card);
+            });
+        }
+
+        function showDeploymentDetails(deployment) {
+            console.log('showDeploymentDetails called with:', deployment); // Debug
+            
+            const timestamp = new Date(deployment.timestamp).toLocaleString();
+            const statusClass = `status-${deployment.status}`;
+            
+            document.getElementById('modalTitle').textContent = `Deployment Details - ...${deployment.id.slice(-5)}`;
+            document.getElementById('modalContent').innerHTML = `
+                <div class="deployment-card" style="cursor:default; box-shadow:none;">
+                    <div class="deployment-card-header">
+                        <span class="deployment-card-id">...${deployment.id.slice(-5)}</span>
+                        <span class="deployment-card-status ${statusClass}">${deployment.status}</span>
+                    </div>
+                    <div class="deployment-card-body">
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">Type:</span>
+                            <span class="deployment-card-value">${deployment.type}</span>
+                        </div>
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">File:</span>
+                            <span class="deployment-card-value">${deployment.ensemble_file}</span>
+                        </div>
+                        <div class="deployment-card-row">
+                            <span class="deployment-card-label">Timestamp:</span>
+                            <span class="deployment-card-value">${timestamp}</span>
+                        </div>
+                    </div>
+                    <div class="mt-3 d-grid gap-2">
+                        <button class="btn btn-info" data-manifest-id="${deployment.id}">
+                            <i class="bi bi-file-text"></i> View Manifest
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            const modalElement = document.getElementById('deploymentModal');
+            console.log('Modal element:', modalElement); // Debug
+            
+            // Clear any existing modal instance
+            const existingModal = bootstrap.Modal.getInstance(modalElement);
+            if (existingModal) {
+                console.log('Disposing existing modal'); // Debug
+                existingModal.dispose();
+            }
+            
+            const modal = new bootstrap.Modal(modalElement);
+            console.log('Created new modal instance:', modal); // Debug
+            
+            try {
+                modal.show();
+                console.log('Modal show() called successfully'); // Debug
+            } catch (error) {
+                console.error('Error showing modal:', error); // Debug
+            }
+        }
+
+        function viewManifest(deploymentId) {
+            document.getElementById('modalTitle').textContent = `Manifest - ...${deploymentId.slice(-5)}`;
+            document.getElementById('modalContent').innerHTML = '<div class="loading">Loading manifest...</div>';
+
+            const modalElement = document.getElementById('deploymentModal');
+            const existingModal = bootstrap.Modal.getInstance(modalElement);
+            if (existingModal) existingModal.dispose();
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+
+            fetch(`/api/deployment/${deploymentId}/manifest`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success' && data.manifest && data.manifest.manifest) {
+                        const manifest = data.manifest.manifest;
+                        let html = '';
+
+                        // Top-level info
+                        html += `<h6>Deployment Info</h6><table class="table table-sm manifest-table">`;
+                        html += `<tr><td><strong>ID</strong></td><td>${manifest.id || ''}</td></tr>`;
+                        if (manifest.orchestrator && manifest.orchestrator.id && manifest.orchestrator.id.pub) {
+                            html += `<tr><td><strong>Orchestrator</strong></td><td>${manifest.orchestrator.id.pub}</td></tr>`;
+                        }
+                        html += `</table>`;
+
+                        // Allocations
+                        if (manifest.allocations) {
+                            if (window.innerWidth <= 600) {
+                                // Mobile: Render allocations as accordion
+                                html += `<h6 class="mt-3">Allocations</h6><div class="accordion" id="allocAccordion">`;
+                                let idx = 0;
+                                for (const [allocName, alloc] of Object.entries(manifest.allocations)) {
+                                    const collapseId = `allocCollapse${idx}`;
+                                    const statusClass = (alloc.status && alloc.status.toLowerCase() === 'running') ? 'bg-success' : 'bg-secondary';
+                                    html += `
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="heading${idx}">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false" aria-controls="${collapseId}">
+                                                <span style="font-weight:500;">${allocName}</span> <span class="alloc-status-chip ${statusClass} ms-2">${alloc.status || ''}</span>
+                                            </button>
+                                        </h2>
+                                        <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="heading${idx}" data-bs-parent="#allocAccordion">
+                                            <div class="accordion-body">
+                                                <div><strong>Type:</strong> ${alloc.type || ''}</div>
+                                                <div><strong>Node:</strong> ${alloc.node_id || ''}</div>
+                                                <div><strong>Private Addr:</strong> ${alloc.priv_addr || ''}</div>
+                                                <button class="btn btn-logs btn-sm mt-2" onclick="viewAllocationLogs('${manifest.id}','${allocName}')"><i class="bi bi-journal-text"></i> View Logs</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    `;
+                                    idx++;
+                                }
+                                html += `</div>`;
+                            } else {
+                                // Desktop: Render allocations as table
+                                html += `<h6 class="mt-3">Allocations</h6><table class="table table-sm manifest-table"><thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Node</th><th>Private Addr</th><th>Actions</th></tr></thead><tbody>`;
+                                for (const [allocName, alloc] of Object.entries(manifest.allocations)) {
+                                    const statusClass = (alloc.status && alloc.status.toLowerCase() === 'running') ? 'bg-success' : 'bg-secondary';
+                                    html += `<tr>
+                                        <td>${allocName}</td>
+                                        <td>${alloc.type || ''}</td>
+                                        <td><span class="alloc-status-chip ${statusClass}">${alloc.status || ''}</span></td>
+                                        <td>${alloc.node_id || ''}</td>
+                                        <td>${alloc.priv_addr || ''}</td>
+                                        <td><button class="btn btn-logs btn-sm" onclick="viewAllocationLogs('${manifest.id}','${allocName}')"><i class="bi bi-journal-text"></i> View Logs</button></td>
+                                    </tr>`;
+                                }
+                                html += `</tbody></table>`;
+                            }
+                        }
+
+                        // Nodes
+                        if (manifest.nodes) {
+                            if (window.innerWidth <= 600) {
+                                // Mobile: Render nodes as accordion
+                                html += `<h6 class="mt-3">Nodes</h6><div class="accordion" id="nodesAccordion">`;
+                                let idx = 0;
+                                for (const [nodeName, node] of Object.entries(manifest.nodes)) {
+                                    const collapseId = `nodeCollapse${idx}`;
+                                    html += `
+                                    <div class="accordion-item">
+                                        <h2 class="accordion-header" id="nodeHeading${idx}">
+                                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false" aria-controls="${collapseId}">
+                                                <span style="font-weight:500;">${nodeName}</span>
+                                                <span class="ms-2">${node.location ? (node.location.continent + ', ' + node.location.country) : ''}</span>
+                                                <span class="badge bg-secondary ms-2">${node.allocations ? node.allocations.join(', ') : ''}</span>
+                                            </button>
+                                        </h2>
+                                        <div id="${collapseId}" class="accordion-collapse collapse" aria-labelledby="nodeHeading${idx}" data-bs-parent="#nodesAccordion">
+                                            <div class="accordion-body">
+                                                <div><strong>Peer ID:</strong> <span class="peer-id">${node.peer || ''}</span></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    `;
+                                    idx++;
+                                }
+                                html += `</div>`;
+                            } else {
+                                // Desktop: Render nodes as table
+                                html += `<h6 class="mt-3">Nodes</h6><table class="table table-sm manifest-table"><thead><tr><th>Name</th><th>Peer</th><th>Location</th><th>Allocations</th></tr></thead><tbody>`;
+                                for (const [nodeName, node] of Object.entries(manifest.nodes)) {
+                                    html += `<tr>
+                                        <td>${nodeName}</td>
+                                        <td>${node.peer || ''}</td>
+                                        <td>${node.location ? (node.location.continent + ', ' + node.location.country) : ''}</td>
+                                        <td>${node.allocations ? node.allocations.join(', ') : ''}</td>
+                                    </tr>`;
+                                }
+                                html += `</tbody></table>`;
+                            }
+                        }
+
+                        document.getElementById('modalContent').innerHTML = html;
+                    } else {
+                        document.getElementById('modalContent').innerHTML = `<div class="error">${data.message || 'No manifest found.'}</div>`;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('modalContent').innerHTML = `<div class="error">Failed to load manifest: ${error.message}</div>`;
+                });
+        }
+
+        function viewLogs(deploymentId) {
+            document.getElementById('modalTitle').textContent = `Logs - ...${deploymentId.slice(-5)}`;
+            document.getElementById('modalContent').innerHTML = '<div class="loading">Loading logs...</div>';
+            
+            const modalElement = document.getElementById('deploymentModal');
+            const modal = new bootstrap.Modal(modalElement);
+            
+            // Clear any existing modal instance
+            const existingModal = bootstrap.Modal.getInstance(modalElement);
+            if (existingModal) {
+                existingModal.dispose();
+            }
+            
+            modal.show();
+            
+            fetch(`/api/deployment/${deploymentId}/logs`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server returned ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Logs API response:', data);
+                    if (data.status === 'success') {
+                        // Parse logs_text into sections
+                        const logsText = data.logs_text || '';
+                        let html = '';
+                        // Split into sections
+                        const stdoutMatch = logsText.match(/=== STDOUT ===([\s\S]*?)=== STDERR ===/);
+                        const stderrMatch = logsText.match(/=== STDERR ===([\s\S]*?)=== DMS LOG ENTRIES ===/);
+                        const dmsLogMatch = logsText.match(/=== DMS LOG ENTRIES ===([\s\S]*)/);
+                        // STDOUT
+                        html += '<h6>STDOUT</h6>';
+                        if (stdoutMatch && stdoutMatch[1]) {
+                            if (stdoutMatch[1].includes('Error reading stdout')) {
+                                html += '<div class="error">Could not read stdout logs.</div>';
+                            } else {
+                                html += `<pre>${stdoutMatch[1].trim()}</pre>`;
+                            }
+                        } else {
+                            html += '<div class="text-muted">No stdout logs found.</div>';
+                        }
+                        // STDERR
+                        html += '<h6>STDERR</h6>';
+                        if (stderrMatch && stderrMatch[1]) {
+                            if (stderrMatch[1].includes('Error reading stderr')) {
+                                html += '<div class="error">Could not read stderr logs.</div>';
+                            } else {
+                                html += `<pre>${stderrMatch[1].trim()}</pre>`;
+                            }
+                        } else {
+                            html += '<div class="text-muted">No stderr logs found.</div>';
+                        }
+                        // DMS LOG
+                        html += '<h6>DMS Log Entries</h6>';
+                        if (dmsLogMatch && dmsLogMatch[1]) {
+                            html += `<pre>${dmsLogMatch[1].trim()}</pre>`;
+                        } else {
+                            html += '<div class="text-muted">No DMS log entries found.</div>';
+                        }
+                        document.getElementById('modalContent').innerHTML = html;
+                    } else {
+                        document.getElementById('modalContent').innerHTML = `<div class="error">${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('modalContent').innerHTML = `<div class="error">Failed to load logs: ${error.message}</div>`;
+                });
+        }
+
+        function viewAllocationLogs(deploymentId, allocationId) {
+            document.getElementById('modalTitle').textContent = `Logs - ...${deploymentId.slice(-5)} (${allocationId})`;
+            document.getElementById('modalContent').innerHTML = '<div class="loading">Loading logs...</div>';
+
+            const modalElement = document.getElementById('deploymentModal');
+            if (!modalElement) {
+                console.error('Modal element not found!');
+                return;
+            }
+            let modal = bootstrap.Modal.getInstance(modalElement);
+            if (!modal) {
+                modal = new bootstrap.Modal(modalElement);
+            }
+            modal.show();
+
+            fetch(`/api/deployment/${deploymentId}/logs/${allocationId}`)
+                .then(response => {
+                    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success' && data.logs) {
+                        let html = '';
+                        html += '<h6>STDOUT</h6>';
+                        if (data.logs.stdout && !data.logs.stdout.startsWith('Error')) {
+                            html += `<pre>${data.logs.stdout}</pre>`;
+                        } else {
+                            html += `<div class="text-muted">${data.logs.stdout || 'No stdout logs found.'}</div>`;
+                        }
+                        html += '<h6>STDERR</h6>';
+                        if (data.logs.stderr && !data.logs.stderr.startsWith('Error')) {
+                            html += `<pre>${data.logs.stderr}</pre>`;
+                        } else {
+                            html += `<div class="text-muted">${data.logs.stderr || 'No stderr logs found.'}</div>`;
+                        }
+                        document.getElementById('modalContent').innerHTML = html;
+                    } else {
+                        document.getElementById('modalContent').innerHTML = `<div class="error">${data.message || 'No logs found.'}</div>`;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('modalContent').innerHTML = `<div class="error">Failed to load logs: ${error.message}</div>`;
+                });
+        }
+
+        function toggleFilters() {
+            const filters = document.getElementById('filters');
+            const chevron = document.getElementById('filterChevron');
+            
+            if (filters.classList.contains('show')) {
+                filters.classList.remove('show');
+                filters.style.display = 'none';
+                chevron.style.transform = 'rotate(0deg)';
+            } else {
+                filters.classList.add('show');
+                filters.style.display = 'block';
+                chevron.style.transform = 'rotate(180deg)';
+            }
+        }
+
+        function showFilters() {
+            const filters = document.getElementById('filters');
+            const chevron = document.getElementById('filterChevron');
+            filters.classList.add('show');
+            filters.style.display = 'block';
+            chevron.style.transform = 'rotate(180deg)';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        // Auto-refresh every 30 seconds
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(() => {
+                loadDeployments();
+            }, 30000);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+        }
+
+        // Load deployments on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadDeployments();
+            startAutoRefresh();
+            // Filters minimised by default
+            document.getElementById('filters').classList.remove('show');
+            document.getElementById('filters').style.display = 'none';
+
+            // Add filter event listeners
+            document.getElementById('statusFilter').addEventListener('change', function() {
+                showFilters();
+                applyFilters();
+            });
+            document.getElementById('typeFilter').addEventListener('change', function() {
+                showFilters();
+                applyFilters();
+            });
+            document.getElementById('searchFilter').addEventListener('input', function() {
+                showFilters();
+                applyFilters();
+            });
+
+            // Add event delegation for modal buttons
+            document.addEventListener('click', function(event) {
+                // Manifest button
+                if (event.target.matches('.btn-info[data-manifest-id]')) {
+                    const deploymentId = event.target.getAttribute('data-manifest-id');
+                    viewManifest(deploymentId);
+                }
+                // Logs button
+                if (event.target.matches('.btn-secondary[data-logs-id]')) {
+                    const deploymentId = event.target.getAttribute('data-logs-id');
+                    viewLogs(deploymentId);
+                }
+            });
+        });
+
+        // Stop auto-refresh when page is hidden
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else {
+                startAutoRefresh();
+            }
+        });
+    </script>
+</body>
+</html> 

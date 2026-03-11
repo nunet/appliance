@@ -1,0 +1,37 @@
+version: "V1"
+
+allocations:
+  alloc1:
+    executor: docker
+    type: service
+    resources:
+      cpu:
+          cores: {{ allocations_alloc1_resources_cpu_cores }}
+      gpus:
+        - vendor: NVIDIA
+      ram:
+          size: {{ allocations_alloc1_resources_ram_size }} # in GiB
+      disk:
+          size: {{ allocations_alloc1_resources_disk_size }} # in GiB
+    execution:
+      type: docker
+      image: ghcr.io/open-webui/open-webui:ollama
+      environment:
+        - NVIDIA_VISIBLE_DEVICES=all
+        - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+        - WEBUI_AUTH=False
+        - OLLAMA_KEEP_ALIVE=-1
+        - DMS_REQUIRE_PROXY={{dms_require_proxy}}
+        - DMS_PROXY_PORT=8080
+        - DMS_DDNS_URL=true
+        - DDNS_PROXY_WILDCARD=true
+        - DMS_DDNS_DOMAIN=ddns.nunet.network
+nodes:
+  node1:
+    allocations:
+      - alloc1
+    ports:
+      - public: {{public_port}}
+        private: 8080
+        allocation: alloc1
+    peer: {{peer_id}}

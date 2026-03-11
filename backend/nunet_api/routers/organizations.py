@@ -1,0 +1,1448 @@
+from __future__ import annotations
+
+import json
+import logging
+import re
+from collections import deque
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Dict, Optional, List, Literal
+
+from fastapi import APIRouter, HTTPException, Body, Depends, Query
+from pydantic import BaseModel, EmailStr, Field
+
+from modules.onboarding_manager import OnboardingManager
+from modules.organization_manager import OrganizationManager
+from modules.org_utils import (
+    load_known_organizations,
+    get_joined_organizations_with_details,
+    refresh_known_organizations,
+    normalize_org_roles,
+    extract_role_profiles,
+    get_tokenomics_config,
+    TOKENOMICS_CHAIN_ALLOWLIST,
+)
+from modules.dms_utils import (
+    get_cached_dms_resource_info,
+    get_cached_dms_status_info,
+)
+from .. import role_metadata
+
+router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Globals / singletons
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+_onboarding = OnboardingManager()
+_org_mgr = OrganizationManager()
+
+ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
+
+_STATUS_TRACE: deque[str] = deque(maxlen=50)
+
+
+def _record_status_trace(resolved_step: str, state: dict) -> None:
+    """
+    Short-term trace used while diagnosing oscillating onboarding states.
+    Keeps a rolling history and emits a log when the resolved step changes.
+    """
+    previous = _STATUS_TRACE[-1] if _STATUS_TRACE else None
+    if resolved_step != previous:
+        _STATUS_TRACE.append(resolved_step)
+        logger.info(
+            "Onboarding status step -> %s | raw_step=%s api_status=%s progress=%s trace=%s",
+            resolved_step,
+            state.get("step"),
+            state.get("api_status"),
+            state.get("progress"),
+            list(_STATUS_TRACE),
+        )
+
+
+def _ensure_state_file(mgr: OnboardingManager) -> None:
+    """
+    The legacy service used a state file; create a minimal one if missing so
+    mgr.save_state() can persist logs/state reliably.
+    """
+    try:
+        p: Path = mgr.STATE_PATH
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            initial = {
+                "step": "init",
+                "progress": 0,
+                "wormhole_code": None,
+                "form_data": {},
+                "error": None,
+                "logs": [],
+            }
+            p.write_text(json.dumps(initial, indent=2))
+            mgr.state = initial
+    except Exception as e:
+        # Non-fatal; operate with in-memory state
+        logger.warning("Could not ensure onboarding state file: %s", e)
+
+
+def _mgr() -> OnboardingManager:
+    _ensure_state_file(_onboarding)
+    return _onboarding
+
+
+# ---------------------------------------------------------------------------
+# Step model / progress mapping (UI timeline)
+# ---------------------------------------------------------------------------
+
+STEP_DEFS = [
+    {"id": "init", "label": "Init"},
+    {"id": "select_org", "label": "Select Organization"},
+    {"id": "collect_join_data", "label": "Fill Join Form"},
+    {"id": "submit_data", "label": "Submit Data"},
+    {"id": "join_data_sent", "label": "Data Sent"},
+    {"id": "email_verified", "label": "Email Verified", "virtual": True},
+    {"id": "pending_authorization", "label": "Pending Authorization"},
+    # Contract-enabled flow steps
+    {"id": "contract_caps_ready", "label": "Contract Caps Ready"},
+    {"id": "contract_caps_applied", "label": "Contract Caps Applied"},
+    {"id": "contract_created", "label": "Contract Created"},
+    {"id": "contract_received", "label": "Contract Received"},
+    {"id": "contract_signing", "label": "Contract Signing", "virtual": True},
+    {"id": "contract_signed", "label": "Contract Signed"},
+    {"id": "deployment_caps_ready", "label": "Deployment Caps Ready"},
+    {"id": "deployment_caps_applied", "label": "Deployment Caps Applied"},
+    {"id": "deployment_test_complete", "label": "Deployment Tested"},
+    # Legacy flow steps
+    {"id": "join_data_received", "label": "Join Data Received"},
+    {"id": "capabilities_applied", "label": "Capabilities Applied"},
+    {"id": "capabilities_onboarded", "label": "Capabilities Onboarded"},
+    {"id": "telemetry_configured", "label": "Telemetry Configured"},
+    {"id": "mtls_certs_saved", "label": "mTLS Certs Saved"},
+    {"id": "complete", "label": "Complete"},
+    {"id": "rejected", "label": "Rejected"},
+]
+
+PROGRESS_MAP = {
+    "init": 0,
+    "select_org": 10,
+    "collect_join_data": 20,
+    "submit_data": 30,
+    "join_data_sent": 40,
+    "email_verified": 50,
+    "pending_authorization": 55,
+    # Contract-enabled flow progress
+    "contract_caps_ready": 58,
+    "contract_caps_applied": 60,
+    "contract_created": 63,
+    "contract_received": 66,
+    "contract_signing": 68,
+    "contract_signed": 70,
+    "deployment_caps_ready": 75,
+    "deployment_caps_applied": 80,
+    "deployment_test_complete": 90,
+    # Legacy flow progress
+    "join_data_received": 70,
+    "capabilities_applied": 80,
+    "capabilities_onboarded": 83,
+    "telemetry_configured": 85,
+    "mtls_certs_saved": 90,
+    "complete": 100,
+    "rejected": 100,
+}
+
+
+# ---------------------------------------------------------------------------
+# Schemas
+# ---------------------------------------------------------------------------
+
+class SelectOrgRequest(BaseModel):
+    org_did: str = Field(..., description="Organization DID to join")
+
+
+class WormholeResponse(BaseModel):
+    status: str
+    wormhole_code: Optional[str] = None
+    message: Optional[str] = None
+    output: Optional[str] = None
+
+
+TokenomicsChain = Literal["cardano", "ethereum"]
+
+
+class JoinSubmitRequest(BaseModel):
+    # org_did optional if /select was already called
+    org_did: Optional[str] = Field(None, description="Organization DID (optional if already selected)")
+    name: str
+    email: EmailStr
+    roles: List[str] = Field(
+        ...,
+        min_length=1,
+        description="One or more role identifiers requested during onboarding",
+    )
+    why_join: Optional[str] = Field(
+        None,
+        description="Optional free-text context for why the user is joining",
+    )
+    location: Optional[str] = None
+    discord: Optional[str] = None
+    wormhole: Optional[str] = Field(None, description="Wormhole code if required by the org")
+    wallet_address: Optional[str] = Field(
+        None,
+        description="Wallet address collected when the organization requires an on-chain identity",
+    )
+    wallet_chain: Optional[TokenomicsChain] = Field(
+        None,
+        description="Wallet chain identifier (cardano | ethereum) associated with wallet_address",
+    )
+    renewal: bool = Field(
+        False,
+        description="Flag indicating this submission renews an existing membership",
+    )
+    renewing_previous: Optional[str] = Field(
+        None,
+        description="Optional onboarding request ID that this submission renews",
+    )
+
+
+class JoinSubmitResponse(BaseModel):
+    status: str
+    request_id: Optional[str] = None
+    status_token: Optional[str] = None
+    api_status: Optional[str] = None
+    step: Optional[str] = None
+    state: Dict[str, Any]
+
+
+class RenewStartRequest(BaseModel):
+    org_did: str = Field(..., description="Organization DID to renew")
+
+
+class PollStatusResponse(BaseModel):
+    status: str  # "pending" | "processing" | "success" | "idle" | "error"
+    api_status: Optional[str] = None
+    step: str
+    payload_available: bool
+    state: Dict[str, Any]
+
+
+class ProcessResponse(BaseModel):
+    status: str
+    step: str
+    message: Optional[str] = None
+    state: Dict[str, Any]
+
+
+class LeaveOrgResponse(BaseModel):
+    status: str
+    removed_provide: int = 0
+    removed_require: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _collect_runtime_info(
+    mgr: OnboardingManager,
+    resource_snapshot: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Collect runtime metadata similar to the old UI:
+    - dms_status (DID/Peer ID etc.)
+    - peer_info (public/local addrs, context)
+    - resources onboarding flags and raw dms_resources snapshot
+    """
+    runtime: Dict[str, Any] = {}
+
+    dms_info = get_cached_dms_status_info(force_refresh=True) or {}
+    runtime["dms_status"] = dms_info
+
+    try:
+        peer_info = mgr.dms_manager.get_self_peer_info() or {}
+        runtime["peer_info"] = {
+            "did": peer_info.get("did"),
+            "peer_id": peer_info.get("peer_id"),
+            "context": peer_info.get("context"),
+            "public_addrs": peer_info.get("public_addrs"),
+            "local_addrs": peer_info.get("local_addrs"),
+        }
+    except Exception:
+        runtime["peer_info"] = {}
+
+    try:
+        res_info = dict(resource_snapshot or {})
+    except Exception:
+        res_info = None
+
+    if not res_info:
+        res_info = get_cached_dms_resource_info(force_refresh=True) or {}
+
+    try:
+        onboarding_status = res_info.get("onboarding_status", "Unknown")
+        onboarded_resources = res_info.get("onboarded_resources", "Unknown")
+        if isinstance(onboarded_resources, str):
+            onboarded_resources = ANSI_RE.sub("", onboarded_resources)
+        onboarded_flag = mgr._is_onboarded_status(onboarding_status)
+        runtime["resources"] = {
+            "onboarding_status": onboarded_flag,
+            "onboarded_resources": onboarded_resources,
+        }
+        dms_resources = res_info.get("dms_resources")
+        if not dms_resources:
+            cached_snapshot = get_cached_dms_resource_info(force_refresh=True) or {}
+            dms_resources = cached_snapshot.get("dms_resources", {})
+        merged_resources: Dict[str, Any] = {}
+        if isinstance(dms_resources, dict):
+            merged_resources.update(dms_resources)
+        merged_resources.setdefault("onboarded_resources", onboarded_resources)
+        merged_resources.setdefault("onboarding_status", onboarding_status)
+        if "free_resources" not in merged_resources and res_info.get("free_resources") is not None:
+            merged_resources["free_resources"] = res_info.get("free_resources")
+        if "allocated_resources" not in merged_resources and res_info.get("allocated_resources") is not None:
+            merged_resources["allocated_resources"] = res_info.get("allocated_resources")
+        runtime["dms_resources"] = merged_resources
+    except Exception:
+        runtime["resources"] = {
+            "onboarding_status": False,
+            "onboarded_resources": "Unknown (collection failed)",
+        }
+        runtime["dms_resources"] = {}
+
+    return runtime
+
+
+def _slim_resource_snapshot(resource_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(resource_info, dict):
+        return {}
+
+    snapshot: Dict[str, Any] = {}
+    for key in ("onboarding_status", "onboarded_resources", "free_resources", "allocated_resources"):
+        value = resource_info.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            snapshot[key] = ANSI_RE.sub("", value)
+        else:
+            snapshot[key] = value
+
+    dms_resources = resource_info.get("dms_resources")
+    if isinstance(dms_resources, dict):
+        snapshot["dms_resources"] = dms_resources
+
+    return snapshot
+
+
+def _resolve_current_step_from_state(state: dict) -> str:
+    """
+    Prefer sticky terminal states; otherwise derive from logs/state/api_status.
+    """
+    step = state.get("step")
+    logs = state.get("logs") or []
+    api_status = state.get("api_status")
+
+    # Sticky terminal states
+    if state.get("status") == "complete" or state.get("completed"):
+        return "complete"
+    if step == "rejected":
+        return "rejected"
+
+    # Prefer most recent logged step
+    if logs:
+        last = logs[-1]
+        if isinstance(last, dict) and last.get("step"):
+            step = last["step"]
+
+    # Virtual step for UX
+    if api_status == "email_verified":
+        return "email_verified"
+
+    ids = [s["id"] for s in STEP_DEFS]
+    return step if step in ids else "init"
+
+
+def _compute_step_states(current_step: str) -> dict:
+    ids = [s["id"] for s in STEP_DEFS]
+    if current_step not in ids:
+        current_step = "init"
+    current_index = ids.index(current_step)
+
+    step_states = []
+    for i, s in enumerate(STEP_DEFS):
+        if i < current_index:
+            state = "done"
+        elif i == current_index:
+            state = "active"
+        else:
+            state = "todo"
+        step_states.append(
+            {
+                "id": s["id"],
+                "label": s["label"],
+                "virtual": s.get("virtual", False),
+                "state": state,
+            }
+        )
+    return {
+        "current_step": current_step,
+        "current_index": current_index,
+        "step_states": step_states,
+    }
+
+
+def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> tuple[str, str]:
+    if not onboarding_status:
+        return ("init", "Onboarding has not started yet.")
+    step = onboarding_status.get("step")
+    api_status = onboarding_status.get("api_status")
+    rejection_reason = onboarding_status.get("rejection_reason", "")
+    error = onboarding_status.get("error")
+    org_data = onboarding_status.get("org_data") or {}
+    if not isinstance(org_data, dict):
+        org_data = {}
+    org_name = org_data.get("name", "the organization")
+
+    if step == "collect_join_data" and onboarding_status.get("form_data"):
+        return ("data_ready", "Your join data is ready. Preparing to submit to the organization's onboarding service...")
+    if step == "submit_data" and not api_status:
+        return ("waiting_api", "Waiting for the organization's onboarding service to become available...")
+    if step == "join_data_sent" and api_status in [None, "", "pending", "processing", "email_sent"]:
+        return ("data_submitted", "Your join data has been submitted to the organization. Awaiting further instructions...")
+    if api_status == "contract_required_mismatch":
+        msg = onboarding_status.get("status_message") or "Contract required setting mismatch between organization and appliance; request pending manual review."
+        return ("contract_required_mismatch", msg)
+    if api_status == "email_verified":
+        return ("email_verified", "Your email has been verified! Waiting for organization approval...")
+    if step == "join_data_sent" and api_status in ["pending", "processing"]:
+        return ("waiting_approval", "Your request is being reviewed by the organization. Please wait for approval...")
+    if step == 'join_data_received' or (step == 'join_data_sent' and api_status in ['approved', 'ready']) or api_status in ['approved', 'ready']:
+        return ('approved', 'Your request has been approved! Finalizing onboarding...')
+    if step == 'pending_authorization':
+        return ('waiting_approval', 'Your request is being reviewed by the organization. Please wait for approval...')
+    
+    # Contract-enabled flow steps
+    if step == "contract_caps_applied" or api_status == "contract_caps_confirmed":
+        return ("contract_caps_applied", "Contract capabilities applied. Waiting for the organization to create a contract for you to sign. This may take a minute...")
+    if step == "contract_created" or api_status == "contract_created":
+        return ("contract_created", "A contract has been created by the organization. Checking for incoming contract...")
+    if step == "contract_received" or api_status == "contract_received":
+        return ("contract_received", "Contract received! Please review and sign the contract to continue.")
+    if step == "contract_signing":
+        return ("contract_signing", "Signing the contract...")
+    if step == "contract_signed" or api_status == "contract_signed" or api_status == "contract_verified":
+        return ("contract_signed", "Contract signed! Waiting for deployment capabilities...")
+    if step == "deployment_caps_applied" or api_status == "deployment_caps_confirmed":
+        return ("deployment_caps_applied", "Deployment capabilities applied. Running deployment verification...")
+    if step == "deployment_test_complete" or api_status == "deployment_test_complete":
+        return ("deployment_test_complete", "Deployment verification complete! Finalizing onboarding...")
+    
+    # Legacy flow steps
+    if step == "capabilities_applied":
+        return ("capabilities_applied", "Applying organization capabilities...")
+    if step == "capabilities_onboarded":
+        return ("capabilities_onboarded", "Onboarding compute resources with organization capabilities...")
+    if step == "telemetry_configured":
+        return ("telemetry_configured", "Configuring telemetry...")
+    if step == "mtls_certs_saved":
+        return ("mtls_certs_saved", "Saving mTLS certificates...")
+    if step == "complete":
+        return ("complete", f"Onboarding complete! You are now a member of {org_name}.")
+    if step == "rejected" and rejection_reason:
+        return ("rejected", f"Your onboarding request was rejected. Reason: {rejection_reason}")
+    if error:
+        return ("error", f"An error occurred: {error}")
+    return (step or "init", f"Current step: {step or 'init'}")
+
+
+def _redact_state_for_ui(state: dict) -> dict:
+    """
+    Deep-copy and redact sensitive values before returning to UI.
+    """
+    s = deepcopy(state)
+    if "status_token" in s and s["status_token"]:
+        s["status_token"] = "***"
+    payload = s.get("api_payload")
+    if isinstance(payload, dict):
+        for k in list(payload.keys()):
+            k_low = str(k).lower()
+            if "token" in k_low or "key" in k_low or "secret" in k_low:
+                payload[k] = "***"
+    return s
+
+
+def _enrich_status_for_ui(state: dict) -> dict:
+    state = state or {}
+    current_step = _resolve_current_step_from_state(state)
+    timeline = _compute_step_states(current_step)
+    ui_state, ui_message = _get_onboarding_ui_state_and_message(state)
+    progress = state.get("progress")
+    if progress is None or progress == 0:
+        progress = PROGRESS_MAP.get(current_step, 0)
+
+    _record_status_trace(timeline["current_step"], state)
+
+    return {
+        "current_step": timeline["current_step"],
+        "current_index": timeline["current_index"],
+        "progress": progress,
+        "api_status": state.get("api_status"),
+        "ui_state": ui_state,
+        "ui_message": ui_message,
+        "step_order": [{"id": s["id"], "label": s["label"], "virtual": s.get("virtual", False)} for s in STEP_DEFS],
+        "step_states": timeline["step_states"],
+        "rejection_reason": state.get("rejection_reason"),
+        "logs": state.get("logs", []),
+        "raw": _redact_state_for_ui(state),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/known")
+def get_known():
+    """Known orgs (name + API + join_fields)."""
+    return load_known_organizations()
+
+
+@router.post("/known/update")
+def update_known():
+    """Refresh known organizations from the canonical repository copy."""
+    try:
+        known = refresh_known_organizations()
+    except Exception as e:
+        logger.exception("Failed to refresh known organizations")
+        raise HTTPException(status_code=500, detail=f"Failed to refresh known organizations: {e}")
+
+    return {"status": "success", "count": len(known), "known": known}
+
+
+@router.get("/joined")
+def get_joined():
+    """
+    Already joined organizations with details (capabilities, expiry).
+    - FE expects fields: did, capabilities[], expiry (ISO)
+    """
+    return get_joined_organizations_with_details()
+
+
+@router.get("/steps")
+def steps():
+    return {
+        "steps": [{"id": s["id"], "label": s["label"], "virtual": s.get("virtual", False)} for s in STEP_DEFS],
+        "progress_map": PROGRESS_MAP,
+    }
+
+
+@router.get("/status")
+def status(mgr: OnboardingManager = Depends(_mgr)):
+    state = mgr.get_onboarding_status() or {}
+    return _enrich_status_for_ui(state)
+
+
+@router.post("/select")
+def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Select an organization and advance to collect_join_data immediately.
+    Clears any previous request ids or processing flags.
+    """
+    known = load_known_organizations() or {}
+    org_entry = known.get(body.org_did, {})
+    org_name = org_entry["name"] if isinstance(org_entry, dict) and "name" in org_entry else body.org_did
+    roles, _ = normalize_org_roles(org_entry)
+    role_profiles = extract_role_profiles(org_entry)
+    selected_role = roles[0] if roles else None
+    tokenomics = get_tokenomics_config(org_entry)
+
+    mgr.update_state(
+        org_data={
+            "did": body.org_did,
+            "name": org_name,
+            "roles": roles,
+            "role_profiles": role_profiles,
+            "selected_role": selected_role,
+            "tokenomics": tokenomics,
+        },
+        step="collect_join_data",
+        request_id=None,
+        status_token=None,
+        api_status=None,
+        api_payload=None,
+        rejection_reason=None,
+        processing=False,
+        processed_ok=False,
+        renewal=False,
+    )
+
+    return {
+        "status": "success",
+        "message": f"Selected organization {org_name}",
+        "state": mgr.get_onboarding_status(),
+    }
+
+
+@router.post("/wormhole", response_model=WormholeResponse)
+def generate_wormhole():
+    """
+    Optional: for orgs that still use the wormhole pairing script (join-org-web.sh).
+    """
+    try:
+        result = _org_mgr.join_organization(step="generate")
+        return WormholeResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"wormhole generation failed: {e}")
+
+
+@router.post("/join/submit", response_model=JoinSubmitResponse)
+def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Submit join data. If org_did is included, it also selects the org.
+    Moves to join_data_sent with request_id / status_token if submit succeeds.
+    """
+    known = load_known_organizations() or {}
+
+    # Allow select here for single-call UX
+    if body.org_did:
+        entry = known.get(body.org_did)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Unknown organization DID")
+        org_name = entry["name"] if isinstance(entry, dict) and "name" in entry else str(entry)
+        roles, _ = normalize_org_roles(entry)
+        role_profiles = extract_role_profiles(entry)
+        default_role = roles[0] if roles else None
+        tokenomics = get_tokenomics_config(entry)
+        current_status = mgr.get_onboarding_status()
+        next_step = None
+        if (current_status or {}).get("step") in (None, "init", "select_org"):
+            next_step = "collect_join_data"
+
+        state_kwargs = {
+            "org_data": {
+                "did": body.org_did,
+                "name": org_name,
+                "roles": roles,
+                "role_profiles": role_profiles,
+                "selected_role": default_role,
+                "tokenomics": tokenomics,
+            },
+            "renewal": False,
+        }
+        if next_step:
+            state_kwargs["step"] = next_step
+        mgr.update_state(**state_kwargs)
+
+    state = mgr.get_onboarding_status()
+    org_data = (state or {}).get("org_data") or {}
+    if not org_data.get("did"):
+        raise HTTPException(status_code=400, detail="No organization selected. Call /organizations/select or include org_did.")
+
+    org_entry = known.get(org_data.get("did"))
+    tokenomics_cfg = get_tokenomics_config(org_entry)
+    require_wallet = bool(tokenomics_cfg.get("enabled"))
+    required_chain = tokenomics_cfg.get("chain")
+    allowed_roles, _ = normalize_org_roles(org_entry)
+
+    selected_roles: List[str] = []
+    for role in body.roles:
+        if role is None:
+            continue
+        trimmed = role.strip() if isinstance(role, str) else str(role).strip()
+        if trimmed:
+            selected_roles.append(trimmed)
+
+    if not selected_roles:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one role must be selected.",
+        )
+
+    invalid_roles = sorted({role for role in selected_roles if role not in allowed_roles})
+    if invalid_roles:
+        org_label = org_data.get("name") or org_data.get("did") or "the selected organization"
+        allowed_display = ", ".join(allowed_roles) if allowed_roles else "none configured"
+        invalid_display = ", ".join(invalid_roles)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Role selection not supported by {org_label}. Unsupported: {invalid_display}. Allowed: {allowed_display}.",
+        )
+
+    wallet_address = (body.wallet_address or "").strip() if body.wallet_address else None
+    wallet_chain = (body.wallet_chain or "").strip().lower() if body.wallet_chain else None
+
+    if wallet_chain and wallet_chain not in TOKENOMICS_CHAIN_ALLOWLIST:
+        allowed = ", ".join(sorted(TOKENOMICS_CHAIN_ALLOWLIST))
+        raise HTTPException(
+            status_code=400,
+            detail=f"wallet_chain must be one of: {allowed}.",
+        )
+
+    if wallet_chain and not wallet_address:
+        raise HTTPException(
+            status_code=400,
+            detail="wallet_chain provided without wallet_address.",
+        )
+
+    if require_wallet:
+        if not wallet_address:
+            raise HTTPException(
+                status_code=400,
+                detail="This organization requires a connected wallet address.",
+            )
+        if not wallet_chain and required_chain:
+            wallet_chain = required_chain
+        if required_chain and wallet_chain and wallet_chain != required_chain:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This organization requires a {required_chain} wallet.",
+            )
+        if not wallet_chain:
+            raise HTTPException(
+                status_code=400,
+                detail="wallet_chain is required when a wallet is required.",
+            )
+    elif wallet_address and not wallet_chain:
+        raise HTTPException(
+            status_code=400,
+            detail="wallet_chain is required when wallet_address is provided.",
+        )
+
+    role_profiles = extract_role_profiles(org_entry)
+    is_renewal = bool(body.renewal)
+    updated_org_data = dict(org_data)
+    updated_org_data["roles"] = allowed_roles
+    if role_profiles:
+        updated_org_data["role_profiles"] = role_profiles
+    updated_org_data["selected_role"] = selected_roles[0]
+    updated_org_data["tokenomics"] = tokenomics_cfg
+    updated_org_data["renewal"] = is_renewal
+    mgr.update_state(org_data=updated_org_data)
+    org_data = mgr.get_onboarding_status().get("org_data", updated_org_data)
+
+    role_metadata.record_role_selection(
+        org_did=org_data.get("did", ""),
+        org_name=org_data.get("name"),
+        roles=selected_roles,
+        primary_role=selected_roles[0] if selected_roles else None,
+        why_join=body.why_join,
+        email=str(body.email),
+        location=body.location,
+        discord=body.discord,
+        wormhole=body.wormhole,
+        wallet_address=wallet_address,
+        wallet_chain=wallet_chain,
+        renewal=is_renewal,
+    )
+    role_metadata.record_join_payload(
+        org_did=org_data.get("did", ""),
+        payload={
+            "name": body.name,
+            "email": str(body.email),
+            "roles": selected_roles,
+            "why_join": body.why_join,
+            "location": body.location,
+            "discord": body.discord,
+            "wormhole": body.wormhole,
+            "wallet_address": wallet_address,
+            "wallet_chain": wallet_chain,
+        },
+    )
+    role_metadata.record_org_tokenomics(
+        org_did=org_data.get("did", ""),
+        tokenomics=tokenomics_cfg,
+    )
+
+    try:
+        resource_snapshot = mgr.ensure_pre_onboarding()
+    except Exception as exc:
+        logger.exception("Failed to refresh compute onboarding before submitting join request")
+        raise HTTPException(status_code=502, detail=f"Failed to capture compute resources: {exc}")
+
+    mgr.update_state(last_resource_snapshot=_slim_resource_snapshot(resource_snapshot))
+
+    runtime = _collect_runtime_info(mgr, resource_snapshot=resource_snapshot)
+    dms_info = runtime.get("dms_status", {}) or {}
+    dms_did = dms_info.get("dms_did")
+    dms_peer_id = dms_info.get("dms_peer_id")
+    if not dms_did or not dms_peer_id:
+        raise HTTPException(status_code=400, detail="DMS not ready (missing DID or Peer ID). Start DMS first.")
+
+    contract_required = True
+    if isinstance(org_entry, dict):
+        contract_required = org_entry.get("contract_required", True)
+
+    payload: Dict[str, Any] = {
+        "organization_name": org_data.get("name"),
+        "organization_did": org_data.get("did"),
+        "dms_did": dms_did,
+        "peer_id": dms_peer_id,
+        "name": body.name,
+        "email": str(body.email),
+        "roles": selected_roles,
+        "why_join": body.why_join,
+        "location": body.location,
+        "discord": body.discord,
+        "wormhole": body.wormhole,
+        "wallet_address": wallet_address,
+        "wallet_chain": wallet_chain,
+        "tokenomics": tokenomics_cfg,
+        "is_renewal": is_renewal,
+        "renewing_previous": body.renewing_previous,
+        "contract_required": contract_required,
+        # runtime context
+        "resources": runtime.get("resources", {}),
+        "dms_resources": runtime.get("dms_resources", {}),
+        "peer_info": runtime.get("peer_info", {}),
+        "dms_status": runtime.get("dms_status", {}),
+    }
+
+    # Persist form data
+    mgr.update_state(
+        step="submit_data",
+        form_data={
+            "name": body.name,
+            "email": str(body.email),
+            "roles": selected_roles,
+            "why_join": body.why_join,
+            "location": body.location,
+            "discord": body.discord,
+            "wormhole": body.wormhole,
+            "dms_did": dms_did,
+            "dms_peer_id": dms_peer_id,
+            "resources": runtime.get("resources", {}),
+            "wallet_address": wallet_address,
+            "wallet_chain": wallet_chain,
+            "tokenomics": tokenomics_cfg,
+            "renewal": is_renewal,
+            "renewing_previous": body.renewing_previous,
+        },
+        renewal=is_renewal,
+    )
+
+    # Submit to org onboarding API
+    try:
+        api_res = mgr.api_submit_join(payload, resource_snapshot)
+    except Exception as e:
+        mgr.update_state(step="rejected", rejection_reason=str(e), last_step="submit_data")
+        raise HTTPException(status_code=502, detail=f"onboarding submit failed: {e}")
+
+    request_id = api_res.get("id") or api_res.get("request_id")
+    status_token = api_res.get("status_token")
+    api_status = api_res.get("status")
+
+    update_kwargs: Dict[str, Any] = {
+        "step": "join_data_sent",
+        "request_id": request_id,
+        "status_token": status_token,
+        "api_status": api_status,
+        "processing": False,
+        "processed_ok": False,
+    }
+    if api_status == "contract_required_mismatch":
+        update_kwargs["status_message"] = api_res.get("status_message")
+        update_kwargs["contract_required_mismatch"] = True
+    mgr.update_state(**update_kwargs)
+    if request_id:
+        try:
+            role_metadata.record_last_request_id(org_data.get("did", ""), request_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Unable to persist last_request_id for %s", org_data.get("did"))
+
+    return JoinSubmitResponse(
+        status="success",
+        request_id=request_id,
+        status_token=status_token,
+        api_status=api_status,
+        step="join_data_sent",
+        state=mgr.get_onboarding_status(),
+    )
+
+
+@router.post("/renew/start", response_model=JoinSubmitResponse)
+def start_renewal(body: RenewStartRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Initiate a renewal using the cached join payload.
+    """
+    org_did = (body.org_did or "").strip()
+    if not org_did:
+        raise HTTPException(status_code=400, detail="org_did is required")
+
+    known = load_known_organizations() or {}
+    if org_did not in known:
+        raise HTTPException(status_code=404, detail="Unknown organization DID")
+
+    stored_payload = role_metadata.get_join_payload(org_did)
+    state_payload = {}
+    state = mgr.get_onboarding_status() or {}
+    if isinstance(state, dict):
+        form_data = state.get("form_data")
+        if isinstance(form_data, dict):
+            state_payload = form_data
+
+    def _coalesce(*values: Any) -> Optional[str]:
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    # Roles are persisted in metadata and state. Fallback to org default roles.
+    stored_roles = stored_payload.get("roles")
+    state_roles = state_payload.get("roles") if isinstance(state_payload.get("roles"), list) else None
+    roles: List[str] = []
+    if isinstance(stored_roles, list):
+        roles = [role for role in stored_roles if isinstance(role, str) and role.strip()]
+    elif isinstance(state_roles, list):
+        roles = [role for role in state_roles if isinstance(role, str) and role.strip()]
+
+    if not roles:
+        primary = role_metadata.get_primary_role(org_did)
+        if primary:
+            roles = [primary]
+
+    name = _coalesce(stored_payload.get("name"), state_payload.get("name"))
+    email = _coalesce(stored_payload.get("email"), state_payload.get("email"))
+
+    if not name or not email or not roles:
+        raise HTTPException(
+            status_code=400,
+            detail="Renewal requires stored name, email, and roles. Re-run the join flow once to seed renewal data.",
+        )
+
+    wallet_chain_value = _coalesce(
+        stored_payload.get("wallet_chain"),
+        state_payload.get("wallet_chain"),
+    )
+    if wallet_chain_value:
+        wallet_chain_value = wallet_chain_value.lower()
+        if wallet_chain_value not in TOKENOMICS_CHAIN_ALLOWLIST:
+            wallet_chain_value = None
+
+    renewal_payload = JoinSubmitRequest(
+        org_did=org_did,
+        name=name,
+        email=email,
+        roles=roles,
+        why_join=_coalesce(stored_payload.get("why_join"), state_payload.get("why_join")),
+        location=_coalesce(stored_payload.get("location"), state_payload.get("location")),
+        discord=_coalesce(stored_payload.get("discord"), state_payload.get("discord")),
+        wormhole=_coalesce(stored_payload.get("wormhole"), state_payload.get("wormhole")),
+        wallet_address=_coalesce(
+            stored_payload.get("wallet_address"),
+            state_payload.get("wallet_address"),
+        ),
+        wallet_chain=wallet_chain_value,  # type: ignore[arg-type]
+        renewal=True,
+        renewing_previous=role_metadata.get_last_request_id(org_did),
+    )
+    return submit_join(renewal_payload, mgr)
+
+@router.delete("/join/{org_did}", response_model=LeaveOrgResponse)
+def leave_org(org_did: str, mgr: OnboardingManager = Depends(_mgr)):
+    try:
+        result = mgr.leave_organization(org_did)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Failed to leave organization %s: %s", org_did, exc)
+        raise HTTPException(status_code=500, detail="Failed to leave organization.")
+
+    return LeaveOrgResponse(
+        status="success",
+        removed_provide=result.get("provide", 0),
+        removed_require=result.get("require", 0),
+    )
+
+
+@router.get("/join/poll", response_model=PollStatusResponse)
+def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(True)):
+    """
+    Polls the remote onboarding status. Handles multiple phases:
+      - email_sent / pending -> keeps waiting (advances to pending_authorization after email_verified)
+      - contract_caps_ready -> apply contract capabilities and restart DMS
+      - contract_created -> poll for incoming contracts
+      - contract_received -> wait for user to sign
+      - contract_signed -> wait for deployment caps
+      - deployment_caps_ready -> apply deployment capabilities
+      - deployment_test_complete / ready / approved -> complete
+      - error / rejected -> marks rejected
+    """
+    state = mgr.get_onboarding_status()
+    req_id = state.get("request_id")
+    token = state.get("status_token")
+
+    if state.get("processing"):
+        return PollStatusResponse(
+            status="processing",
+            api_status=state.get("api_status"),
+            step=state.get("step", "init"),
+            payload_available=bool(state.get("api_payload")),
+            state=state,
+        )
+
+    if not req_id or not token:
+        return PollStatusResponse(
+            status="idle",
+            api_status=state.get("api_status"),
+            step=state.get("step", "init"),
+            payload_available=bool(state.get("api_payload")),
+            state=state,
+        )
+
+    try:
+        result = mgr.api_check_status(req_id, token) if force_check else None
+    except Exception as e:
+        mgr.update_state(step="rejected", rejection_reason=str(e), last_step=state.get("step", "join_data_sent"))
+        raise HTTPException(status_code=502, detail=f"status polling failed: {e}")
+
+    api_status = (result or {}).get("status") or state.get("api_status")
+    mgr.update_state(api_status=api_status)
+
+    if result is not None:
+        logger.info(
+            "Polled onboarding API: status=%s contract_did=%s",
+            result.get("status"),
+            result.get("contract_did") or "(none)",
+        )
+
+    # 1) Email verified -> show pending_authorization
+    if api_status == "email_verified":
+        if state.get("step") != "pending_authorization":
+            mgr.update_state(step="pending_authorization")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="pending_authorization",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 2) Contract capabilities ready (Phase 2 of contract-enabled flow)
+    if api_status == "contract_caps_ready":
+        contract_caps = (result or {}).get("contract_caps") or (result or {}).get("capability_token")
+        if contract_caps and not state.get("contract_caps_applied"):
+            mgr.update_state(processing=True)
+            try:
+                success = mgr.apply_contract_capabilities(contract_caps)
+                if success:
+                    mgr.update_state(
+                        step="contract_caps_applied",
+                        contract_caps_applied=True,
+                        contract_caps=contract_caps,
+                        api_status=api_status
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_confirm_caps(req_id, token, cap_type="contract")
+                    except Exception as confirm_exc:
+                        logger.warning("Failed to confirm contract caps: %s", confirm_exc)
+                else:
+                    mgr.update_state(
+                        step="rejected",
+                        rejection_reason="Failed to apply contract capabilities"
+                    )
+            except Exception as exc:
+                logger.error("Contract capabilities application failed: %s", exc)
+                mgr.update_state(
+                    step="rejected",
+                    rejection_reason=f"Contract capabilities application failed: {exc}"
+                )
+            finally:
+                mgr.update_state(processing=False)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=state.get("step", "contract_caps_applied"),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 2.5) Contract caps confirmed - wait for contract creation
+    if api_status == "contract_caps_confirmed":
+        if state.get("step") != "contract_caps_applied":
+            mgr.update_state(step="contract_caps_applied")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_caps_applied",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 3) Contract created - poll for incoming contracts
+    if api_status == "contract_created":
+        contract_did = (result or {}).get("contract_did") or state.get("contract_did")
+        if not contract_did:
+            logger.info(
+                "No contract_did in status response (cannot poll DMS); keys=%s",
+                list((result or {}).keys()),
+            )
+        elif not state.get("contract_data"):
+            mgr.update_state(contract_did=contract_did)
+        if contract_did and not state.get("contract_data"):
+            # Poll DMS for the specific contract the orchestrator created; only confirm when we see that contract_did
+            try:
+                logger.info("Polling DMS for contract did=%s", contract_did[:50] + "..." if len(contract_did) > 50 else contract_did)
+                contract_data = mgr.poll_for_contracts(req_id, expected_contract_did=contract_did)
+                if contract_data:
+                    mgr.update_state(
+                        step="contract_received",
+                        contract_data=contract_data,
+                        contract_did=contract_did
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_contract_received(req_id, token)
+                    except Exception as notify_exc:
+                        logger.warning("Failed to notify contract received: %s", notify_exc)
+                    else:
+                        logger.info("Contract received and org manager notified: %s", contract_did)
+                else:
+                    logger.info(
+                        "Contract not yet in DMS list; expected_contract_did=%s",
+                        contract_did[:50] + "..." if len(contract_did) > 50 else contract_did,
+                    )
+            except Exception as exc:
+                logger.warning("Contract polling failed: %s", exc)
+        
+        # Use current state so we don't overwrite contract_received we may have just set above
+        state_after_poll = mgr.get_onboarding_status()
+        current_step = state_after_poll.get("step", "contract_created")
+        if current_step not in ("contract_received", "contract_signing", "contract_signed"):
+            current_step = "contract_created"
+            mgr.update_state(step=current_step)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=mgr.get_onboarding_status().get("step", current_step),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 4) Contract received - waiting for user to sign (handled by frontend)
+    if api_status == "contract_received":
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_received",
+            payload_available=True,  # Contract is available for signing
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 5) Contract signed - wait for deployment caps
+    if api_status == "contract_signed":
+        if not state.get("contract_signed"):
+            mgr.update_state(step="contract_signed", contract_signed=True)
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_signed",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 6) Deployment capabilities ready (Phase 5 of contract-enabled flow)
+    if api_status == "deployment_caps_ready":
+        deployment_caps = (result or {}).get("deployment_caps") or (result or {}).get("capability_token")
+        if deployment_caps and not state.get("deployment_caps_applied"):
+            mgr.update_state(processing=True)
+            try:
+                certificates = {
+                    "client_crt": (result or {}).get("client_crt"),
+                    "client_key": (result or {}).get("client_key"),
+                    "infra_bundle_crt": (result or {}).get("infra_bundle_crt"),
+                }
+                api_key = (result or {}).get("elastic_api_key") or (result or {}).get("elasticsearch_api_key")
+                
+                success = mgr.apply_deployment_capabilities(deployment_caps, certificates, api_key)
+                if success:
+                    mgr.update_state(
+                        step="deployment_caps_applied",
+                        deployment_caps_applied=True,
+                        deployment_caps=deployment_caps,
+                        api_status=api_status
+                    )
+                    # Notify Organization Manager
+                    try:
+                        mgr.api_confirm_caps(req_id, token, cap_type="deployment")
+                    except Exception as confirm_exc:
+                        logger.warning("Failed to confirm deployment caps: %s", confirm_exc)
+                else:
+                    mgr.update_state(
+                        step="rejected",
+                        rejection_reason="Failed to apply deployment capabilities"
+                    )
+            except Exception as exc:
+                logger.error("Deployment capabilities application failed: %s", exc)
+                mgr.update_state(
+                    step="rejected",
+                    rejection_reason=f"Deployment capabilities application failed: {exc}"
+                )
+            finally:
+                mgr.update_state(processing=False)
+        
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=mgr.get_onboarding_status().get("step", "deployment_caps_applied"),
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 6.5) Deployment caps confirmed - wait for deployment test
+    if api_status == "deployment_caps_confirmed":
+        if state.get("step") != "deployment_caps_applied":
+            mgr.update_state(step="deployment_caps_applied")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="deployment_caps_applied",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 7) Deployment test complete - contract-enabled flow completed
+    if api_status == "deployment_test_complete":
+        mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+        return PollStatusResponse(
+            status="success",
+            api_status=api_status,
+            step="complete",
+            payload_available=True,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 7.5) Contract required mismatch - pending manual review (admin only)
+    if api_status == "contract_required_mismatch":
+        status_message = (result or {}).get("status_message") or "Contract required setting mismatch; request pending manual review."
+        mgr.update_state(
+            step="join_data_sent",
+            api_status=api_status,
+            status_message=status_message,
+            contract_required_mismatch=True,
+        )
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="join_data_sent",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 8) Still waiting (pending/processing/email_sent/None) - original behavior
+    if api_status in ("pending", "processing", "email_sent", None, ""):
+        next_step = "pending_authorization" if state.get("step") == "pending_authorization" else "join_data_sent"
+        if state.get("step") != next_step:
+            mgr.update_state(step=next_step)
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step=next_step,
+            payload_available=bool(state.get("api_payload")),
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 8.5) Contract verified (orchestrator verified signed contract; waiting for deployment caps)
+    if api_status == "contract_verified":
+        if state.get("step") != "contract_signed":
+            mgr.update_state(step="contract_signed")
+        return PollStatusResponse(
+            status="pending",
+            api_status=api_status,
+            step="contract_signed",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 9) Approved/ready -> auto-process exactly once (legacy flow)
+    if api_status in ("ready", "approved"):
+        if state.get("processed_ok"):
+            mgr.update_state(step="complete", status="complete", completed=True)
+            return PollStatusResponse(
+                status="success",
+                api_status=api_status,
+                step="complete",
+                payload_available=True,
+                state=mgr.get_onboarding_status(),
+            )
+
+        payload = (result or {}).get("payload") or state.get("api_payload") or (result or {})
+        mgr.update_state(processing=True, api_payload=payload, step="join_data_received")
+
+        try:
+            ok = mgr.process_post_approval_payload(payload)
+            if ok:
+                # Do NOT restart DMS automatically; FE has a button for that.
+                mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+                # Note: Don't archive immediately - let frontend get final status first
+                # Archiving will happen when user clicks "Restart DMS" button
+            else:
+                mgr.update_state(step="rejected", rejection_reason="post-approval processing failed")
+        finally:
+            mgr.update_state(processing=False)
+
+        return PollStatusResponse(
+            status="success",
+            api_status=api_status,
+            step=mgr.get_onboarding_status().get("step", "complete"),
+            payload_available=True,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 10) Error / rejected
+    mgr.update_state(
+        step="rejected",
+        rejection_reason=(result or {}).get("rejection_reason") or (result or {}).get("reason") or "rejected by remote",
+    )
+    return PollStatusResponse(
+        status="error",
+        api_status=api_status,
+        step="rejected",
+        payload_available=bool(state.get("api_payload")),
+        state=mgr.get_onboarding_status(),
+    )
+
+
+class ContractSignRequest(BaseModel):
+    contract_did: str = Field(..., description="DID of the contract to sign")
+
+
+class ContractSignResponse(BaseModel):
+    status: str
+    message: str
+    contract_did: Optional[str] = None
+    state: Dict[str, Any]
+
+
+@router.post("/contract/sign", response_model=ContractSignResponse)
+def sign_contract(request: ContractSignRequest, mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Sign a contract that was received during the contract-enabled flow.
+    This endpoint is called by the frontend after the user reviews and accepts the contract.
+    """
+    state = mgr.get_onboarding_status()
+    req_id = state.get("request_id")
+    token = state.get("status_token")
+    
+    # Validate state
+    if state.get("contract_signed"):
+        return ContractSignResponse(
+            status="success",
+            message="Contract already signed.",
+            contract_did=request.contract_did,
+            state=mgr.get_onboarding_status(),
+        )
+    
+    if not state.get("contract_caps_applied"):
+        raise HTTPException(
+            status_code=400,
+            detail="Contract capabilities not yet applied. Wait for contract_caps_applied status."
+        )
+    
+    # Sign the contract
+    mgr.update_state(processing=True, step="contract_signing")
+    try:
+        success = mgr.sign_contract(request.contract_did)
+        if not success:
+            mgr.update_state(processing=False)
+            raise HTTPException(status_code=500, detail="Failed to sign contract")
+        
+        # Notify Organization Manager
+        if req_id and token:
+            try:
+                mgr.api_contract_signed(req_id, token)
+            except Exception as exc:
+                logger.warning("Failed to notify contract signed: %s", exc)
+        
+        mgr.update_state(
+            step="contract_signed",
+            contract_signed=True,
+            contract_did=request.contract_did,
+            processing=False
+        )
+        
+        return ContractSignResponse(
+            status="success",
+            message="Contract signed successfully.",
+            contract_did=request.contract_did,
+            state=mgr.get_onboarding_status(),
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Contract signing failed: %s", exc)
+        mgr.update_state(processing=False)
+        raise HTTPException(status_code=500, detail=f"Contract signing failed: {exc}")
+
+
+@router.get("/contract/pending")
+def get_pending_contract(mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Get the pending contract data if available.
+    Returns contract details for the frontend to display to the user.
+    """
+    state = mgr.get_onboarding_status()
+    
+    contract_data = state.get("contract_data")
+    contract_did = state.get("contract_did")
+    
+    if not contract_data and not contract_did:
+        return {
+            "status": "no_contract",
+            "message": "No pending contract available.",
+            "contract": None,
+        }
+    
+    return {
+        "status": "contract_available",
+        "message": "Contract pending user approval.",
+        "contract": {
+            "did": contract_did,
+            "data": contract_data,
+            "signed": state.get("contract_signed", False),
+        },
+    }
+
+
+@router.post("/join/process", response_model=ProcessResponse)
+def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Body(True)):
+    """
+    Back-compat finalize endpoint. Idempotent.
+    If already processed, returns success immediately.
+    """
+    state = mgr.get_onboarding_status()
+    if state.get("processed_ok"):
+        return ProcessResponse(
+            status="success",
+            step="complete",
+            message="Already processed.",
+            state=state,
+        )
+
+    payload = state.get("api_payload")
+    if not payload:
+        raise HTTPException(status_code=400, detail="No onboarding payload available yet. Keep polling until 'join_data_received'.")
+
+    ok = mgr.process_post_approval_payload(payload)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to process onboarding payload")
+
+    if restart_dms:
+        mgr.restart_dms_service()
+
+    mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
+    # Note: Don't archive immediately - let frontend get final status first
+    # Archiving will happen when user clicks "Restart DMS" button
+    return ProcessResponse(status="success", step="complete", message="Onboarding complete.", state=mgr.get_onboarding_status())
+
+
+@router.post("/onboarding/reset")
+def reset_onboarding(mgr: OnboardingManager = Depends(_mgr)):
+    """
+    Cancel/Reset the flow: clears state and re-creates a fresh file with 'init'.
+    """
+    mgr.clear_state()
+    _ensure_state_file(mgr)
+    return {"status": "success", "state": mgr.get_onboarding_status()}

@@ -1,0 +1,69 @@
+version: "V1"
+
+allocations:
+  openwebui:
+      executor: docker
+      type: service
+      resources:
+        cpu:
+          cores: 1
+        ram:
+          size: 2
+        disk:
+          size: 5
+      execution:
+        type: docker
+        image: ghcr.io/open-webui/open-webui:main
+        environment:
+          - WEBUI_AUTH=False
+          - OLLAMA_BASE_URL=http://ollama.internal:17600
+          - DMS_REQUIRE_PROXY=false
+          - DMS_PROXY_PORT=8080
+          - DMS_DDNS_URL=true
+          - DMS_DDNS_DOMAIN=ddns.nunet.network
+  
+  ollama:
+      executor: docker
+      type: service
+      resources:
+        cpu:
+          cores: 3
+        gpus:
+          - vendor: NVIDIA
+        ram:
+          size: 12
+        disk:
+          size: 15
+      execution:
+        type: docker
+        image: ollama/ollama:latest
+        environment:
+          - NVIDIA_VISIBLE_DEVICES=all
+          - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+          - OLLAMA_DEBUG=1
+          - OLLAMA_KEEP_ALIVE=-1
+          - OLLAMA_CONTEXT_LENGTH=8192
+          #- OLLAMA_FLASH_ATTENTION=1
+      volume:
+          - type: local
+            src: "/home/ubuntu/ollama"
+            mount_destination: "/root/.ollama"
+            read_only: false
+
+nodes:
+  local:
+    allocations:
+      - openwebui
+    ports:
+      - public: 17000
+        private: 8080
+        allocation: openwebui
+    peer: <peer_id_of_local_appliance>
+  remote:
+    allocations:
+      - ollama
+    ports:
+      - public: 17600
+        private: 11434
+        allocation: ollama
+    peer: {{peer_id}}

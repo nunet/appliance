@@ -1,0 +1,22 @@
+version: "V1"
+
+allocations:
+    alloc1:
+        executor: docker
+        type: task
+        resources:
+            cpu:
+                cores: 1
+            gpus: []
+            ram:
+                size: 1 # in GiB
+            disk:
+                size: 1 # in GiB
+        execution:
+            type: docker
+            image: hello-world
+nodes:
+    node1:
+        allocations:
+            - alloc1
+        peer: {{peer_id}} # required for targeted deployments

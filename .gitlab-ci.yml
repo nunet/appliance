@@ -1,0 +1,152 @@
+stages:
+  - version
+  - build
+  - deploy
+
+version:
+  stage: .pre
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update && apt-get install -y git
+  script:
+    - bash deploy/scripts/version.sh
+  only:
+    - main
+    - release
+    - /^release\/.+$/
+    - /^release-.+$/
+
+default:
+  tags:
+    - dedicated
+    - docker
+
+.build-deb:
+  stage: build
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update && apt-get install -y sudo git
+  script:
+    - bash deploy/scripts/build.sh
+  artifacts:
+    untracked: false
+    when: on_success
+    access: all
+    expire_in: "30 days"
+    paths:
+      - dist/
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
+
+build:x86:
+  extends:
+    - .build-deb
+
+build:arm64:
+  extends:
+    - .build-deb
+  tags:
+    - saas-linux-small-arm64
+
+deploy-packages:
+  stage: deploy
+  image: bash:alpine3.21
+  dependencies:
+    - build:x86
+    - build:arm64
+  needs:
+    - build:x86
+    - build:arm64
+  before_script:
+    - apk add curl
+  script:
+    - echo "Deploying to package registry..."
+    - |
+      regex='^(release|release\/.+|release-.+|main)$'
+      if [[ $CI_COMMIT_REF_NAME =~ $regex ]]; then
+        shopt -s globstar nullglob
+        cd "${CI_PROJECT_DIR}/dist"
+        found=false
+        for file in *.deb; do
+          [[ -f "$file" ]] || continue
+          found=true
+          if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
+            version=${BASH_REMATCH[2]}
+            curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+              --upload-file "$file" \
+              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/nunet-appliance/${version}/${file}"
+          fi
+        done
+        if [[ "$found" = false ]]; then
+          echo "No .deb files found in dist/, skipping upload."
+        fi
+      else
+        echo Skipping deployment to package registry...
+      fi
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+      when: on_success
+
+update-permalinks:
+  stage: deploy
+  image: bash:alpine3.21
+  variables:
+    PERMALINK_DEPLOY_SERVER: d.nunet.io
+    PERMALINK_DEPLOY_USER: gitlab-runner
+    PERMALINK_DEPLOY_FOLDER: /opt/public
+    PERMALINK_BUILD_CHANNELS: "main:latest release:stable"
+  dependencies:
+    - build:x86
+    - build:arm64
+  needs:
+    - build:x86
+    - build:arm64
+  before_script:
+    - apk add rsync openssh
+  script:
+    - echo $PROD_SSH_KEY_B64 | base64 -d > prod_ssh_key && chmod 600 prod_ssh_key && ls -latrh prod_ssh_key
+    - |
+      for build_channel_cfg in $PERMALINK_BUILD_CHANNELS; do
+        target_branch=$(cut -d ':' -f 1 <<<"$build_channel_cfg")
+        build_channel_candidate=$(cut -d ':' -f 2 <<<"$build_channel_cfg")
+        if [[ "$target_branch" == "$CI_COMMIT_REF_NAME" ]]; then
+          build_channel="$build_channel_candidate"
+        fi
+      done
+      if [[ "$build_channel" == "" ]]; then
+        echo no build channel for branch $CI_COMMIT_REF_NAME
+        exit 1
+      fi
+      echo using build channel $build_channel
+    - |
+      shopt -s globstar nullglob
+      cd dist
+      mkdir -p deploy
+      for file in *.deb; do
+        echo $file
+
+        if [[ $file =~ nunet-appliance-(base|web)_([0-9]+\.[0-9]+\.[0-9]+)_([a-zA-Z0-9]+).deb ]]; then
+          type=${BASH_REMATCH[1]}
+          version=${BASH_REMATCH[2]}
+          arch=${BASH_REMATCH[3]}
+
+          new_name="nunet-appliance-$type-$version-$arch-$build_channel.deb"
+          new_versionless_name="nunet-appliance-$type-$arch-$build_channel.deb"
+
+          cp $file deploy/$new_name
+          cp $file deploy/$new_versionless_name
+        else
+          echo "$file doesn't match regex capture, skipping..."
+        fi
+      done
+      cd $CI_PROJECT_DIR
+    - |
+      rsync -va \
+        --rsh "ssh -o StrictHostKeyChecking=no -i prod_ssh_key" \
+        $CI_PROJECT_DIR/dist/deploy/ \
+        $PERMALINK_DEPLOY_USER@$PERMALINK_DEPLOY_SERVER:$PERMALINK_DEPLOY_FOLDER
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+      when: on_success

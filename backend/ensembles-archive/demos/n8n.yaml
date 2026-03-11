@@ -1,0 +1,41 @@
+version: "V1"
+
+allocations:
+    
+    # n8n instance for building workflows visually
+    n8n:
+      executor: docker
+      type: service
+      resources:
+        cpu:
+          cores: {{ allocations_alloc1_resources_cpu_cores }}
+        ram:
+          size: {{ allocations_alloc1_resources_ram_size }} # in GiB
+        disk:
+          size: {{ allocations_alloc1_resources_disk_size }} # in GiB
+      execution:
+        type: docker
+        image: n8nio/n8n:latest
+        environment:
+          - N8N_DIAGNOSTICS_ENABLED=false
+          - DMS_REQUIRE_PROXY=false
+          - DMS_PROXY_PORT=5678
+          - DMS_DDNS_URL=true
+          - DDNS_PROXY_WILDCARD=true
+          - DMS_DDNS_DOMAIN=ddns.nunet.network
+          - N8N_SECURE_COOKIE=false
+      volume:
+          - type: local
+            src: "/home/ubuntu/local_volumes/n8n_data"
+            mount_destination: "/home/node/.n8n"
+            read_only: false
+
+nodes:
+    big-bertha:
+       allocations:
+            - n8n
+       ports:
+          - public: {{public_port}}
+            private: 5678
+            allocation: n8n
+       peer: {{peer_id}}
