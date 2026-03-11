@@ -1,0 +1,67 @@
+sequenceDiagram
+    participant User
+    participant Frontend as React Frontend
+    participant Backend as FastAPI Backend
+    participant OnboardingMgr as OnboardingManager
+    participant DMS as DMS Service
+    participant OrgAPI as External Org API
+    participant UserEmail as User Email
+
+    User->>Frontend: Navigate to /organizations
+    Frontend->>Backend: GET /organizations/known
+    Backend-->>Frontend: List of known organizations
+    
+    User->>Frontend: Select organization
+    Frontend->>Backend: POST /organizations/select
+    Backend->>OnboardingMgr: update_state(org_data, step="collect_join_data")
+    Backend-->>Frontend: Success
+    
+    User->>Frontend: Fill and submit join form
+    Frontend->>Backend: POST /organizations/join/submit
+    Backend->>OnboardingMgr: ensure_pre_onboarding()
+    OnboardingMgr->>DMS: Check onboarding status
+    DMS-->>OnboardingMgr: Status response
+    alt DMS not onboarded
+        OnboardingMgr->>DMS: Run onboard_compute()
+        OnboardingMgr->>DMS: Poll until ONBOARDED
+    end
+    OnboardingMgr->>OnboardingMgr: Collect resource snapshot
+    OnboardingMgr->>OnboardingMgr: Build submission payload
+    OnboardingMgr->>OrgAPI: POST /onboarding/submit/
+    OrgAPI-->>OnboardingMgr: {request_id, status_token, status}
+    OnboardingMgr->>OnboardingMgr: update_state(step="join_data_sent")
+    Backend-->>Frontend: {request_id, status_token, step}
+    
+    Note over Frontend: Appliance polls for status
+    loop Every 5 seconds
+        Frontend->>Backend: GET /organizations/join/poll
+        Backend->>OnboardingMgr: api_check_status(request_id, token)
+        OnboardingMgr->>OrgAPI: GET /onboarding/status/{id}/
+        OrgAPI-->>OnboardingMgr: {status, payload}
+        OnboardingMgr->>OnboardingMgr: update_state(api_status)
+        
+        alt Status: pending/processing
+            Backend-->>Frontend: {status: "pending", step: "pending_authorization"}
+        else Status: ready/approved
+            OnboardingMgr->>OnboardingMgr: process_post_approval_payload(payload)
+            OnboardingMgr->>OnboardingMgr: generate_and_apply_require_token()
+            OnboardingMgr->>DMS: nunet cap grant & anchor
+            OnboardingMgr->>OnboardingMgr: _apply_provide_token()
+            OnboardingMgr->>DMS: nunet cap anchor --provide
+            OnboardingMgr->>OnboardingMgr: _configure_observability()
+            OnboardingMgr->>OnboardingMgr: _write_certificates()
+            OnboardingMgr->>OnboardingMgr: copy_capability_tokens_to_dms_user()
+            OnboardingMgr->>DMS: onboard_compute()
+            OnboardingMgr->>OnboardingMgr: update_state(step="complete")
+            Backend-->>Frontend: {status: "success", step: "complete"}
+        else Status: rejected
+            OnboardingMgr->>OnboardingMgr: update_state(step="rejected")
+            Backend-->>Frontend: {status: "error", step: "rejected"}
+        end
+    end
+    
+    User->>Frontend: Click "Restart DMS"
+    Frontend->>Backend: POST /dms/restart (separate endpoint)
+    Backend->>DMS: systemctl restart nunetdms
+    DMS-->>Backend: Service restarted
+    Backend-->>Frontend: Success

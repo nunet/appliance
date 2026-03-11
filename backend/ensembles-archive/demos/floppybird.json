@@ -1,0 +1,83 @@
+{
+    "name": "Floppy Bird Game",
+    "description": "Deploy a Flappy Bird-style game server with configurable settings",
+    "fields": {
+        "dms_require_proxy": {
+            "label": "DMS Require Proxy",
+            "type": "boolean",
+            "default": true,
+            "required": true,
+            "description": "Whether to require a proxy to access the Floppy Bird game instance"
+        },
+        "bird_color": {
+            "label": "Bird Color",
+            "type": "select",
+            "options": [
+                {"value": "red", "label": "Red"},
+                {"value": "blue", "label": "Blue"},
+                {"value": "green", "label": "Green"},
+                {"value": "yellow", "label": "Yellow"}
+ 
+            ],
+            "default": "red",
+            "required": true,
+            "description": "Color of the bird in the game"
+        },
+        "proxy_port": {
+            "label": "Proxy Port",
+            "type": "number",
+            "default": 8070,
+            "min": 1024,
+            "max": 65535,
+            "required": true,
+            "description": "Port for the proxy service"
+        },
+        "dns_name": {
+            "label": "DNS Name",
+            "type": "text",
+            "placeholder": "my-flappy-bird-game",
+            "default": "crappy-bird-fastapi",
+            "required": true,
+            "description": "DNS name for the game service"
+        },
+        "peer_id": {
+            "label": "Peer ID",
+            "type": "text",
+            "placeholder": "your-peer-id-goes-here",
+            "required": true,
+            "description": "Target peer ID for deployment"
+        },
+        "allocations_alloc1_resources_cpu_cores": {
+            "label": "CPU Cores",
+            "type": "number",
+            "default": 0.5,
+            "min": 0.5,
+            "max": 4,
+            "step": 0.5,
+            "required": true,
+            "description": "Number of CPU cores to allocate",
+            "category": "resources"
+        },
+        "allocations_alloc1_resources_ram_size": {
+            "label": "RAM Size (GiB)",
+            "type": "number",
+            "default": 0.5,
+            "min": 0.5,
+            "max": 8,
+            "step": 0.5,
+            "required": true,
+            "description": "Amount of RAM to allocate in GiB",
+            "category": "resources"
+        },
+        "allocations_alloc1_resources_disk_size": {
+            "label": "Disk Size (GiB)",
+            "type": "number",
+            "default": 1,
+            "min": 0.5,
+            "max": 20,
+            "required": true,
+            "description": "Amount of disk space to allocate in GiB",
+            "category": "resources"
+        }
+    }
+} 

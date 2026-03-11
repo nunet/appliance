@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Deploy</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='dark-theme.css') }}" rel="stylesheet">
+  
+  <style>
+    /* chevron rotation for accordion */
+    .accordion-button::after { display:none; }   /* hide default */
+    .rotate-icon {
+      transition: transform .2s;
+    }
+    .accordion-button:not(.collapsed) .rotate-icon {
+      transform: rotate(180deg);
+    }
+    
+    .ensemble-card {
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .ensemble-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    .ensemble-card.selected {
+      border-color: #007bff;
+      background-color: rgba(0, 123, 255, 0.1);
+    }
+    
+    .wizard-step {
+      display: none;
+    }
+    
+    .wizard-step.active {
+      display: block;
+    }
+    
+    .form-field {
+      margin-bottom: 1rem;
+    }
+    
+    .form-field label {
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+    
+    .form-field .form-control {
+      border-radius: 0.375rem;
+    }
+    
+    .form-field .form-text {
+      font-size: 0.875rem;
+      color: #6c757d;
+    }
+    
+    .deployment-summary {
+      background: #23272b !important;
+      color: #f8f9fa !important;
+      border-radius: 0.375rem;
+      border: 1px solid #343a40;
+    }
+    
+    .deployment-summary h6 {
+      color: #495057;
+      margin-bottom: 0.5rem;
+    }
+    
+    .deployment-summary .summary-item {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.25rem;
+    }
+    
+    .deployment-summary .summary-item strong {
+      color: #212529;
+    }
+    
+    /* Make all summary text light for dark theme */
+    .deployment-summary, .deployment-summary * {
+      color: #f8f9fa !important;
+      background: none !important;
+      text-shadow: none !important;
+    }
+    
+    .loading-spinner {
+      display: none;
+    }
+    
+    .loading-spinner.show {
+      display: inline-block;
+    }
+    
+    .alert {
+      border-radius: 0.375rem;
+    }
+    .form-field input,
+    .form-field select,
+    .form-field textarea {
+      background: #23272b !important;
+      color: #f8f9fa !important;
+      border: 1px solid #343a40;
+    }
+    .form-field label,
+    .form-field .form-text {
+      color: #f8f9fa !important;
+    }
+    .summary-value {
+      color: #f8f9fa !important;
+    }
+    .form-field input:focus,
+    .form-field select:focus,
+    .form-field textarea:focus,
+    .form-field input:active,
+    .form-field select:active,
+    .form-field textarea:active {
+      background: #23272b !important;
+      color: #f8f9fa !important;
+      border: 1px solid #007bff;
+      box-shadow: none !important;
+    }
+    
+    .resource-section {
+      border: 1px solid #495057;
+      border-radius: 0.375rem;
+      margin-bottom: 1rem;
+    }
+    
+    .resource-header {
+      cursor: pointer;
+      padding: 1rem;
+      background-color: #343a40;
+      border-bottom: 1px solid #495057;
+      margin: 0;
+      border-radius: 0.375rem 0.375rem 0 0;
+      transition: background-color 0.2s ease;
+    }
+    
+    .resource-header:hover {
+      background-color: #495057;
+    }
+    
+    .resource-fields {
+      padding: 1rem;
+      background-color: #2c3034;
+    }
+    
+    .form-section {
+      margin-bottom: 2rem;
+    }
+    
+    .form-section h5 {
+      color: #f8f9fa;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #495057;
+    }
+  </style>
+</head>
+<body class="bg-dark">
+  {% include "navbar.html" %}
+  
+  <div class="container py-5 mt-5">
+    <h2>Deploy Ensembles</h2>
+    
+    <!-- Step 1: Ensemble Selection -->
+    <div id="step1" class="wizard-step active">
+      <div class="row">
+        <div class="col-12">
+          <div class="alert alert-info">
+            <i class="bi bi-info-circle me-2"></i>
+            Select an ensemble from the categories below to begin deployment.
+          </div>
+        </div>
+      </div>
+      
+      <div class="accordion" id="ensemblesAccordion">
+        <!-- Categories will be loaded here dynamically -->
+      </div>
+      
+      <div class="row mt-4">
+        <div class="col-12 text-end">
+          <button id="nextStep1" class="btn btn-primary" disabled>
+            Next <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Step 2: Configuration Form -->
+    <div id="step2" class="wizard-step">
+      <div class="row">
+        <div class="col-12">
+          <h4 id="ensembleTitle">Configure Ensemble</h4>
+          <div class="alert alert-info">
+            <i class="bi bi-gear me-2"></i>
+            Configure the parameters for your ensemble deployment.
+          </div>
+        </div>
+      </div>
+      
+      <!-- Deployment Type Selection -->
+      <div class="row mb-4">
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header">
+              <h6 class="mb-0">Deployment Type</h6>
+            </div>
+            <div class="card-body">
+              <div class="form-field">
+                <label for="deploymentType" class="form-label">Select Deployment Type:</label>
+                <select class="form-control" id="deploymentType" name="deployment_type">
+                  <option value="local">Deploy Locally - Deploy to this appliance</option>
+                  <option value="targeted">Targeted Deployment - Deploy to a specific peer</option>
+                  <option value="non_targeted">Non-Targeted Deployment - Let the network decide</option>
+                </select>
+              </div>
+              
+              <!-- Peer Selection (shown only for targeted deployment) -->
+              <div id="peerSelection" class="form-field" style="display: none;">
+                <label for="peerId" class="form-label">Target Peer:</label>
+                <select class="form-control" id="peerId" name="peer_id">
+                  <option value="">Select a peer...</option>
+                </select>
+                <div class="form-text">Or enter a custom peer ID below</div>
+              </div>
+              
+              <!-- Custom Peer ID Input -->
+              <div id="customPeerId" class="form-field" style="display: none;">
+                <label for="customPeerIdInput" class="form-label">Custom Peer ID:</label>
+                <input type="text" class="form-control" id="customPeerIdInput" name="custom_peer_id" placeholder="Enter peer ID manually">
+                <div class="form-text">Enter the peer ID you want to deploy to</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div id="configurationForm">
+        <!-- Form will be generated dynamically -->
+      </div>
+      
+      <div class="row mt-4">
+        <div class="col-12 d-flex justify-content-between">
+          <button id="backStep2" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+          </button>
+          <button id="nextStep2" class="btn btn-primary">
+            Next <i class="bi bi-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Step 3: Summary/Confirmation -->
+    <div id="step3" class="wizard-step">
+      <div class="row">
+        <div class="col-12">
+          <h4>Deployment Summary</h4>
+          <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            Please review your deployment configuration before proceeding.
+          </div>
+        </div>
+      </div>
+      
+      <div id="deploymentSummary">
+        <!-- Summary will be generated dynamically -->
+      </div>
+      
+      <div class="row mt-4">
+        <div class="col-12 d-flex justify-content-between">
+          <button id="backStep3" class="btn btn-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+          </button>
+          <button id="deployButton" class="btn btn-success">
+            <i class="bi bi-rocket-takeoff"></i> Deploy Ensemble
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Step 4: Deployment Result -->
+    <div id="step4" class="wizard-step">
+      <div class="row">
+        <div class="col-12">
+          <h4>Deployment Result</h4>
+        </div>
+      </div>
+      
+      <div id="deploymentResult">
+        <!-- Result will be shown here -->
+      </div>
+      
+      <div class="row mt-4">
+        <div class="col-12 text-center">
+          <button id="newDeployment" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> New Deployment
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Global variables
+    let selectedEnsemble = null;
+    let ensembleMetadata = null;
+    let formValues = {};
+    let deploymentOptions = null;
+    
+    // Initialize the page
+    document.addEventListener('DOMContentLoaded', function() {
+      loadEnsembles();
+      loadDeploymentOptions();
+      setupEventListeners();
+    });
+    
+    function setupEventListeners() {
+      // Step navigation
+      document.getElementById('nextStep1').addEventListener('click', () => showStep(2));
+      document.getElementById('backStep2').addEventListener('click', () => showStep(1));
+      document.getElementById('nextStep2').addEventListener('click', () => showStep(3));
+      document.getElementById('backStep3').addEventListener('click', () => showStep(2));
+      document.getElementById('deployButton').addEventListener('click', deployEnsemble);
+      document.getElementById('newDeployment').addEventListener('click', resetWizard);
+      
+      // Deployment type change
+      document.getElementById('deploymentType').addEventListener('change', handleDeploymentTypeChange);
+      
+      // Peer selection change
+      document.getElementById('peerId').addEventListener('change', handlePeerSelectionChange);
+    }
+    
+    function showStep(stepNumber) {
+      // Hide all steps
+      document.querySelectorAll('.wizard-step').forEach(step => {
+        step.classList.remove('active');
+      });
+      
+      // Show the target step
+      document.getElementById(`step${stepNumber}`).classList.add('active');
+      
+      // Handle step-specific logic
+      if (stepNumber === 2) {
+        loadEnsembleMetadata();
+      } else if (stepNumber === 3) {
+        generateSummary();
+      }
+    }
+    
+    function loadEnsembles() {
+      fetch('/api/ensembles')
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            showError('Failed to load ensembles: ' + data.error);
+            return;
+          }
+          
+          const accordion = document.getElementById('ensemblesAccordion');
+          accordion.innerHTML = '';
+          
+          Object.keys(data).forEach((category, categoryIndex) => {
+            const categoryId = `category${categoryIndex}`;
+            
+            const accordionItem = document.createElement('div');
+            accordionItem.className = 'accordion-item';
+            accordionItem.innerHTML = `
+              <h2 class="accordion-header" id="heading${categoryId}">
+                <button class="accordion-button ${categoryIndex === 0 ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#collapse${categoryId}" aria-expanded="${categoryIndex === 0}" aria-controls="collapse${categoryId}">
+                  ${category.charAt(0).toUpperCase() + category.slice(1)} Ensembles
+                  <i class="bi bi-chevron-down ms-2 rotate-icon"></i>
+                </button>
+              </h2>
+              <div id="collapse${categoryId}" class="accordion-collapse collapse ${categoryIndex === 0 ? 'show' : ''}"
+                   aria-labelledby="heading${categoryId}" data-bs-parent="#ensemblesAccordion">
+                <div class="accordion-body">
+                  <div class="row">
+                    ${data[category].map(ensemble => `
+                      <div class="col-md-6 col-lg-4 mb-3">
+                        <div class="card ensemble-card" data-ensemble='${JSON.stringify(ensemble)}'>
+                          <div class="card-body">
+                            <h6 class="card-title">${ensemble.name}</h6>
+                            <p class="card-text text-muted small">
+                              ${ensemble.metadata?.description || 'No description available'}
+                            </p>
+                            <div class="d-flex justify-content-between align-items-center">
+                              <span class="badge bg-secondary">${ensemble.category}</span>
+                              <button class="btn btn-sm btn-outline-primary select-ensemble">Select</button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              </div>
+            `;
+            
+            accordion.appendChild(accordionItem);
+          });
+          
+          // Add click handlers for ensemble selection
+          document.querySelectorAll('.select-ensemble').forEach(button => {
+            button.addEventListener('click', function(e) {
+              e.stopPropagation();
+              
+              // Remove previous selection
+              document.querySelectorAll('.ensemble-card').forEach(card => {
+                card.classList.remove('selected');
+              });
+              
+              // Select this ensemble
+              const card = this.closest('.ensemble-card');
+              card.classList.add('selected');
+              
+              // Store selected ensemble
+              selectedEnsemble = JSON.parse(card.dataset.ensemble);
+              
+              // Enable next button
+              document.getElementById('nextStep1').disabled = false;
+            });
+          });
+        })
+        .catch(error => {
+          console.error('Error loading ensembles:', error);
+          showError('Failed to load ensembles. Please try again.');
+        });
+    }
+    
+    function loadDeploymentOptions() {
+      fetch('/api/deployment-options')
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            console.warn('Failed to load deployment options:', data.error);
+            return;
+          }
+          
+          deploymentOptions = data;
+          
+          // Populate peer dropdown
+          const peerSelect = document.getElementById('peerId');
+          peerSelect.innerHTML = '<option value="">Select a peer...</option>';
+          
+          if (data.known_peers && data.known_peers.length > 0) {
+            data.known_peers.forEach(peer => {
+              const option = document.createElement('option');
+              option.value = peer.id;
+              option.textContent = peer.name;
+              peerSelect.appendChild(option);
+            });
+          }
+          
+          // Set local peer ID if available
+          if (data.local_peer_id) {
+            const localOption = document.createElement('option');
+            localOption.value = data.local_peer_id;
+            localOption.textContent = `Local Appliance (${data.local_peer_id.substring(0, 8)}...)`;
+            peerSelect.insertBefore(localOption, peerSelect.firstChild.nextSibling);
+          }
+        })
+        .catch(error => {
+          console.error('Error loading deployment options:', error);
+        });
+    }
+    
+    function handleDeploymentTypeChange() {
+      const deploymentType = document.getElementById('deploymentType').value;
+      const peerSelection = document.getElementById('peerSelection');
+      const customPeerId = document.getElementById('customPeerId');
+      
+      // Hide all peer-related fields
+      peerSelection.style.display = 'none';
+      customPeerId.style.display = 'none';
+      
+      if (deploymentType === 'targeted') {
+        // Show peer selection for targeted deployment
+        peerSelection.style.display = 'block';
+        customPeerId.style.display = 'block';
+      } else if (deploymentType === 'local') {
+        // For local deployment, auto-populate peer ID if available
+        if (deploymentOptions && deploymentOptions.local_peer_id) {
+          // This will be handled in the form generation
+        }
+      }
+      // For non-targeted, no peer fields are shown
+    }
+    
+    function handlePeerSelectionChange() {
+      const peerSelect = document.getElementById('peerId');
+      const customPeerInput = document.getElementById('customPeerIdInput');
+      
+      if (peerSelect.value) {
+        // If a peer is selected from dropdown, clear custom input
+        customPeerInput.value = '';
+      }
+    }
+    
+    function loadEnsembleMetadata() {
+      if (!selectedEnsemble) {
+        showError('No ensemble selected');
+        return;
+      }
+      
+      fetch(`/api/ensemble/${selectedEnsemble.name}/meta`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            // If no metadata, create a basic form
+            generateBasicForm();
+            return;
+          }
+          
+          ensembleMetadata = data;
+          generateFormFromMetadata(data);
+        })
+        .catch(error => {
+          console.error('Error loading metadata:', error);
+          generateBasicForm();
+        });
+    }
+    
+    function generateBasicForm() {
+      const formContainer = document.getElementById('configurationForm');
+      formContainer.innerHTML = `
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          No configuration form available for this ensemble. Proceeding with default settings.
+        </div>
+      `;
+      
+      // Enable next button
+      document.getElementById('nextStep2').disabled = false;
+    }
+    
+    function generateFormFromMetadata(metadata) {
+      const formContainer = document.getElementById('configurationForm');
+      const fields = metadata.fields || {};
+      const deploymentType = document.getElementById('deploymentType').value;
+      
+      // Group fields by category
+      const fieldCategories = {};
+      Object.keys(fields).forEach(fieldName => {
+        const field = fields[fieldName];
+        const category = field.category || 'general';
+        if (!fieldCategories[category]) {
+          fieldCategories[category] = [];
+        }
+        fieldCategories[category].push({ name: fieldName, ...field });
+      });
+      
+      let formHTML = '';
+      
+      // Generate form for each category
+      Object.keys(fieldCategories).forEach(category => {
+        const categoryFields = fieldCategories[category];
+        const isResourceCategory = category === 'resources';
+        
+        if (isResourceCategory) {
+          // Create collapsible accordion for resources
+          formHTML += `
+            <div class="accordion mb-3" id="resourcesAccordion">
+              <div class="accordion-item">
+                <h2 class="accordion-header" id="resourcesHeader">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" 
+                          data-bs-target="#resourcesCollapse" aria-expanded="false" aria-controls="resourcesCollapse">
+                    <i class="bi bi-cpu rotate-icon me-2"></i>
+                    <strong>Resources Configuration</strong>
+                    <span class="badge bg-secondary ms-2">${categoryFields.length} fields</span>
+                  </button>
+                </h2>
+                <div id="resourcesCollapse" class="accordion-collapse collapse" aria-labelledby="resourcesHeader" 
+                     data-bs-parent="#resourcesAccordion">
+                  <div class="accordion-body">
+                    <div class="alert alert-info">
+                      <i class="bi bi-info-circle me-2"></i>
+                      Configure the computational resources for this deployment.
+                    </div>
+          `;
+        }
+        
+        categoryFields.forEach(field => {
+          const fieldName = field.name;
+          const fieldId = `field_${fieldName}`;
+          const isRequired = field.required ? 'required' : '';
+          const requiredMark = field.required ? '<span class="text-danger">*</span>' : '';
+          
+          // Skip peer_id field if it's handled by deployment type
+          if (fieldName === 'peer_id') {
+            return;
+          }
+          
+          formHTML += `
+            <div class="form-field">
+              <label for="${fieldId}" class="form-label">
+                ${field.label || fieldName} ${requiredMark}
+              </label>
+          `;
+          
+          if (field.type === 'textarea') {
+            formHTML += `
+              <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
+                        placeholder="${field.placeholder || ''}" ${isRequired} rows="3">${field.default || ''}</textarea>
+            `;
+          } else if (field.type === 'select') {
+            formHTML += `
+              <select class="form-control" id="${fieldId}" name="${fieldName}" ${isRequired}>
+                ${field.options ? field.options.map(option => 
+                  `<option value="${option.value}" ${option.value === field.default ? 'selected' : ''}>${option.label}</option>`
+                ).join('') : ''}
+              </select>
+            `;
+          } else {
+            // Add step attribute for number fields if specified
+            const stepAttr = field.type === 'number' && field.step ? `step="${field.step}"` : '';
+            const minAttr = field.type === 'number' && field.min ? `min="${field.min}"` : '';
+            const maxAttr = field.type === 'number' && field.max ? `max="${field.max}"` : '';
+            formHTML += `
+              <input type="${field.type || 'text'}" class="form-control" id="${fieldId}" name="${fieldName}"
+                     placeholder="${field.placeholder || ''}" value="${field.default || ''}" ${isRequired} ${stepAttr} ${minAttr} ${maxAttr}>
+            `;
+          }
+          
+          if (field.description) {
+            formHTML += `<div class="form-text">${field.description}</div>`;
+          }
+          
+          formHTML += '</div>';
+        });
+        
+        if (isResourceCategory) {
+          formHTML += `
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          // Add info alert for general fields
+          formHTML += `
+            <div class="alert alert-info mb-3">
+              <i class="bi bi-gear me-2"></i>
+              Configure the general settings for this deployment.
+            </div>
+          `;
+        }
+      });
+      
+      formContainer.innerHTML = formHTML;
+      
+      // Debug: Check if form fields were created
+      console.log('Form fields created:', document.querySelectorAll('#configurationForm [name]'));
+      
+      // Enable next button
+      document.getElementById('nextStep2').disabled = false;
+    }
+    
+    function generateSummary() {
+      const summaryContainer = document.getElementById('deploymentSummary');
+      
+      // Collect form values
+      formValues = {};
+      if (ensembleMetadata && ensembleMetadata.fields) {
+        Object.keys(ensembleMetadata.fields).forEach(fieldName => {
+          // Skip peer_id as it's handled separately
+          if (fieldName === 'peer_id') {
+            return;
+          }
+          
+          // Try multiple selectors to find the field
+          let field = document.querySelector(`[name="${fieldName}"]`);
+          if (!field) {
+            field = document.querySelector(`#field_${fieldName}`);
+          }
+          if (!field) {
+            field = document.querySelector(`input[name="${fieldName}"], select[name="${fieldName}"], textarea[name="${fieldName}"]`);
+          }
+          
+          console.log(`Looking for field: ${fieldName}`, field); // Debug
+          if (field) {
+            formValues[fieldName] = field.value;
+            console.log(`Found value for ${fieldName}:`, field.value); // Debug
+          } else {
+            console.log(`Field not found: ${fieldName}`); // Debug
+          }
+        });
+      }
+      
+      console.log('Collected form values:', formValues); // Debug
+      
+      // Handle peer ID based on deployment type
+      const deploymentType = document.getElementById('deploymentType').value;
+      if (deploymentType === 'local' && deploymentOptions && deploymentOptions.local_peer_id) {
+        formValues['peer_id'] = deploymentOptions.local_peer_id;
+      } else if (deploymentType === 'targeted') {
+        const peerSelect = document.getElementById('peerId');
+        const customPeerInput = document.getElementById('customPeerIdInput');
+        
+        if (peerSelect.value) {
+          formValues['peer_id'] = peerSelect.value;
+        } else if (customPeerInput.value) {
+          formValues['peer_id'] = customPeerInput.value;
+        }
+      }
+      // For non-targeted, no peer_id is added
+      
+      let summaryHTML = `
+        <div class="deployment-summary">
+          <h6>Ensemble Information</h6>
+          <div class="summary-item">
+            <strong>Name:</strong>
+            <span>${selectedEnsemble.name}</span>
+          </div>
+          <div class="summary-item">
+            <strong>Category:</strong>
+            <span>${selectedEnsemble.category}</span>
+          </div>
+          <div class="summary-item">
+            <strong>Description:</strong>
+            <span>${ensembleMetadata?.description || 'No description available'}</span>
+          </div>
+        </div>
+        
+        <div class="deployment-summary">
+          <h6>Deployment Configuration</h6>
+          <div class="summary-item">
+            <strong>Deployment Type:</strong>
+            <span>${deploymentType === 'local' ? 'Local Deployment' : deploymentType === 'targeted' ? 'Targeted Deployment' : 'Non-Targeted Deployment'}</span>
+          </div>
+          ${deploymentType === 'local' && formValues['peer_id'] ? `
+          <div class="summary-item">
+            <strong>Target Peer:</strong>
+            <span>Local Appliance (${formValues['peer_id'].substring(0, 8)}...)</span>
+          </div>
+          ` : ''}
+          ${deploymentType === 'targeted' && formValues['peer_id'] ? `
+          <div class="summary-item">
+            <strong>Target Peer:</strong>
+            <span>${formValues['peer_id']}</span>
+          </div>
+          ` : ''}
+        </div>
+      `;
+      
+      if (Object.keys(formValues).length > 0) {
+        summaryHTML += `
+          <div class="deployment-summary">
+            <h6>Configuration Values</h6>
+            ${Object.keys(formValues).map(fieldName => `
+              <div class="summary-item">
+                <strong>${ensembleMetadata.fields[fieldName]?.label || fieldName}:</strong>
+                <span class="summary-value">${formValues[fieldName]}</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else {
+        summaryHTML += `
+          <div class="deployment-summary">
+            <h6>Configuration Values</h6>
+            <div class="summary-item">
+              <strong>Warning:</strong>
+              <span>No form values collected</span>
+            </div>
+          </div>
+        `;
+      }
+      
+      summaryContainer.innerHTML = summaryHTML;
+    }
+    
+    function deployEnsemble() {
+      const deployButton = document.getElementById('deployButton');
+      const originalText = deployButton.innerHTML;
+      
+      // Show loading state
+      deployButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Deploying...';
+      deployButton.disabled = true;
+      
+      const deploymentData = {
+        ensemble_name: selectedEnsemble.name,
+        form_values: formValues,
+        deployment_type: document.getElementById('deploymentType').value
+      };
+      
+      console.log('Sending deployment data:', deploymentData); // Debug
+      
+      fetch('/api/ensemble/deploy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(deploymentData)
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.status === 'success' && data.deployment_id) {
+          // Start polling for deployment status
+          pollDeploymentStatus(data.deployment_id, data);
+        } else {
+          showStep(4);
+          showDeploymentResult(data);
+        }
+      })
+      .catch(error => {
+        console.error('Deployment error:', error);
+        showStep(4);
+        showDeploymentResult({
+          status: 'error',
+          message: 'Deployment failed. Please try again.'
+        });
+      })
+      .finally(() => {
+        // Reset button
+        deployButton.innerHTML = originalText;
+        deployButton.disabled = false;
+      });
+    }
+    
+    function pollDeploymentStatus(deploymentId, initialData) {
+      showStep(4);
+      showDeploymentResult({
+        status: 'pending',
+        message: 'Deployment submitted successfully. Monitoring deployment status...',
+        deployment_id: deploymentId
+      });
+      
+      let pollCount = 0;
+      const maxPolls = 60; // 5 minutes with 5-second intervals
+      
+      const pollInterval = setInterval(() => {
+        pollCount++;
+        
+        fetch(`/api/deployment/${deploymentId}/status`)
+          .then(response => response.json())
+          .then(data => {
+            if (data.status === 'success') {
+              const deploymentStatus = data.deployment_status;
+              
+              if (deploymentStatus === 'running') {
+                showDeploymentResult({
+                  status: 'pending',
+                  message: `Deployment is running... (${pollCount * 5}s elapsed)`,
+                  deployment_id: deploymentId
+                });
+              } else if (deploymentStatus === 'completed') {
+                clearInterval(pollInterval);
+                showDeploymentResult({
+                  status: 'success',
+                  message: 'Deployment completed successfully!',
+                  deployment_id: deploymentId
+                });
+              } else if (deploymentStatus === 'failed') {
+                clearInterval(pollInterval);
+                showDeploymentResult({
+                  status: 'error',
+                  message: 'Deployment failed.',
+                  deployment_id: deploymentId
+                });
+              }
+            } else {
+              // If we can't get status, assume it's still running
+              showDeploymentResult({
+                status: 'pending',
+                message: `Deployment is running... (${pollCount * 5}s elapsed)`,
+                deployment_id: deploymentId
+              });
+            }
+          })
+          .catch(error => {
+            console.error('Status polling error:', error);
+            // Continue polling on error
+          });
+        
+        // Stop polling after max attempts
+        if (pollCount >= maxPolls) {
+          clearInterval(pollInterval);
+          showDeploymentResult({
+            status: 'warning',
+            message: 'Deployment status polling timed out. Check the deployments page for current status.',
+            deployment_id: deploymentId
+          });
+        }
+      }, 5000); // Poll every 5 seconds
+    }
+    
+    function showDeploymentResult(result) {
+      const resultContainer = document.getElementById('deploymentResult');
+      
+      if (result.status === 'success') {
+        resultContainer.innerHTML = `
+          <div class="alert alert-success">
+            <i class="bi bi-check-circle me-2"></i>
+            <strong>Deployment Successful!</strong><br>
+            ${result.message}<br>
+            ${result.deployment_id ? `Deployment ID: ${result.deployment_id}<br>` : ''}
+            ${result.saved_path ? `Saved to: ${result.saved_path}` : ''}
+          </div>
+        `;
+      } else {
+        resultContainer.innerHTML = `
+          <div class="alert alert-danger">
+            <i class="bi bi-exclamation-triangle me-2"></i>
+            <strong>Deployment Failed</strong><br>
+            ${result.message || result.error || 'Unknown error occurred'}
+          </div>
+        `;
+      }
+    }
+    
+    function resetWizard() {
+      // Reset global variables
+      selectedEnsemble = null;
+      ensembleMetadata = null;
+      formValues = {};
+      
+      // Reset UI
+      document.querySelectorAll('.ensemble-card').forEach(card => {
+        card.classList.remove('selected');
+      });
+      
+      document.getElementById('nextStep1').disabled = true;
+      document.getElementById('nextStep2').disabled = true;
+      
+      // Show first step
+      showStep(1);
+    }
+    
+    function showError(message) {
+      // You can implement a toast or alert system here
+      console.error(message);
+      alert(message);
+    }
+    
+    function toggleResourceSection() {
+      const resourceFields = document.getElementById('resourceFields');
+      const resourceChevron = document.getElementById('resourceChevron');
+      
+      if (resourceFields.style.display === 'none') {
+        resourceFields.style.display = 'block';
+        resourceChevron.style.transform = 'rotate(180deg)';
+      } else {
+        resourceFields.style.display = 'none';
+        resourceChevron.style.transform = 'rotate(0deg)';
+      }
+    }
+  </script>
+</body>
+</html> 

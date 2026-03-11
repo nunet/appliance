@@ -1,0 +1,164 @@
+{% include "navbar.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Join Organization Status</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="{{ url_for('static', filename='dark-theme.css') }}" rel="stylesheet">
+    <style>
+      body { background-color: #181a1b; color: #f8f9fa; }
+      .container, .card, .alert, .collapse, .list-group-item { background-color: #23272b !important; color: #f8f9fa !important; }
+      .card { border: 1px solid #343a40; }
+      .alert { border-color: #343a40; }
+      .progress-bar { background: linear-gradient(to right, #0d6efd, #0b5ed7); color: #fff; }
+      .list-group-item { border-color: #343a40; }
+      .btn-outline-secondary { color: #f8f9fa; border-color: #6c757d; }
+      .btn-outline-secondary:hover { background-color: #343a40; }
+      .btn-primary { background-color: #0d6efd; border: none; }
+      .btn-primary:hover { background-color: #0b5ed7; }
+    </style>
+</head>
+<body class="bg-dark">
+<div class="container py-5">
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <h2 class="mb-4 text-center">Join Organization Status</h2>
+
+            <div style="display: flex; gap: 1.5em; margin-bottom: 1em;">
+                <div>
+                    <span style="vertical-align: middle;">
+                        <span style="display:inline-block; width:12px; height:12px; border-radius:50%; background: {{ 'limegreen' if onboarding_service_active else '#ccc' }}; margin-right: 6px;"></span>
+                        Onboarding Service
+                    </span>
+                </div>
+                <div>
+                    <span style="vertical-align: middle;">
+                        <span style="display:inline-block; width:12px; height:12px; border-radius:50%; background: {{ 'limegreen' if api_available else '#ccc' }}; margin-right: 6px;"></span>
+                        API Endpoint
+                    </span>
+                </div>
+            </div>
+
+            <div class="alert alert-secondary mb-4" style="font-size:0.95em;">
+                <strong>Debug:</strong>
+                step={{ current_step }},
+                current_index={{ current_index }},
+                rejection_reason={{ status.rejection_reason }},
+                api_status={{ status.api_status }},
+                request_id={{ status.request_id }}
+            </div>
+
+            <div class="alert alert-info">
+                DEBUG: current_index={{ current_index }}, step_states|length={{ step_states|length }}, current_step={{ current_step }}
+            </div>
+
+            <div class="progress mb-4" style="height: 24px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                     style="width: {{ ((current_index + 1) / step_states|length * 100) | round(0, 'floor') }}%;"
+                     aria-valuenow="{{ current_index + 1 }}" aria-valuemin="0" aria-valuemax="{{ step_states|length }}">
+                    Step {{ current_index + 1 }} of {{ step_states|length }}
+                </div>
+            </div>
+
+            {% set steps = [
+                ('submit_data', 'Submit Data'),
+                ('join_data_sent', 'Data Sent'),
+                ('pending_authorization', 'Pending Authorization'),
+                ('join_data_received', 'Join Data Received'),
+                ('capabilities_applied', 'Capabilities Applied'),
+                ('telemetry_configured', 'Telemetry Configured'),
+                ('mtls_certs_saved', 'mTLS Certs Saved'),
+                ('complete', 'Complete')
+            ] %}
+
+            {# Use the last log entry's step as the current step #}
+            {% set last_log = status.logs[-1] if status.logs and status.logs|length > 0 else None %}
+            {% set current_step = last_log.step if last_log else 'submit_data' %}
+
+            {# Find the current step index #}
+            {% set current_index = 0 %}
+            {% for step in steps %}
+                {% if step[0] == current_step %}
+                    {% set current_index = loop.index0 %}
+                {% endif %}
+            {% endfor %}
+
+            <ul class="list-group mb-4">
+                {% for step in step_states %}
+                    {% if step.state == 'done' %}
+                        <li class="list-group-item text-success">
+                            <i class="bi bi-check-circle-fill me-2"></i>{{ step.label }}
+                        </li>
+                    {% elif step.state == 'active' %}
+                        <li class="list-group-item active text-white">
+                            <i class="bi bi-arrow-right-circle me-2"></i>{{ step.label }}
+                        </li>
+                    {% else %}
+                        <li class="list-group-item">
+                            <i class="bi bi-circle me-2"></i>{{ step.label }}
+                        </li>
+                    {% endif %}
+                {% endfor %}
+            </ul>
+
+            <ul class="list-group mb-3">
+                {% if status.org_data %}
+                <li class="list-group-item"><strong>Organization:</strong> {{ status.org_data.name }}</li>
+                {% endif %}
+                {% if status.form_data %}
+                <li class="list-group-item"><strong>Name:</strong> {{ status.form_data.name }}</li>
+                <li class="list-group-item"><strong>Email:</strong> {{ status.form_data.email }}</li>
+                <li class="list-group-item"><strong>Role:</strong> {{ status.form_data.why_join|replace('-', ' ')|title }}</li>
+                {% endif %}
+                
+                <!-- Resource Information Display -->
+                {% if status.form_data and status.form_data.get('resources') %}
+                <li class="list-group-item">
+                    <strong>Onboarding Status:</strong> 
+                    <span class="badge {% if status.form_data.resources.onboarding_status %}bg-success{% else %}bg-warning{% endif %}">
+                        {{ 'Onboarded' if status.form_data.resources.onboarding_status else 'Not Onboarded' }}
+                    </span>
+                </li>
+                <li class="list-group-item">
+                    <strong>Onboarded Resources:</strong> {{ status.form_data.resources.onboarded_resources }}
+                </li>
+                {% endif %}
+            </ul>
+            {% if current_step == 'pending_authorization' or current_step == 'join_data_sent' %}
+                <div class="alert alert-warning text-center">Your request is pending approval.</div>
+            {% elif current_step == 'rejected' %}
+                <div class="alert alert-danger text-center">Rejected: {{ status.rejection_reason }}</div>
+            {% elif current_step == 'complete' %}
+                <div class="alert alert-success text-center">Onboarding Complete!</div>
+            {% endif %}
+
+            <!-- Step History (collapsible) -->
+            <div class="mt-4">
+                <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#logCollapse" aria-expanded="false" aria-controls="logCollapse">
+                    Show Step History
+                </button>
+                <div class="collapse mt-2" id="logCollapse">
+                    <h5>Step History</h5>
+                    <ul class="list-group mb-3">
+                        {% for log in status.logs %}
+                            <li class="list-group-item small">
+                                <span class="text-muted">{{ log.timestamp }}</span> — <strong>{{ log.step }}</strong>: {{ log.message }}
+                            </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    setTimeout(function() {
+        window.location.reload();
+    }, 200000);
+</script>
+</body>
+</html>
