@@ -234,6 +234,42 @@ class OnboardingManager:
 
         return self.state
 
+    @staticmethod
+    def _truncate_error_text(value: str, *, limit: int = 600) -> str:
+        text = (value or "").strip()
+        if len(text) <= limit:
+            return text
+        return f"{text[:limit].rstrip()}..."
+
+    @classmethod
+    def _extract_http_error_detail(cls, resp: requests.Response) -> str:
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+
+        if isinstance(payload, dict):
+            for key in ("detail", "error", "message", "status_message", "rejection_reason"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return cls._truncate_error_text(value)
+                if value:
+                    return cls._truncate_error_text(str(value))
+            return cls._truncate_error_text(json.dumps(payload, ensure_ascii=False))
+
+        if isinstance(payload, list):
+            return cls._truncate_error_text(json.dumps(payload, ensure_ascii=False))
+
+        return cls._truncate_error_text(resp.text or f"HTTP {resp.status_code}")
+
+    @classmethod
+    def _raise_for_status_with_detail(cls, resp: requests.Response, *, context: str) -> None:
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = cls._extract_http_error_detail(resp)
+            raise RuntimeError(f"{context} failed ({resp.status_code}): {detail}") from exc
+
     def clear_state(self) -> None:
         """Reset onboarding state and remove persisted artefacts."""
         self.state = self._baseline_state()
@@ -629,7 +665,7 @@ class OnboardingManager:
         self.append_log("submit_data", f"Submitting onboarding payload to {endpoint}")
 
         resp = self.session.post(endpoint, json=payload, timeout=30)
-        resp.raise_for_status()
+        self._raise_for_status_with_detail(resp, context="Onboarding submit")
         return resp.json()
 
     def api_check_status(self, request_id: str, status_token: str) -> Dict[str, Any]:

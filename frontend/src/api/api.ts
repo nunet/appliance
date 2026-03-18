@@ -46,6 +46,30 @@ export interface SshStatus {
   authorized_keys: number;
 }
 
+export type ApplianceEnvironment = "production" | "staging";
+
+export interface EnvironmentUpdateChannelStatus {
+  channel: string;
+  resolved_channel: string;
+  fell_back: boolean;
+}
+
+export interface EnvironmentStatus {
+  environment: ApplianceEnvironment;
+  updates: {
+    appliance: EnvironmentUpdateChannelStatus;
+    dms: EnvironmentUpdateChannelStatus;
+  };
+  ethereum: {
+    chain_id: number;
+    token_address: string;
+    token_symbol: string;
+    token_decimals: number;
+    explorer_base_url?: string | null;
+    network_name?: string | null;
+  };
+}
+
 export interface UpdateInfo {
   available: boolean;
   current: string;
@@ -257,6 +281,9 @@ export const getApplianceVersion = () =>
 
 export const getSshStatus = () =>
   api.get<SshStatus>("/sys/ssh-status").then((res) => res.data);
+
+export const getEnvironmentStatus = () =>
+  api.get<EnvironmentStatus>("/sys/environment").then((res) => res.data);
 
 export const checkUpdates = () =>
   api.get<string>("/sys/check-updates").then((res) => {

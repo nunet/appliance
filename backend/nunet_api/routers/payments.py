@@ -23,38 +23,41 @@ from ..schemas import (
     TokenConfig,
 )
 from modules.dms_manager import DMSManager
+from modules.environment_profile import get_runtime_profile
 from ..utils.cardano_payments import CardanoPaymentsBuilder, CardanoTxBuildError
 
 router = APIRouter()
 
-# --------- hard-coded token configs (testing defaults) ---------
+# --------- environment-scoped token configs ---------
+RUNTIME_PROFILE = get_runtime_profile()
+
 ETH_TOKEN_CONFIG = TokenConfig(
-    chain_id=1,
-    token_address="0xF0d33BeDa4d734C72684b5f9abBEbf715D0a7935",
-    token_symbol="NTX",
-    token_decimals=16,
-    explorer_base_url="https://etherscan.io/",
-    network_name="Ethereum Mainnet",
+    chain_id=RUNTIME_PROFILE.ethereum.chain_id,
+    token_address=RUNTIME_PROFILE.ethereum.token_address,
+    token_symbol=RUNTIME_PROFILE.ethereum.token_symbol,
+    token_decimals=RUNTIME_PROFILE.ethereum.token_decimals,
+    explorer_base_url=RUNTIME_PROFILE.ethereum.explorer_base_url,
+    network_name=RUNTIME_PROFILE.ethereum.network_name,
 )
 
 CARDANO_TOKEN_CONFIG = CardanoTokenConfig(
-    chain_id=1,
-    token_address="asset1tkxzxjklvs5gdkpuh26ex3re4rl8wjg3wmyxdr",
-    token_decimals=16,
-    token_symbol="tNTX",
-    explorer_base_url="https://preprod.cexplorer.io/",
-    network_name="Cardano Preprod",
-    policy_id="88b60b51a3dcd3a6134bb1c0fdd2837d8cc87abd27dbd0c3a494869f",
-    asset_name_hex="4e754e657450726570726f64",  # "NuNetPreprod"
-    asset_name="NuNetPreprod",
-    asset_name_encoded="4e754e657450726570726f64",
-    asset_id="asset1tkxzxjklvs5gdkpuh26ex3re4rl8wjg3wmyxdr",
+    chain_id=RUNTIME_PROFILE.cardano.chain_id,
+    token_address=RUNTIME_PROFILE.cardano.token_address,
+    token_decimals=RUNTIME_PROFILE.cardano.token_decimals,
+    token_symbol=RUNTIME_PROFILE.cardano.token_symbol,
+    explorer_base_url=RUNTIME_PROFILE.cardano.explorer_base_url,
+    network_name=RUNTIME_PROFILE.cardano.network_name,
+    policy_id=RUNTIME_PROFILE.cardano.policy_id,
+    asset_name_hex=RUNTIME_PROFILE.cardano.asset_name_hex,
+    asset_name=RUNTIME_PROFILE.cardano.asset_name,
+    asset_name_encoded=RUNTIME_PROFILE.cardano.asset_name_encoded,
+    asset_id=RUNTIME_PROFILE.cardano.asset_id,
 )
 
 PAYMENTS_CONFIG = PaymentsConfig(ethereum=ETH_TOKEN_CONFIG, cardano=CARDANO_TOKEN_CONFIG)
 PAY_BLOCKCHAIN = "ETHEREUM"
 ALLOWED_BLOCKCHAINS = {"ETHEREUM", "CARDANO"}
-CARDANO_KOIOS_BASE = "https://preprod.koios.rest/api/v1"
+CARDANO_KOIOS_BASE = RUNTIME_PROFILE.cardano_koios_base_url
 MAX_DECIMALS_BY_CHAIN = {
     "ETHEREUM": ETH_TOKEN_CONFIG.token_decimals,
     "CARDANO": CARDANO_TOKEN_CONFIG.token_decimals,

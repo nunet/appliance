@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.staticfiles import StaticFiles
 
+from modules.environment_profile import get_runtime_profile
 from modules.path_constants import FRONTEND_DIR
 from .security import require_auth
 from .routers import (
@@ -26,6 +27,9 @@ from .routers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Fail fast on invalid APPLIANCE_ENV at app startup.
+_RUNTIME_PROFILE = get_runtime_profile()
 
 NUNET_STATIC_DIR = os.getenv("NUNET_STATIC_DIR")
 if NUNET_STATIC_DIR:

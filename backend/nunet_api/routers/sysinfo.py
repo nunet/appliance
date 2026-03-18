@@ -1,13 +1,14 @@
 # nunet_api/app/routers/sysinfo.py
 from fastapi import APIRouter, HTTPException, Query
-from ..schemas import CommandResult, SshStatus
+from ..schemas import CommandResult, EnvironmentStatus, SshStatus
 from ..adapters import parse_ssh_status
 from modules.utils import (
+    get_environment_status,
     get_appliance_version,
     get_local_ip,
     get_public_ip,
     get_ssh_status,
-    get_updates,
+    get_appliance_updates,
     trigger_appliance_update,
 )
 import subprocess
@@ -19,7 +20,7 @@ router = APIRouter()
 
 @router.get("/check-updates", response_model=str)
 def check_updates():
-    return get_updates()
+    return get_appliance_updates()
 
 
 @router.post("/trigger-update", response_model=CommandResult)
@@ -44,6 +45,11 @@ def appliance_version():
 @router.get("/ssh-status", response_model=SshStatus)
 def ssh_status():
     return SshStatus(**parse_ssh_status(get_ssh_status()))
+
+
+@router.get("/environment", response_model=EnvironmentStatus)
+def environment_status():
+    return EnvironmentStatus(**get_environment_status())
 
 @router.get("/docker/containers", response_model=dict)
 def docker_containers(include_all: bool = Query(False, alias="all", description="Include stopped containers (-a)")):

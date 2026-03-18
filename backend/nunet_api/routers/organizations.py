@@ -42,6 +42,10 @@ _org_mgr = OrganizationManager()
 ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
 
 _STATUS_TRACE: deque[str] = deque(maxlen=50)
+_REMOTE_ROLE_CANONICAL = {
+    "compute_provider": "compute_provider",
+    "orchestrator": "orchestrator",
+}
 
 
 def _record_status_trace(resolved_step: str, state: dict) -> None:
@@ -60,6 +64,21 @@ def _record_status_trace(resolved_step: str, state: dict) -> None:
             state.get("progress"),
             list(_STATUS_TRACE),
         )
+
+
+def _canonicalize_roles_for_remote(roles: List[str]) -> List[str]:
+    canonical_roles: List[str] = []
+    for role in roles:
+        if not isinstance(role, str):
+            continue
+        trimmed = role.strip()
+        if not trimmed:
+            continue
+        normalized = trimmed.lower()
+        canonical = _REMOTE_ROLE_CANONICAL.get(normalized, trimmed)
+        if canonical not in canonical_roles:
+            canonical_roles.append(canonical)
+    return canonical_roles
 
 
 def _ensure_state_file(mgr: OnboardingManager) -> None:
@@ -194,6 +213,10 @@ class JoinSubmitRequest(BaseModel):
     wallet_chain: Optional[TokenomicsChain] = Field(
         None,
         description="Wallet chain identifier (cardano | ethereum) associated with wallet_address",
+    )
+    blockchain: Optional[TokenomicsChain] = Field(
+        None,
+        description="Selected blockchain for this onboarding request (cardano | ethereum)",
     )
     renewal: bool = Field(
         False,
@@ -333,6 +356,31 @@ def _slim_resource_snapshot(resource_info: Optional[Dict[str, Any]]) -> Dict[str
     return snapshot
 
 
+def _extract_remote_rejection_reason(result: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(result, dict):
+        return "rejected by remote"
+    for key in ("rejection_reason", "status_message", "error_message", "detail", "reason"):
+        value = result.get(key)
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+        elif value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+    return "rejected by remote"
+
+
+def _is_contract_caps_confirmed_waiting_message(message: Optional[str]) -> bool:
+    if not isinstance(message, str):
+        return True
+    normalized = message.strip().lower()
+    if not normalized:
+        return True
+    return normalized == "contract capabilities confirmed by appliance"
+
+
 def _resolve_current_step_from_state(state: dict) -> str:
     """
     Prefer sticky terminal states; otherwise derive from logs/state/api_status.
@@ -408,9 +456,6 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ("waiting_api", "Waiting for the organization's onboarding service to become available...")
     if step == "join_data_sent" and api_status in [None, "", "pending", "processing", "email_sent"]:
         return ("data_submitted", "Your join data has been submitted to the organization. Awaiting further instructions...")
-    if api_status == "contract_required_mismatch":
-        msg = onboarding_status.get("status_message") or "Contract required setting mismatch between organization and appliance; request pending manual review."
-        return ("contract_required_mismatch", msg)
     if api_status == "email_verified":
         return ("email_verified", "Your email has been verified! Waiting for organization approval...")
     if step == "join_data_sent" and api_status in ["pending", "processing"]:
@@ -419,24 +464,6 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ('approved', 'Your request has been approved! Finalizing onboarding...')
     if step == 'pending_authorization':
         return ('waiting_approval', 'Your request is being reviewed by the organization. Please wait for approval...')
-    
-    # Contract-enabled flow steps
-    if step == "contract_caps_applied" or api_status == "contract_caps_confirmed":
-        return ("contract_caps_applied", "Contract capabilities applied. Waiting for the organization to create a contract for you to sign. This may take a minute...")
-    if step == "contract_created" or api_status == "contract_created":
-        return ("contract_created", "A contract has been created by the organization. Checking for incoming contract...")
-    if step == "contract_received" or api_status == "contract_received":
-        return ("contract_received", "Contract received! Please review and sign the contract to continue.")
-    if step == "contract_signing":
-        return ("contract_signing", "Signing the contract...")
-    if step == "contract_signed" or api_status == "contract_signed" or api_status == "contract_verified":
-        return ("contract_signed", "Contract signed! Waiting for deployment capabilities...")
-    if step == "deployment_caps_applied" or api_status == "deployment_caps_confirmed":
-        return ("deployment_caps_applied", "Deployment capabilities applied. Running deployment verification...")
-    if step == "deployment_test_complete" or api_status == "deployment_test_complete":
-        return ("deployment_test_complete", "Deployment verification complete! Finalizing onboarding...")
-    
-    # Legacy flow steps
     if step == "capabilities_applied":
         return ("capabilities_applied", "Applying organization capabilities...")
     if step == "capabilities_onboarded":
@@ -447,8 +474,10 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ("mtls_certs_saved", "Saving mTLS certificates...")
     if step == "complete":
         return ("complete", f"Onboarding complete! You are now a member of {org_name}.")
-    if step == "rejected" and rejection_reason:
-        return ("rejected", f"Your onboarding request was rejected. Reason: {rejection_reason}")
+    if step == "rejected":
+        rejection_message = rejection_reason or onboarding_status.get("status_message", "")
+        if rejection_message:
+            return ("rejected", f"Your onboarding request was rejected. Reason: {rejection_message}")
     if error:
         return ("error", f"An error occurred: {error}")
     return (step or "init", f"Current step: {step or 'init'}")
@@ -554,6 +583,23 @@ def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
     role_profiles = extract_role_profiles(org_entry)
     selected_role = roles[0] if roles else None
     tokenomics = get_tokenomics_config(org_entry)
+    supported_blockchains = []
+    for chain in (tokenomics.get("blockchains") or []):
+        if isinstance(chain, str):
+            normalized = chain.strip().lower()
+            if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                supported_blockchains.append(normalized)
+    if isinstance(org_entry, dict):
+        for chain in (org_entry.get("blockchains") or []):
+            if isinstance(chain, str):
+                normalized = chain.strip().lower()
+                if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                    supported_blockchains.append(normalized)
+        if isinstance(org_entry.get("blockchain"), str):
+            normalized = org_entry["blockchain"].strip().lower()
+            if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                supported_blockchains.append(normalized)
+    selected_blockchain = supported_blockchains[0] if supported_blockchains else tokenomics.get("chain")
 
     mgr.update_state(
         org_data={
@@ -563,6 +609,8 @@ def select_org(body: SelectOrgRequest, mgr: OnboardingManager = Depends(_mgr)):
             "role_profiles": role_profiles,
             "selected_role": selected_role,
             "tokenomics": tokenomics,
+            "supported_blockchains": supported_blockchains,
+            "selected_blockchain": selected_blockchain,
         },
         step="collect_join_data",
         request_id=None,
@@ -612,6 +660,23 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         role_profiles = extract_role_profiles(entry)
         default_role = roles[0] if roles else None
         tokenomics = get_tokenomics_config(entry)
+        supported_blockchains = []
+        for chain in (tokenomics.get("blockchains") or []):
+            if isinstance(chain, str):
+                normalized = chain.strip().lower()
+                if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                    supported_blockchains.append(normalized)
+        if isinstance(entry, dict):
+            for chain in (entry.get("blockchains") or []):
+                if isinstance(chain, str):
+                    normalized = chain.strip().lower()
+                    if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                        supported_blockchains.append(normalized)
+            if isinstance(entry.get("blockchain"), str):
+                normalized = entry["blockchain"].strip().lower()
+                if normalized in TOKENOMICS_CHAIN_ALLOWLIST and normalized not in supported_blockchains:
+                    supported_blockchains.append(normalized)
+        selected_blockchain = supported_blockchains[0] if supported_blockchains else tokenomics.get("chain")
         current_status = mgr.get_onboarding_status()
         next_step = None
         if (current_status or {}).get("step") in (None, "init", "select_org"):
@@ -625,6 +690,8 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
                 "role_profiles": role_profiles,
                 "selected_role": default_role,
                 "tokenomics": tokenomics,
+                "supported_blockchains": supported_blockchains,
+                "selected_blockchain": selected_blockchain,
             },
             "renewal": False,
         }
@@ -641,6 +708,30 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     tokenomics_cfg = get_tokenomics_config(org_entry)
     require_wallet = bool(tokenomics_cfg.get("enabled"))
     required_chain = tokenomics_cfg.get("chain")
+    supported_blockchains = []
+    for chain in (tokenomics_cfg.get("blockchains") or []):
+        if isinstance(chain, str):
+            normalized_chain = chain.strip().lower()
+            if normalized_chain in TOKENOMICS_CHAIN_ALLOWLIST and normalized_chain not in supported_blockchains:
+                supported_blockchains.append(normalized_chain)
+    if isinstance(org_entry, dict):
+        top_level_chain = org_entry.get("blockchain")
+        if isinstance(top_level_chain, str):
+            normalized_top_level_chain = top_level_chain.strip().lower()
+            if (
+                normalized_top_level_chain in TOKENOMICS_CHAIN_ALLOWLIST
+                and normalized_top_level_chain not in supported_blockchains
+            ):
+                supported_blockchains.append(normalized_top_level_chain)
+        top_level_chains = org_entry.get("blockchains")
+        if isinstance(top_level_chains, list):
+            for chain in top_level_chains:
+                if isinstance(chain, str):
+                    normalized_chain = chain.strip().lower()
+                    if normalized_chain in TOKENOMICS_CHAIN_ALLOWLIST and normalized_chain not in supported_blockchains:
+                        supported_blockchains.append(normalized_chain)
+    if not supported_blockchains and required_chain:
+        supported_blockchains = [required_chain]
     allowed_roles, _ = normalize_org_roles(org_entry)
 
     selected_roles: List[str] = []
@@ -657,6 +748,10 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             detail="At least one role must be selected.",
         )
 
+    remote_roles = _canonicalize_roles_for_remote(selected_roles)
+    if not remote_roles:
+        remote_roles = selected_roles
+
     invalid_roles = sorted({role for role in selected_roles if role not in allowed_roles})
     if invalid_roles:
         org_label = org_data.get("name") or org_data.get("did") or "the selected organization"
@@ -669,6 +764,30 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
 
     wallet_address = (body.wallet_address or "").strip() if body.wallet_address else None
     wallet_chain = (body.wallet_chain or "").strip().lower() if body.wallet_chain else None
+    selected_blockchain = (body.blockchain or "").strip().lower() if body.blockchain else None
+
+    if selected_blockchain and selected_blockchain not in TOKENOMICS_CHAIN_ALLOWLIST:
+        allowed = ", ".join(sorted(TOKENOMICS_CHAIN_ALLOWLIST))
+        raise HTTPException(
+            status_code=400,
+            detail=f"blockchain must be one of: {allowed}.",
+        )
+
+    if not selected_blockchain:
+        if len(supported_blockchains) == 1:
+            selected_blockchain = supported_blockchains[0]
+        elif len(supported_blockchains) > 1:
+            choices = ", ".join(supported_blockchains)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Please select a blockchain for this organization. Supported values: {choices}.",
+            )
+    elif supported_blockchains and selected_blockchain not in supported_blockchains:
+        choices = ", ".join(supported_blockchains)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Selected blockchain '{selected_blockchain}' is not supported by this organization. Supported values: {choices}.",
+        )
 
     if wallet_chain and wallet_chain not in TOKENOMICS_CHAIN_ALLOWLIST:
         allowed = ", ".join(sorted(TOKENOMICS_CHAIN_ALLOWLIST))
@@ -683,18 +802,25 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             detail="wallet_chain provided without wallet_address.",
         )
 
+    if selected_blockchain and wallet_chain and wallet_chain != selected_blockchain:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Connected wallet chain '{wallet_chain}' does not match selected blockchain '{selected_blockchain}'.",
+        )
+
     if require_wallet:
         if not wallet_address:
             raise HTTPException(
                 status_code=400,
                 detail="This organization requires a connected wallet address.",
             )
-        if not wallet_chain and required_chain:
-            wallet_chain = required_chain
-        if required_chain and wallet_chain and wallet_chain != required_chain:
+        if not wallet_chain:
+            wallet_chain = selected_blockchain or required_chain
+        if supported_blockchains and wallet_chain and wallet_chain not in supported_blockchains:
+            choices = ", ".join(supported_blockchains)
             raise HTTPException(
                 status_code=400,
-                detail=f"This organization requires a {required_chain} wallet.",
+                detail=f"This organization requires one of the following wallet chains: {choices}.",
             )
         if not wallet_chain:
             raise HTTPException(
@@ -706,15 +832,29 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             status_code=400,
             detail="wallet_chain is required when wallet_address is provided.",
         )
+    elif wallet_chain and supported_blockchains and wallet_chain not in supported_blockchains:
+        choices = ", ".join(supported_blockchains)
+        raise HTTPException(
+            status_code=400,
+            detail=f"wallet_chain '{wallet_chain}' is not supported by this organization. Supported values: {choices}.",
+        )
+
+    if not selected_blockchain and wallet_chain:
+        selected_blockchain = wallet_chain
 
     role_profiles = extract_role_profiles(org_entry)
     is_renewal = bool(body.renewal)
+    tokenomics_payload = dict(tokenomics_cfg) if isinstance(tokenomics_cfg, dict) else {"enabled": False, "chain": None}
+    if selected_blockchain:
+        tokenomics_payload["chain"] = selected_blockchain
     updated_org_data = dict(org_data)
     updated_org_data["roles"] = allowed_roles
     if role_profiles:
         updated_org_data["role_profiles"] = role_profiles
     updated_org_data["selected_role"] = selected_roles[0]
-    updated_org_data["tokenomics"] = tokenomics_cfg
+    updated_org_data["tokenomics"] = tokenomics_payload
+    updated_org_data["supported_blockchains"] = supported_blockchains
+    updated_org_data["selected_blockchain"] = selected_blockchain
     updated_org_data["renewal"] = is_renewal
     mgr.update_state(org_data=updated_org_data)
     org_data = mgr.get_onboarding_status().get("org_data", updated_org_data)
@@ -731,6 +871,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         wormhole=body.wormhole,
         wallet_address=wallet_address,
         wallet_chain=wallet_chain,
+        blockchain=selected_blockchain,
         renewal=is_renewal,
     )
     role_metadata.record_join_payload(
@@ -745,11 +886,12 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             "wormhole": body.wormhole,
             "wallet_address": wallet_address,
             "wallet_chain": wallet_chain,
+            "blockchain": selected_blockchain,
         },
     )
     role_metadata.record_org_tokenomics(
         org_did=org_data.get("did", ""),
-        tokenomics=tokenomics_cfg,
+        tokenomics=tokenomics_payload,
     )
 
     try:
@@ -767,10 +909,6 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     if not dms_did or not dms_peer_id:
         raise HTTPException(status_code=400, detail="DMS not ready (missing DID or Peer ID). Start DMS first.")
 
-    contract_required = True
-    if isinstance(org_entry, dict):
-        contract_required = org_entry.get("contract_required", True)
-
     payload: Dict[str, Any] = {
         "organization_name": org_data.get("name"),
         "organization_did": org_data.get("did"),
@@ -778,17 +916,17 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
         "peer_id": dms_peer_id,
         "name": body.name,
         "email": str(body.email),
-        "roles": selected_roles,
+        "roles": remote_roles,
         "why_join": body.why_join,
         "location": body.location,
         "discord": body.discord,
         "wormhole": body.wormhole,
         "wallet_address": wallet_address,
         "wallet_chain": wallet_chain,
-        "tokenomics": tokenomics_cfg,
+        "blockchain": selected_blockchain,
+        "tokenomics": tokenomics_payload,
         "is_renewal": is_renewal,
         "renewing_previous": body.renewing_previous,
-        "contract_required": contract_required,
         # runtime context
         "resources": runtime.get("resources", {}),
         "dms_resources": runtime.get("dms_resources", {}),
@@ -812,7 +950,8 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
             "resources": runtime.get("resources", {}),
             "wallet_address": wallet_address,
             "wallet_chain": wallet_chain,
-            "tokenomics": tokenomics_cfg,
+            "blockchain": selected_blockchain,
+            "tokenomics": tokenomics_payload,
             "renewal": is_renewal,
             "renewing_previous": body.renewing_previous,
         },
@@ -830,18 +969,14 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     status_token = api_res.get("status_token")
     api_status = api_res.get("status")
 
-    update_kwargs: Dict[str, Any] = {
-        "step": "join_data_sent",
-        "request_id": request_id,
-        "status_token": status_token,
-        "api_status": api_status,
-        "processing": False,
-        "processed_ok": False,
-    }
-    if api_status == "contract_required_mismatch":
-        update_kwargs["status_message"] = api_res.get("status_message")
-        update_kwargs["contract_required_mismatch"] = True
-    mgr.update_state(**update_kwargs)
+    mgr.update_state(
+        step="join_data_sent",
+        request_id=request_id,
+        status_token=status_token,
+        api_status=api_status,
+        processing=False,
+        processed_ok=False,
+    )
     if request_id:
         try:
             role_metadata.record_last_request_id(org_data.get("did", ""), request_id)
@@ -917,6 +1052,22 @@ def start_renewal(body: RenewStartRequest, mgr: OnboardingManager = Depends(_mgr
         if wallet_chain_value not in TOKENOMICS_CHAIN_ALLOWLIST:
             wallet_chain_value = None
 
+    org_data = state.get("org_data") if isinstance(state.get("org_data"), dict) else {}
+    org_tokenomics = org_data.get("tokenomics") if isinstance(org_data, dict) else {}
+    known_tokenomics = get_tokenomics_config(known.get(org_did))
+    blockchain_value = _coalesce(
+        stored_payload.get("blockchain"),
+        state_payload.get("blockchain"),
+        org_data.get("selected_blockchain") if isinstance(org_data, dict) else None,
+        org_tokenomics.get("chain") if isinstance(org_tokenomics, dict) else None,
+        known_tokenomics.get("chain"),
+        wallet_chain_value,
+    )
+    if blockchain_value:
+        blockchain_value = blockchain_value.lower()
+        if blockchain_value not in TOKENOMICS_CHAIN_ALLOWLIST:
+            blockchain_value = None
+
     renewal_payload = JoinSubmitRequest(
         org_did=org_did,
         name=name,
@@ -931,6 +1082,7 @@ def start_renewal(body: RenewStartRequest, mgr: OnboardingManager = Depends(_mgr
             state_payload.get("wallet_address"),
         ),
         wallet_chain=wallet_chain_value,  # type: ignore[arg-type]
+        blockchain=blockchain_value,  # type: ignore[arg-type]
         renewal=True,
         renewing_previous=role_metadata.get_last_request_id(org_did),
     )
@@ -958,11 +1110,11 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
     """
     Polls the remote onboarding status. Handles multiple phases:
       - email_sent / pending -> keeps waiting (advances to pending_authorization after email_verified)
-      - contract_caps_ready -> apply contract capabilities and restart DMS
-      - contract_created -> poll for incoming contracts
-      - contract_received -> wait for user to sign
-      - contract_signed -> wait for deployment caps
-      - deployment_caps_ready -> apply deployment capabilities
+      - contract_caps_ready -> apply contract capabilities and confirm to org manager
+      - contract_created -> poll DMS for the expected contract DID
+      - contract_received -> wait for user signing
+      - contract_signed / contract_verified -> wait for deployment capabilities
+      - deployment_caps_ready -> apply deployment capabilities and confirm to org manager
       - deployment_test_complete / ready / approved -> complete
       - error / rejected -> marks rejected
     """
@@ -995,7 +1147,11 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
         raise HTTPException(status_code=502, detail=f"status polling failed: {e}")
 
     api_status = (result or {}).get("status") or state.get("api_status")
-    mgr.update_state(api_status=api_status)
+    remote_status_message = (result or {}).get("status_message") if isinstance(result, dict) else None
+    if isinstance(remote_status_message, str) and remote_status_message.strip():
+        mgr.update_state(api_status=api_status, status_message=remote_status_message.strip())
+    else:
+        mgr.update_state(api_status=api_status)
 
     if result is not None:
         logger.info(
@@ -1028,9 +1184,8 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
                         step="contract_caps_applied",
                         contract_caps_applied=True,
                         contract_caps=contract_caps,
-                        api_status=api_status
+                        api_status=api_status,
                     )
-                    # Notify Organization Manager
                     try:
                         mgr.api_confirm_caps(req_id, token, cap_type="contract")
                     except Exception as confirm_exc:
@@ -1038,27 +1193,43 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
                 else:
                     mgr.update_state(
                         step="rejected",
-                        rejection_reason="Failed to apply contract capabilities"
+                        rejection_reason="Failed to apply contract capabilities",
                     )
             except Exception as exc:
                 logger.error("Contract capabilities application failed: %s", exc)
                 mgr.update_state(
                     step="rejected",
-                    rejection_reason=f"Contract capabilities application failed: {exc}"
+                    rejection_reason=f"Contract capabilities application failed: {exc}",
                 )
             finally:
                 mgr.update_state(processing=False)
-        
+
+        step = mgr.get_onboarding_status().get("step", "contract_caps_applied")
         return PollStatusResponse(
             status="pending",
             api_status=api_status,
-            step=state.get("step", "contract_caps_applied"),
+            step=step,
             payload_available=False,
             state=mgr.get_onboarding_status(),
         )
 
     # 2.5) Contract caps confirmed - wait for contract creation
     if api_status == "contract_caps_confirmed":
+        remote_message = remote_status_message if isinstance(remote_status_message, str) else None
+        if remote_message and not _is_contract_caps_confirmed_waiting_message(remote_message):
+            rejection_reason = remote_message.strip()
+            mgr.update_state(
+                step="rejected",
+                rejection_reason=rejection_reason,
+                status_message=rejection_reason,
+            )
+            return PollStatusResponse(
+                status="error",
+                api_status=api_status,
+                step="rejected",
+                payload_available=False,
+                state=mgr.get_onboarding_status(),
+            )
         if state.get("step") != "contract_caps_applied":
             mgr.update_state(step="contract_caps_applied")
         return PollStatusResponse(
@@ -1080,17 +1251,18 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
         elif not state.get("contract_data"):
             mgr.update_state(contract_did=contract_did)
         if contract_did and not state.get("contract_data"):
-            # Poll DMS for the specific contract the orchestrator created; only confirm when we see that contract_did
             try:
-                logger.info("Polling DMS for contract did=%s", contract_did[:50] + "..." if len(contract_did) > 50 else contract_did)
+                logger.info(
+                    "Polling DMS for contract did=%s",
+                    contract_did[:50] + "..." if len(contract_did) > 50 else contract_did,
+                )
                 contract_data = mgr.poll_for_contracts(req_id, expected_contract_did=contract_did)
                 if contract_data:
                     mgr.update_state(
                         step="contract_received",
                         contract_data=contract_data,
-                        contract_did=contract_did
+                        contract_did=contract_did,
                     )
-                    # Notify Organization Manager
                     try:
                         mgr.api_contract_received(req_id, token)
                     except Exception as notify_exc:
@@ -1104,14 +1276,13 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
                     )
             except Exception as exc:
                 logger.warning("Contract polling failed: %s", exc)
-        
-        # Use current state so we don't overwrite contract_received we may have just set above
+
         state_after_poll = mgr.get_onboarding_status()
         current_step = state_after_poll.get("step", "contract_created")
         if current_step not in ("contract_received", "contract_signing", "contract_signed"):
             current_step = "contract_created"
             mgr.update_state(step=current_step)
-        
+
         return PollStatusResponse(
             status="pending",
             api_status=api_status,
@@ -1120,13 +1291,15 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 4) Contract received - waiting for user to sign (handled by frontend)
+    # 4) Contract received - waiting for user signing
     if api_status == "contract_received":
+        if state.get("step") != "contract_received":
+            mgr.update_state(step="contract_received")
         return PollStatusResponse(
             status="pending",
             api_status=api_status,
             step="contract_received",
-            payload_available=True,  # Contract is available for signing
+            payload_available=True,
             state=mgr.get_onboarding_status(),
         )
 
@@ -1154,16 +1327,15 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
                     "infra_bundle_crt": (result or {}).get("infra_bundle_crt"),
                 }
                 api_key = (result or {}).get("elastic_api_key") or (result or {}).get("elasticsearch_api_key")
-                
+
                 success = mgr.apply_deployment_capabilities(deployment_caps, certificates, api_key)
                 if success:
                     mgr.update_state(
                         step="deployment_caps_applied",
                         deployment_caps_applied=True,
                         deployment_caps=deployment_caps,
-                        api_status=api_status
+                        api_status=api_status,
                     )
-                    # Notify Organization Manager
                     try:
                         mgr.api_confirm_caps(req_id, token, cap_type="deployment")
                     except Exception as confirm_exc:
@@ -1171,17 +1343,17 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
                 else:
                     mgr.update_state(
                         step="rejected",
-                        rejection_reason="Failed to apply deployment capabilities"
+                        rejection_reason="Failed to apply deployment capabilities",
                     )
             except Exception as exc:
                 logger.error("Deployment capabilities application failed: %s", exc)
                 mgr.update_state(
                     step="rejected",
-                    rejection_reason=f"Deployment capabilities application failed: {exc}"
+                    rejection_reason=f"Deployment capabilities application failed: {exc}",
                 )
             finally:
                 mgr.update_state(processing=False)
-        
+
         return PollStatusResponse(
             status="pending",
             api_status=api_status,
@@ -1213,7 +1385,23 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 7.5) Contract required mismatch - pending manual review (admin only)
+    # 7.25) Deployment failed - contract-enabled flow terminal failure
+    if api_status == "deployment_failed":
+        rejection_reason = _extract_remote_rejection_reason(result if isinstance(result, dict) else None)
+        mgr.update_state(
+            step="rejected",
+            rejection_reason=rejection_reason,
+            status_message=rejection_reason,
+        )
+        return PollStatusResponse(
+            status="error",
+            api_status=api_status,
+            step="rejected",
+            payload_available=False,
+            state=mgr.get_onboarding_status(),
+        )
+
+    # 7.5) Contract required mismatch - pending manual review
     if api_status == "contract_required_mismatch":
         status_message = (result or {}).get("status_message") or "Contract required setting mismatch; request pending manual review."
         mgr.update_state(
@@ -1230,7 +1418,7 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 8) Still waiting (pending/processing/email_sent/None) - original behavior
+    # 8) Still waiting (pending/processing/email_sent/None)
     if api_status in ("pending", "processing", "email_sent", None, ""):
         next_step = "pending_authorization" if state.get("step") == "pending_authorization" else "join_data_sent"
         if state.get("step") != next_step:
@@ -1290,10 +1478,12 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
             state=mgr.get_onboarding_status(),
         )
 
-    # 10) Error / rejected
+    # 10) Error / rejected (or any unsupported status)
+    rejection_reason = _extract_remote_rejection_reason(result if isinstance(result, dict) else None)
     mgr.update_state(
         step="rejected",
-        rejection_reason=(result or {}).get("rejection_reason") or (result or {}).get("reason") or "rejected by remote",
+        rejection_reason=rejection_reason,
+        status_message=rejection_reason,
     )
     return PollStatusResponse(
         status="error",
@@ -1302,7 +1492,6 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
         payload_available=bool(state.get("api_payload")),
         state=mgr.get_onboarding_status(),
     )
-
 
 class ContractSignRequest(BaseModel):
     contract_did: str = Field(..., description="DID of the contract to sign")
@@ -1324,7 +1513,7 @@ def sign_contract(request: ContractSignRequest, mgr: OnboardingManager = Depends
     state = mgr.get_onboarding_status()
     req_id = state.get("request_id")
     token = state.get("status_token")
-    
+
     # Validate state
     if state.get("contract_signed"):
         return ContractSignResponse(
@@ -1333,13 +1522,13 @@ def sign_contract(request: ContractSignRequest, mgr: OnboardingManager = Depends
             contract_did=request.contract_did,
             state=mgr.get_onboarding_status(),
         )
-    
+
     if not state.get("contract_caps_applied"):
         raise HTTPException(
             status_code=400,
             detail="Contract capabilities not yet applied. Wait for contract_caps_applied status."
         )
-    
+
     # Sign the contract
     mgr.update_state(processing=True, step="contract_signing")
     try:
@@ -1347,28 +1536,28 @@ def sign_contract(request: ContractSignRequest, mgr: OnboardingManager = Depends
         if not success:
             mgr.update_state(processing=False)
             raise HTTPException(status_code=500, detail="Failed to sign contract")
-        
+
         # Notify Organization Manager
         if req_id and token:
             try:
                 mgr.api_contract_signed(req_id, token)
             except Exception as exc:
                 logger.warning("Failed to notify contract signed: %s", exc)
-        
+
         mgr.update_state(
             step="contract_signed",
             contract_signed=True,
             contract_did=request.contract_did,
             processing=False
         )
-        
+
         return ContractSignResponse(
             status="success",
             message="Contract signed successfully.",
             contract_did=request.contract_did,
             state=mgr.get_onboarding_status(),
         )
-        
+
     except HTTPException:
         raise
     except Exception as exc:
@@ -1384,17 +1573,17 @@ def get_pending_contract(mgr: OnboardingManager = Depends(_mgr)):
     Returns contract details for the frontend to display to the user.
     """
     state = mgr.get_onboarding_status()
-    
+
     contract_data = state.get("contract_data")
     contract_did = state.get("contract_did")
-    
+
     if not contract_data and not contract_did:
         return {
             "status": "no_contract",
             "message": "No pending contract available.",
             "contract": None,
         }
-    
+
     return {
         "status": "contract_available",
         "message": "Contract pending user approval.",
@@ -1404,7 +1593,6 @@ def get_pending_contract(mgr: OnboardingManager = Depends(_mgr)):
             "signed": state.get("contract_signed", False),
         },
     }
-
 
 @router.post("/join/process", response_model=ProcessResponse)
 def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Body(True)):

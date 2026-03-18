@@ -14,6 +14,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from .environment_profile import (
+    get_runtime_profile,
+    iter_package_candidates,
+    normalize_arch,
+)
 from .dms_utils import (
     run_dms_command_with_passphrase,
     categorize_listen_addresses,
@@ -148,13 +153,12 @@ class DMSManager:
         return False
 
     @staticmethod
-    def _package_url_for_arch(arch: str) -> Optional[str]:
-        arch_lower = arch.lower()
-        if "arm" in arch_lower or "aarch" in arch_lower:
-            return "https://d.nunet.io/nunet-dms-arm64-latest.deb"
-        if "x86_64" in arch_lower or "amd64" in arch_lower or "amd" in arch_lower:
-            return "https://d.nunet.io/nunet-dms-amd64-latest.deb"
-        return None
+    def _package_candidates_for_arch(arch: str) -> List[Tuple[str, str]]:
+        normalized_arch = normalize_arch(arch)
+        if not normalized_arch:
+            return []
+        policy = get_runtime_profile().dms_updates
+        return [(channel, url) for channel, url in iter_package_candidates("dms", normalized_arch, policy)]
 
     @staticmethod
     def _extract_version(output: str) -> Optional[str]:
@@ -620,31 +624,39 @@ class DMSManager:
     def update_dms(self) -> Dict[str, str]:
         arch = platform.machine().lower()
         logger.info("Detected architecture: %s", arch)
-        url = self._package_url_for_arch(arch)
-        if not url:
+        candidates = self._package_candidates_for_arch(arch)
+        if not candidates:
             message = f"Unsupported architecture: {arch}"
             logger.error(message)
             return {"status": "error", "message": message}
 
-        download = self._run(["wget", "-N", url, "-O", "dms-latest.deb"], capture=True, check=False)
-        if download.returncode != 0:
-            message = download.stderr or download.stdout or "Download failed"
-            logger.error("Failed to download DMS package: %s", message)
-            return {"status": "error", "message": f"Download failed: {message}"}
+        last_error = "Unknown error"
+        for idx, (channel, url) in enumerate(candidates):
+            logger.info("Trying DMS update channel=%s url=%s", channel, url)
+            self._run(["rm", "-f", "dms-package.deb"], capture=True, check=False)
+            download = self._run(["wget", "-N", url, "-O", "dms-package.deb"], capture=True, check=False)
+            if download.returncode != 0:
+                message = download.stderr or download.stdout or "Download failed"
+                last_error = f"Download failed ({channel}): {message}"
+                logger.warning("Failed to download DMS package from %s: %s", channel, message)
+                continue
 
-        install = self._run(
-            ["sudo", "apt", "install", "./dms-latest.deb", "-y", "--allow-downgrades"],
-            capture=True,
-            check=False,
-        )
-        if install.returncode == 0:
-            self._run(["rm", "-f", "dms-latest.deb"], capture=True, check=False)
-            logger.info("DMS updated successfully")
-            return {"status": "success", "message": "DMS updated successfully."}
+            install = self._run(
+                ["sudo", "apt", "install", "./dms-package.deb", "-y", "--allow-downgrades"],
+                capture=True,
+                check=False,
+            )
+            if install.returncode == 0:
+                self._run(["rm", "-f", "dms-package.deb"], capture=True, check=False)
+                logger.info("DMS updated successfully via channel=%s", channel)
+                return {"status": "success", "message": "DMS updated successfully."}
 
-        message = install.stderr or install.stdout or "Installation failed"
-        logger.error("Failed to install DMS package: %s", message)
-        return {"status": "error", "message": f"Installation failed: {message}"}
+            message = install.stderr or install.stdout or "Installation failed"
+            last_error = f"Installation failed ({channel}): {message}"
+            logger.error("Failed to install DMS package from channel=%s: %s", channel, message)
+            self._run(["rm", "-f", "dms-package.deb"], capture=True, check=False)
+
+        return {"status": "error", "message": last_error}
 
     @staticmethod
     def _normalize_contract_list_payload(result: DmsCommandResult) -> Dict[str, Any]:

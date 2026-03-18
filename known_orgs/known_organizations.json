@@ -4,7 +4,11 @@
     "onboarding_api_url": "https://nunetlive.orgs.nunet.network/api",
     "tokenomics": {
       "enabled": true,
-      "chain": "ethereum"
+      "chain": "ethereum",
+      "blockchains": [
+        "ethereum",
+	"cardano"
+      ]
     },
     "join_fields": [
       {

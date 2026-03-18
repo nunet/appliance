@@ -4,7 +4,11 @@ set -euo pipefail
 PKGNAME="nunet-appliance-base"
 PKGVERSION="${1:-1.0.0}"
 ARCH="${2:-arm64}"
-DEB_VERSION=$(echo "${PKGVERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+DEB_VERSION="$(echo "${PKGVERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+if [ -z "$DEB_VERSION" ]; then
+  DEB_VERSION="${PACKAGE_VERSION_FALLBACK:-0.0.0}"
+  echo "Warning: invalid package version '${PKGVERSION}', falling back to Debian version '${DEB_VERSION}'."
+fi
 
 # Resolve repository root from deploy/scripts
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

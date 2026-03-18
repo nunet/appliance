@@ -13,6 +13,7 @@ export type JoinSubmitPayload = {
   wormhole?: string;
   wallet_address?: string;
   wallet_chain?: "cardano" | "ethereum";
+  blockchain?: "cardano" | "ethereum";
   renewal?: boolean;
   renewing_previous?: string;
   [key: string]: unknown;
