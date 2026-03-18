@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 RAW_VERSION="$(git describe --tags --always --abbrev=0 --dirty 2>/dev/null || echo "0.0.0")"
-APPLIANCE_VERSION="$(printf '%s' "$RAW_VERSION" | sed 's/^v//')"
+APPLIANCE_VERSION="$(printf '%s' "$RAW_VERSION" | sed -E 's/^v|r//')"
 PKGVERSION="$(printf '%s' "$APPLIANCE_VERSION" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
 if [ -z "$PKGVERSION" ]; then
     PKGVERSION="${PACKAGE_VERSION_FALLBACK:-0.0.0}"
