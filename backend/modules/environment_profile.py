@@ -236,11 +236,9 @@ def _build_profile() -> RuntimeProfile:
         cardano_koios_base_url="https://api.koios.rest/api/v1",
         appliance_updates=UpdateChannelPolicy(
             preferred_channel="stable",
-            fallback_channel="latest",
         ),
         dms_updates=UpdateChannelPolicy(
             preferred_channel="stable",
-            fallback_channel="latest",
         ),
     )
 
