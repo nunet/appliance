@@ -48,7 +48,6 @@ fi
 echo $GITLAB_CI
 echo $CI_COMMIT_REF_NAME
 if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(main|master)$ ) ]]; then
-    # Push (uncomment in CI)
     git config --global user.email "ci@nunet.io"
     git config --global user.name "NuNet GitLab CI"
     git tag -a "v$APPLIANCE_NEW_VERSION" -m "v$APPLIANCE_NEW_VERSION"
