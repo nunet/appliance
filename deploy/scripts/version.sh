@@ -4,7 +4,24 @@ set -exuo pipefail
 
 # Get the most recent tag (assumes tags are like v1.2.3)
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-LAST_VERSION=$(echo $LAST_TAG | sed 's/^v//')
+LAST_VERSION=$(echo $LAST_TAG | sed -E 's/^v|r//')
+
+if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(release)$ ) && $CI_PIPELINE_SOURCE == "push" ]]; then
+    # do nothing if last tag begins with r
+    if [[ $LAST_TAG == r* ]]; then
+        echo "Release branch already has a release tag: $LAST_TAG"
+        exit 0
+    fi
+    echo "Handling release branch tag - using latest tag from main"
+    git config --global user.email "ci@nunet.io"
+    git config --global user.name "NuNet GitLab CI"
+    git tag -a "r$LAST_VERSION" -m "r$LAST_VERSION"
+    git push https://oauth2:"$CI_TAG_PUSH_TOKEN@gitlab.com/$CI_PROJECT_PATH".git --tags
+
+    echo "Applied r$LAST_VERSION to release branch"
+    exit 0
+fi
+
 
 # Parse commits since last tag for version bump
 MAJOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^BREAKING CHANGE\|MAJOR VERSION" || true)
@@ -27,11 +44,10 @@ else
     exit 0
 fi
 
-
 # if in CI and if on main or release branch then apply the version bump
 echo $GITLAB_CI
 echo $CI_COMMIT_REF_NAME
-if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(main|master|release)$ ) ]]; then
+if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(main|master)$ ) ]]; then
     # Push (uncomment in CI)
     git config --global user.email "ci@nunet.io"
     git config --global user.name "NuNet GitLab CI"

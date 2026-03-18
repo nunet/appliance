@@ -10,11 +10,9 @@ version:
     - apt-get update && apt-get install -y git
   script:
     - bash deploy/scripts/version.sh
-  only:
-    - main
-    - release
-    - /^release\/.+$/
-    - /^release-.+$/
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+      when: on_success
 
 default:
   tags:
@@ -53,6 +51,8 @@ build:arm64:
 deploy-packages:
   stage: deploy
   image: bash:alpine3.21
+  variables:
+    PERMALINK_BUILD_CHANNELS: "main:latest release:stable"
   dependencies:
     - build:x86
     - build:arm64
@@ -63,6 +63,19 @@ deploy-packages:
     - apk add curl
   script:
     - echo "Deploying to package registry..."
+    - |
+      for build_channel_cfg in $PERMALINK_BUILD_CHANNELS; do
+        target_branch=$(cut -d ':' -f 1 <<<"$build_channel_cfg")
+        build_channel_candidate=$(cut -d ':' -f 2 <<<"$build_channel_cfg")
+        if [[ "$target_branch" == "$CI_COMMIT_REF_NAME" ]]; then
+          build_channel="$build_channel_candidate"
+        fi
+      done
+      if [[ "$build_channel" == "" ]]; then
+        echo no build channel for branch $CI_COMMIT_REF_NAME
+        exit 1
+      fi
+      echo using build channel $build_channel
     - |
       regex='^(release|release\/.+|release-.+|main)$'
       if [[ $CI_COMMIT_REF_NAME =~ $regex ]]; then
@@ -76,7 +89,7 @@ deploy-packages:
             version=${BASH_REMATCH[2]}
             curl --header "JOB-TOKEN: $CI_JOB_TOKEN" \
               --upload-file "$file" \
-              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/nunet-appliance/${version}/${file}"
+              "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/nunet-appliance/${version}/${file::-4}-$build_channel.deb"
           fi
         done
         if [[ "$found" = false ]]; then
