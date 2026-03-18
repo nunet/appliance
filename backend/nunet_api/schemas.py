@@ -12,6 +12,7 @@ __all__ = [
     "PeerInfo",
     "ResourcesInfo",
     "SshStatus",
+    "EnvironmentStatus",
     "DeploymentWebItem",
     "DeploymentsWebResponse",
     "RunningItem",
@@ -486,6 +487,32 @@ class ApplianceUptime(BaseModel):
 class SshStatus(BaseModel):
     running: bool
     authorized_keys: int
+
+
+class EnvironmentUpdateChannelStatus(BaseModel):
+    channel: str
+    resolved_channel: str
+    fell_back: bool
+
+
+class EnvironmentUpdateStatus(BaseModel):
+    appliance: EnvironmentUpdateChannelStatus
+    dms: EnvironmentUpdateChannelStatus
+
+
+class EnvironmentEthereumStatus(BaseModel):
+    chain_id: int
+    token_address: str
+    token_symbol: str
+    token_decimals: int
+    explorer_base_url: Optional[str] = None
+    network_name: Optional[str] = None
+
+
+class EnvironmentStatus(BaseModel):
+    environment: Literal["production", "staging"]
+    updates: EnvironmentUpdateStatus
+    ethereum: EnvironmentEthereumStatus
 
 class DeploymentWebItem(BaseModel):
     id: str

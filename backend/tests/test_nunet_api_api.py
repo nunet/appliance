@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import types
 from typing import Any
@@ -29,6 +30,26 @@ def stub_external_modules(tmp_path_factory):
         setattr(modules_pkg, name, module)
         return module
 
+    frontend_dir = stubs_root / "frontend"
+    frontend_dist = frontend_dir / "dist"
+    frontend_dist.mkdir(parents=True, exist_ok=True)
+    (frontend_dist / "index.html").write_text("ok", encoding="utf-8")
+
+    default_contract_template = stubs_root / "default_contract_template.json"
+    default_ensemble_template = stubs_root / "default_ensemble_template.json"
+    default_contract_template.write_text("{}", encoding="utf-8")
+    default_ensemble_template.write_text("{}", encoding="utf-8")
+
+    mod_path_constants = add_submodule("path_constants")
+    mod_path_constants.FRONTEND_DIR = frontend_dir
+    mod_path_constants.ADMIN_CREDENTIALS_PATH = stubs_root / "credentials.json"
+    mod_path_constants.DMS_INIT_SCRIPT = stubs_root / "dms_init.sh"
+    mod_path_constants.DMS_DEPLOYMENTS_DIR = stubs_root / "deployments"
+    mod_path_constants.ENSEMBLES_DIR = ensembles_dir
+    mod_path_constants.DEFAULT_CONTRACT_JSON_TEMPLATE = default_contract_template
+    mod_path_constants.DEFAULT_ENSEMBLE_JSON_TEMPLATE = default_ensemble_template
+    mod_path_constants.ROLE_METADATA_FILE = stubs_root / "role_metadata.json"
+
     def _command_result(message: str = "ok") -> dict[str, Any]:
         return {
             "status": "success",
@@ -37,6 +58,50 @@ def stub_external_modules(tmp_path_factory):
             "stderr": "",
             "returncode": 0,
         }
+
+    mod_appliance_manager = add_submodule("appliance_manager")
+
+    class DummyApplianceManager:
+        def get_uptime(self) -> str:
+            return "up 1 minute"
+
+        def get_systemd_logs(self, lines: int = 50) -> dict[str, str]:
+            return {"appliance": f"{lines} lines"}
+
+    mod_appliance_manager.ApplianceManager = DummyApplianceManager
+
+    mod_upnp_manager = add_submodule("upnp_manager")
+
+    class DummyUPnPManager:
+        def discover_gateway(self, force_refresh: bool = False):
+            return {"status": "success", "gateway_found": False, "force_refresh": force_refresh, "router_info": {}}
+
+        def list_port_mappings(self, filter_internal_ip=None):
+            return {"status": "success", "mappings": [], "filter_ip": filter_internal_ip}
+
+        def check_port_mapping(self, external_port: int, protocol: str):
+            return {"status": "success", "exists": False, "external_port": external_port, "protocol": protocol}
+
+        def add_port_mapping(self, **kwargs):
+            return {"status": "success", "message": "mapping added", **kwargs}
+
+        def delete_port_mapping(self, external_port: int, protocol: str):
+            return {"status": "success", "message": "mapping removed", "external_port": external_port, "protocol": protocol}
+
+        def configure_appliance_port_forwarding(self, **kwargs):
+            return {"status": "success", "message": "configured", **kwargs}
+
+        def disable_appliance_port_forwarding(self, **kwargs):
+            return {"status": "success", "message": "disabled", **kwargs}
+
+        def get_appliance_status(self):
+            return {"status": "success", "gateway_found": False, "web_apps": False, "remote_management": False}
+
+    mod_upnp_manager.UPnPManager = DummyUPnPManager
+
+    mod_contract_templates = add_submodule("contract_templates")
+    mod_contract_templates.list_contract_templates = lambda *args, **kwargs: []
+    mod_contract_templates.get_contract_template = lambda *args, **kwargs: None
 
     mod_dms_manager = add_submodule("dms_manager")
 
@@ -151,9 +216,9 @@ def stub_external_modules(tmp_path_factory):
     mod_dms_utils.get_cached_dms_peer_raw = lambda *args, **kwargs: ""
     mod_dms_utils.get_cached_dms_resource_info = lambda *args, **kwargs: {}
     mod_dms_utils.get_cached_dms_status_info = lambda *args, **kwargs: {}
-    mod_dms_utils.invalidate_all_dms_caches = lambda *args, **kwargs: None
     mod_dms_utils.get_dms_status_info = lambda *args, **kwargs: {}
     mod_dms_utils.run_dms_command_with_passphrase = lambda *args, **kwargs: _command_result("run")
+    mod_dms_utils.invalidate_all_dms_caches = lambda *args, **kwargs: None
 
     mod_ensemble_mgr = add_submodule("ensemble_manager_v2")
 
@@ -225,19 +290,6 @@ def stub_external_modules(tmp_path_factory):
         def get_onboarding_status(self):
             return self.state
 
-        @staticmethod
-        def _is_onboarded_status(value) -> bool:
-            if isinstance(value, bool):
-                return value
-            if not isinstance(value, str):
-                return False
-
-            # Strip common ANSI escape fragments and normalize whitespace/case.
-            cleaned = value.replace("\x1b[0m", "").strip().upper()
-            if "NOT" in cleaned and "ONBOARD" in cleaned:
-                return False
-            return "ONBOARD" in cleaned
-
         def __getattr__(self, _attr):
             def _(*_args, **_kwargs):
                 return {}
@@ -245,17 +297,6 @@ def stub_external_modules(tmp_path_factory):
             return _
 
     mod_onboarding.OnboardingManager = DummyOnboardingManager
-
-    mod_appliance_manager = add_submodule("appliance_manager")
-
-    class DummyApplianceManager:
-        def get_uptime(self) -> str:
-            return "0 days, 0:00:00"
-
-        def get_systemd_logs(self, lines: int = 50):
-            return {}
-
-    mod_appliance_manager.ApplianceManager = DummyApplianceManager
 
     mod_org_manager = add_submodule("organization_manager")
 
@@ -273,40 +314,60 @@ def stub_external_modules(tmp_path_factory):
     mod_org_utils.get_joined_organizations_with_details = lambda *args, **kwargs: []
     mod_org_utils.get_joined_organizations_with_names = lambda *args, **kwargs: []
     mod_org_utils.refresh_known_organizations = lambda *args, **kwargs: []
-    mod_org_utils.normalize_org_roles = lambda *args, **kwargs: []
-    mod_org_utils.extract_role_profiles = lambda *args, **kwargs: []
-    mod_org_utils.get_tokenomics_config = lambda *args, **kwargs: {"enabled": False, "chain": None}
-    mod_org_utils.TOKENOMICS_CHAIN_ALLOWLIST = []
+    mod_org_utils.normalize_org_roles = lambda roles: roles or []
+    mod_org_utils.extract_role_profiles = lambda *args, **kwargs: {}
+    mod_org_utils.get_tokenomics_config = (
+        lambda *args, **kwargs: {"enabled": False, "chain": "", "blockchains": []}
+    )
+    mod_org_utils.TOKENOMICS_CHAIN_ALLOWLIST = {"ethereum", "cardano"}
 
-    mod_contract_templates = add_submodule("contract_templates")
-    mod_contract_templates.list_contract_templates = lambda *args, **kwargs: []
-    mod_contract_templates.get_contract_template = lambda *args, **kwargs: None
+    mod_env_profile = add_submodule("environment_profile")
 
-    mod_upnp_manager = add_submodule("upnp_manager")
+    class _StubEthProfile:
+        chain_id = 1
+        token_address = "0x" + "1" * 40
+        token_symbol = "NTX"
+        token_decimals = 16
+        explorer_base_url = "https://etherscan.io/"
+        network_name = "Ethereum Mainnet"
 
-    class DummyUPnPManager:
-        def discover_gateway(self, *args, **kwargs):
-            return {"status": "success", "gateway_found": False, "router_info": {}}
+    class _StubCardanoProfile:
+        chain_id = 1
+        token_address = "asset1stub"
+        token_symbol = "tNTX"
+        token_decimals = 16
+        explorer_base_url = "https://preprod.cexplorer.io/"
+        network_name = "Cardano Preprod"
+        policy_id = "policy"
+        asset_name_hex = "4e754e657450726570726f64"
+        asset_name = "NuNetPreprod"
+        asset_name_encoded = "4e754e657450726570726f64"
+        asset_id = "asset1stub"
 
-        def list_port_mappings(self, *args, **kwargs):
-            return {"status": "success", "mappings": []}
+    class _StubUpdatePolicy:
+        preferred_channel = "stable"
+        fallback_channel = "latest"
 
-        def check_port_mapping(self, *args, **kwargs):
-            return {"status": "success", "mapping": None}
+    class _StubRuntimeProfile:
+        def __init__(self, environment: str = "production"):
+            self.environment = environment
+            self.ethereum = _StubEthProfile()
+            self.cardano = _StubCardanoProfile()
+            self.cardano_koios_base_url = "https://preprod.koios.rest/api/v1"
+            self.appliance_updates = _StubUpdatePolicy()
+            self.dms_updates = _StubUpdatePolicy()
 
-        def add_port_mapping(self, *args, **kwargs):
-            return {"status": "success", "message": "ok"}
+    def _stub_get_runtime_profile():
+        env = os.getenv("APPLIANCE_ENV", "production")
+        if env not in {"production", "staging"}:
+            raise ValueError(f"Invalid APPLIANCE_ENV={env!r}")
+        return _StubRuntimeProfile(environment=env)
 
-        def delete_port_mapping(self, *args, **kwargs):
-            return {"status": "success", "message": "ok"}
-
-        def configure_appliance_port_forwarding(self, *args, **kwargs):
-            return {"status": "success", "message": "ok"}
-
-        def disable_appliance_port_forwarding(self, *args, **kwargs):
-            return {"status": "success", "message": "ok"}
-
-    mod_upnp_manager.UPnPManager = DummyUPnPManager
+    mod_env_profile.get_runtime_profile = _stub_get_runtime_profile
+    mod_env_profile.iter_package_candidates = (
+        lambda kind, arch, policy: [(policy.preferred_channel, f"https://d.nunet.io/{kind}-{arch}-{policy.preferred_channel}.deb")]
+    )
+    mod_env_profile.normalize_arch = lambda value: "amd64"
 
     mod_utils = add_submodule("utils")
     mod_utils.get_local_ip = lambda: "127.0.0.1"
@@ -315,8 +376,23 @@ def stub_external_modules(tmp_path_factory):
     mod_utils.get_ssh_status = lambda: "SSH: Stopped | Authorized Keys: 0"
     mod_utils.get_dms_updates = lambda *args, **kwargs: {"status": "success", "updates": []}
     mod_utils.trigger_dms_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
-    mod_utils.get_updates = lambda *args, **kwargs: {"status": "success", "updates": []}
+    mod_utils.get_appliance_updates = lambda *args, **kwargs: {"status": "success", "updates": []}
     mod_utils.trigger_appliance_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
+    mod_utils.get_environment_status = lambda *args, **kwargs: {
+        "environment": "production",
+        "updates": {
+            "appliance": {"channel": "stable", "resolved_channel": "latest", "fell_back": True},
+            "dms": {"channel": "stable", "resolved_channel": "stable", "fell_back": False},
+        },
+        "ethereum": {
+            "chain_id": 1,
+            "token_address": "0x" + "1" * 40,
+            "token_symbol": "NTX",
+            "token_decimals": 16,
+            "explorer_base_url": "https://etherscan.io/",
+            "network_name": "Ethereum Mainnet",
+        },
+    }
 
     termios_stub = types.ModuleType("termios")
     # Populate the common POSIX termios flags so code importing termios finds the constants on Windows tests
@@ -362,7 +438,6 @@ def _reset_backend_modules() -> None:
 
 @pytest.fixture
 def app(monkeypatch, tmp_path, stub_external_modules):
-    monkeypatch.setenv("HOME", str(tmp_path))
     static_dir = tmp_path / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
     (static_dir / "index.html").write_text("ok", encoding="utf-8")
@@ -410,8 +485,7 @@ def test_auth_setup_and_token_flow(client):
         assert expected_conflict.status_code == 409
 
         setup_payload = {"password": "StrongPass9"}
-        setup_token = security_module.ensure_setup_token()
-        setup_response = client.post("/auth/setup", json=setup_payload, params={"setup_token": setup_token})
+        setup_response = client.post("/auth/setup", json=setup_payload)
         assert setup_response.status_code == 200
         setup_data = setup_response.json()
         assert setup_data.get("access_token")
@@ -437,11 +511,11 @@ def test_registered_routes_cover_expected_prefixes(app):
         for route in routes
         if route.path.startswith("/") and route.path not in {"/", "/health"}
     }
-    expected = {"auth", "dms", "sys", "ensemble", "filesystem", "organizations", "payments"}
+    expected = {"auth", "dms", "sys", "ensemble", "organizations", "payments"}
     assert expected.issubset(prefixes)
 
 
-def test_dms_status_returns_normalized_snapshot(authed_client, monkeypatch):
+def test_dms_status_returns_normalized_snapshot(client, monkeypatch):
     from backend.nunet_api.routers import dms as dms_router
 
     status_payload = {
@@ -453,9 +527,9 @@ def test_dms_status_returns_normalized_snapshot(authed_client, monkeypatch):
         "dms_peer_id": "peer-123",
         "dms_is_relayed": True,
     }
-    monkeypatch.setattr(dms_router, "get_cached_dms_status_info", lambda *args, **kwargs: status_payload)
+    monkeypatch.setattr(dms_router, "get_cached_dms_status_info", lambda: status_payload)
 
-    response = authed_client.get("/dms/status")
+    response = client.get("/dms/status")
     assert response.status_code == 200
     body = response.json()
     assert body["dms_running"] is True
@@ -463,7 +537,7 @@ def test_dms_status_returns_normalized_snapshot(authed_client, monkeypatch):
     assert body["dms_peer_id"] == "peer-123"
 
 
-def test_dms_resources_allocated_parses_json_payload(authed_client):
+def test_dms_resources_allocated_parses_json_payload(client):
     from backend.nunet_api.routers import dms as dms_router
 
     class StubManager:
@@ -476,18 +550,18 @@ def test_dms_resources_allocated_parses_json_payload(authed_client):
                 "returncode": 0,
             }
 
-    authed_client.app.dependency_overrides[dms_router.get_mgr] = lambda: StubManager()
+    client.app.dependency_overrides[dms_router.get_mgr] = lambda: StubManager()
     try:
-        response = authed_client.get("/dms/resources/allocated")
+        response = client.get("/dms/resources/allocated")
     finally:
-        authed_client.app.dependency_overrides.pop(dms_router.get_mgr, None)
+        client.app.dependency_overrides.pop(dms_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
     assert body == {"cpu": "2 cores", "memory": "4 GB"}
 
 
-def test_dms_peers_connected_uses_cached_payload(authed_client, monkeypatch):
+def test_dms_peers_connected_uses_cached_payload(client, monkeypatch):
     from backend.nunet_api.routers import dms as dms_router
 
     peers_payload = {
@@ -502,9 +576,9 @@ def test_dms_peers_connected_uses_cached_payload(authed_client, monkeypatch):
             }
         ]
     }
-    monkeypatch.setattr(dms_router, "get_cached_dms_peer_raw", lambda *args, **kwargs: json.dumps(peers_payload))
+    monkeypatch.setattr(dms_router, "get_cached_dms_peer_raw", lambda: json.dumps(peers_payload))
 
-    response = authed_client.get("/dms/peers/connected")
+    response = client.get("/dms/peers/connected")
     assert response.status_code == 200
     data = response.json()
     assert data["count"] == 1
@@ -512,18 +586,44 @@ def test_dms_peers_connected_uses_cached_payload(authed_client, monkeypatch):
     assert data["peers"][0]["peer_id"] == "peer-1"
 
 
-def test_sysinfo_ssh_status_parses_authorized_keys(authed_client, monkeypatch):
+def test_sysinfo_ssh_status_parses_authorized_keys(client, monkeypatch):
     from backend.nunet_api.routers import sysinfo as sysinfo_router
 
     ssh_line = "\u001b[32mSSH: Running | Authorized Keys: 5\u001b[0m"
     monkeypatch.setattr(sysinfo_router, "get_ssh_status", lambda: ssh_line)
 
-    response = authed_client.get("/sys/ssh-status")
+    response = client.get("/sys/ssh-status")
     assert response.status_code == 200
     assert response.json() == {"running": True, "authorized_keys": 5}
 
 
-def test_payments_list_payments_normalizes_transactions(authed_client):
+def test_sysinfo_environment_endpoint_returns_environment_status(authed_client):
+    response = authed_client.get("/sys/environment")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["environment"] == "production"
+    assert body["updates"]["appliance"]["channel"] == "stable"
+    assert body["updates"]["appliance"]["resolved_channel"] == "latest"
+    assert body["updates"]["appliance"]["fell_back"] is True
+    assert body["ethereum"]["network_name"] == "Ethereum Mainnet"
+
+
+def test_main_import_fails_with_invalid_appliance_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("APPLIANCE_ENV", "prod")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    static_dir = tmp_path / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    (static_dir / "index.html").write_text("ok", encoding="utf-8")
+    monkeypatch.setenv("NUNET_STATIC_DIR", str(static_dir))
+    creds_path = tmp_path / "creds.json"
+    monkeypatch.setenv(security_module.CREDENTIALS_ENV_KEY, str(creds_path))
+
+    _reset_backend_modules()
+    with pytest.raises(ValueError):
+        import backend.nunet_api.main  # noqa: F401
+
+
+def test_payments_list_payments_normalizes_transactions(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
@@ -548,20 +648,15 @@ def test_payments_list_payments_normalizes_transactions(authed_client):
                         "payment_validator_did": "did:validator:1",
                         "contract_did": "did:contract:1",
                         "tx_hash": "0x" + "d" * 64,
-                        "metadata": {
-                            "deployment_id": "deployment-123",
-                            "allocation_count": 2,
-                            "total_utilization_sec": 3600,
-                        },
                     },
                 ]
             }
 
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
     try:
-        response = authed_client.get("/payments/list_payments")
+        response = client.get("/payments/list_payments")
     finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -571,56 +666,9 @@ def test_payments_list_payments_normalizes_transactions(authed_client):
     assert body["ignored_count"] == 0
     assert body["items"][0]["unique_id"] == "1"
     assert body["items"][0]["blockchain"] == "ETHEREUM"
-    assert body["items"][0]["metadata"]["deployment_id"] == "deployment-123"
 
 
-def test_payments_list_payments_normalizes_metadata_variants(authed_client):
-    from backend.nunet_api.routers import payments as payments_router
-
-    class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
-            return {
-                "status": "success",
-                "transactions": [
-                    {
-                        "unique_id": "1",
-                        "status": "unpaid",
-                        "to_address": "0x" + "c" * 40,
-                        "amount": "1.250000",
-                        "payment_validator_did": "did:validator:1",
-                        "contract_did": "did:contract:1",
-                        "tx_hash": "",
-                        "Metadata": "{\"deployment_id\":\"dep-a\",\"allocation_count\":3}",
-                    },
-                    {
-                        "unique_id": "2",
-                        "status": "paid",
-                        "to_address": "0x" + "d" * 40,
-                        "amount": "2.000000",
-                        "payment_validator_did": "did:validator:2",
-                        "contract_did": "did:contract:2",
-                        "tx_hash": "0x" + "a" * 64,
-                        "metadata": "not-json",
-                    },
-                ],
-            }
-
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
-    try:
-        response = authed_client.get("/payments/list_payments")
-    finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["total_count"] == 2
-    assert body["items"][0]["unique_id"] == "1"
-    assert body["items"][0]["metadata"]["deployment_id"] == "dep-a"
-    assert body["items"][0]["metadata"]["allocation_count"] == 3
-    assert body["items"][1]["metadata"] is None
-
-
-def test_payments_list_payments_handles_list_addresses(authed_client):
+def test_payments_list_payments_handles_list_addresses(client):
     from backend.nunet_api.routers import payments as payments_router
 
     addr = "0x" + "e" * 40
@@ -642,11 +690,11 @@ def test_payments_list_payments_handles_list_addresses(authed_client):
                 ],
             }
 
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
     try:
-        response = authed_client.get("/payments/list_payments")
+        response = client.get("/payments/list_payments")
     finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -655,7 +703,7 @@ def test_payments_list_payments_handles_list_addresses(authed_client):
     assert body["items"][0]["blockchain"] == "ETHEREUM"
 
 
-def test_payments_list_payments_ignores_invalid_payloads(authed_client):
+def test_payments_list_payments_ignores_invalid_payloads(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
@@ -679,11 +727,11 @@ def test_payments_list_payments_ignores_invalid_payloads(authed_client):
                 ],
             }
 
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
     try:
-        response = authed_client.get("/payments/list_payments")
+        response = client.get("/payments/list_payments")
     finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -692,7 +740,7 @@ def test_payments_list_payments_ignores_invalid_payloads(authed_client):
     assert body["items"][0]["unique_id"] == "2"
 
 
-def test_payments_list_payments_supports_cardano(authed_client):
+def test_payments_list_payments_supports_cardano(client):
     from backend.nunet_api.routers import payments as payments_router
 
     cardano_addr = "addr_test1qqm9ehanrh5rkukd0jwrl4j4zhnlzhkutwcukxqjdr3yfwydfmfydwq78revg8sx3wf3aj9gwn5kqyg0l2485zrj3mvsktcw4k"
@@ -714,11 +762,11 @@ def test_payments_list_payments_supports_cardano(authed_client):
                 ],
             }
 
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
     try:
-        response = authed_client.get("/payments/list_payments")
+        response = client.get("/payments/list_payments")
     finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -727,120 +775,7 @@ def test_payments_list_payments_supports_cardano(authed_client):
     assert body["items"][0]["to_address"] == cardano_addr
 
 
-def test_payments_quote_endpoints(authed_client):
-    from backend.nunet_api.routers import payments as payments_router
-
-    class StubPaymentsManager:
-        def get_payment_quote(self, unique_id: str):
-            assert unique_id == "tx-quote-1"
-            return {
-                "status": "success",
-                "quote_id": "quote-tx-quote-1",
-                "original_amount": "10.00",
-                "converted_amount": "123.45000000",
-                "pricing_currency": "USDT",
-                "payment_currency": "NTX",
-                "exchange_rate": "0.08100000",
-                "expires_at": "2026-02-20T10:30:00Z",
-            }
-
-        def validate_payment_quote(self, quote_id: str):
-            assert quote_id == "quote-tx-quote-1"
-            return {
-                "status": "success",
-                "valid": True,
-                "quote_id": "quote-tx-quote-1",
-                "original_amount": "10.00",
-                "converted_amount": "123.45000000",
-                "pricing_currency": "USDT",
-                "payment_currency": "NTX",
-                "exchange_rate": "0.08100000",
-                "expires_at": "2026-02-20T10:30:00Z",
-            }
-
-        def cancel_payment_quote(self, quote_id: str):
-            assert quote_id == "quote-tx-quote-1"
-            return {"status": "success"}
-
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
-    try:
-        quote_res = authed_client.post("/payments/quote/get", json={"unique_id": "tx-quote-1"})
-        validate_res = authed_client.post("/payments/quote/validate", json={"quote_id": "quote-tx-quote-1"})
-        cancel_res = authed_client.post("/payments/quote/cancel", json={"quote_id": "quote-tx-quote-1"})
-    finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
-
-    assert quote_res.status_code == 200
-    quote_body = quote_res.json()
-    assert quote_body["quote_id"] == "quote-tx-quote-1"
-    assert quote_body["pricing_currency"] == "USDT"
-    assert quote_body["converted_amount"] == "123.45000000"
-
-    assert validate_res.status_code == 200
-    validate_body = validate_res.json()
-    assert validate_body["valid"] is True
-    assert validate_body["quote_id"] == "quote-tx-quote-1"
-
-    assert cancel_res.status_code == 200
-    assert cancel_res.json()["status"] == "success"
-
-
-def test_payments_quote_get_returns_conflict_on_active_quote(authed_client):
-    from backend.nunet_api.routers import payments as payments_router
-
-    class StubPaymentsManager:
-        def get_payment_quote(self, unique_id: str):
-            return {
-                "status": "error",
-                "message": "active quote already exists for this transaction (quote_id: quote_existing)",
-            }
-
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
-    try:
-        response = authed_client.post("/payments/quote/get", json={"unique_id": "tx-quote-2"})
-    finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
-
-    assert response.status_code == 409
-    assert "active quote already exists" in response.json()["detail"]
-
-
-def test_report_to_dms_forwards_quote_id(authed_client):
-    from backend.nunet_api.routers import payments as payments_router
-
-    seen = {}
-
-    class StubPaymentsManager:
-        def confirm_transaction(self, unique_id: str, tx_hash: str, blockchain=None, quote_id=None):
-            seen["unique_id"] = unique_id
-            seen["tx_hash"] = tx_hash
-            seen["blockchain"] = blockchain
-            seen["quote_id"] = quote_id
-            return {"status": "success"}
-
-    authed_client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
-    try:
-        response = authed_client.post(
-            "/payments/report_to_dms",
-            json={
-                "tx_hash": "0x" + "1" * 64,
-                "to_address": "0x" + "2" * 40,
-                "amount": "12.34",
-                "payment_provider": "payment-1",
-                "blockchain": "ETHEREUM",
-                "quote_id": "quote-123",
-            },
-        )
-    finally:
-        authed_client.app.dependency_overrides.pop(payments_router.get_mgr, None)
-
-    assert response.status_code == 200
-    assert seen["unique_id"] == "payment-1"
-    assert seen["quote_id"] == "quote-123"
-    assert response.json()["quote_id"] == "quote-123"
-
-
-def test_organizations_status_includes_timeline(authed_client, monkeypatch):
+def test_organizations_status_includes_timeline(client, monkeypatch):
     from backend.nunet_api.routers import organizations as org_router
 
     sample_state = {
@@ -852,7 +787,7 @@ def test_organizations_status_includes_timeline(authed_client, monkeypatch):
     }
     monkeypatch.setattr(org_router._onboarding, "get_onboarding_status", lambda: sample_state)
 
-    response = authed_client.get("/organizations/status")
+    response = client.get("/organizations/status")
     assert response.status_code == 200
     data = response.json()
     assert data["current_step"] == "pending_authorization"
@@ -860,16 +795,7 @@ def test_organizations_status_includes_timeline(authed_client, monkeypatch):
     assert any(step["id"] == "pending_authorization" and step["state"] == "active" for step in data["step_states"])
 
 
-def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, monkeypatch):
-    from backend.nunet_api.routers import organizations as org_router
-
-    org_did = "did:key:test"
-    org_entry = {
-        "name": "Test Org",
-        "roles": ["compute_provider"],
-        "join_fields": [],
-    }
-
+def _build_recording_onboarding_manager():
     class RecordingOnboardingManager:
         def __init__(self):
             self.state = {"step": "init", "logs": []}
@@ -890,11 +816,7 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, m
                     "local_addrs": [],
                 }
             )
-
-        def _is_onboarded_status(self, value) -> bool:
-            from modules.onboarding_manager import OnboardingManager
-
-            return OnboardingManager._is_onboarded_status(value)
+            self.last_payload = None
 
         def update_state(self, **kwargs):
             old_step = self.state.get("step")
@@ -918,7 +840,20 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, m
             self.last_payload = payload
             return {"status": "pending", "id": "req-123", "status_token": "token-abc"}
 
-    recording_mgr = RecordingOnboardingManager()
+    return RecordingOnboardingManager()
+
+
+def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test"
+    org_entry = {
+        "name": "Test Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
     monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
     monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
     monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
@@ -928,12 +863,12 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, m
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda *args, **kwargs: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -948,7 +883,7 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, m
         "why_join": "compute_provider",
     }
 
-    response = authed_client.post("/organizations/join/submit", json=payload)
+    response = client.post("/organizations/join/submit", json=payload)
     assert response.status_code == 200
     body = response.json()
     assert body["step"] == "join_data_sent"
@@ -965,10 +900,454 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(authed_client, m
     snapshot = recording_mgr.state.get("last_resource_snapshot", {})
     assert snapshot.get("onboarded_resources") == "Cores: 2, RAM: 4 GB, Disk: 50 GB"
 
-    snapshots = [authed_client.get("/organizations/status").json(), authed_client.get("/organizations/status").json()]
+    snapshots = [client.get("/organizations/status").json(), client.get("/organizations/status").json()]
     for snapshot in snapshots:
         assert snapshot["current_step"] == "join_data_sent"
         assert snapshot["current_step"] != "select_org"
+
+
+def test_join_submit_requires_explicit_blockchain_when_multiple_supported(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-multi-chain"
+    org_entry = {
+        "name": "Multi Chain Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(
+        org_router,
+        "get_tokenomics_config",
+        lambda _entry: {"enabled": False, "chain": "ethereum", "blockchains": ["ethereum", "cardano"]},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 400
+    assert "Please select a blockchain" in response.json()["detail"]
+
+
+def test_join_submit_forwards_selected_blockchain_and_wallet_chain(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-forward-blockchain"
+    org_entry = {
+        "name": "Wallet Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(
+        org_router,
+        "get_tokenomics_config",
+        lambda _entry: {"enabled": True, "chain": None, "blockchains": ["ethereum", "cardano"]},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+        "blockchain": "cardano",
+        "wallet_address": "addr_test1qpz9examplewallet",
+        "wallet_chain": "cardano",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 200
+    assert recording_mgr.last_payload["blockchain"] == "cardano"
+    assert recording_mgr.last_payload["wallet_chain"] == "cardano"
+    assert recording_mgr.last_payload["tokenomics"]["chain"] == "cardano"
+    assert recording_mgr.state["form_data"]["blockchain"] == "cardano"
+
+
+def test_join_submit_normalizes_orchestrator_role_for_remote_payload(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-role-casing"
+    org_entry = {
+        "name": "Role Casing Org",
+        "roles": ["Orchestrator"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["Orchestrator"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"Orchestrator": {}})
+    monkeypatch.setattr(
+        org_router,
+        "get_tokenomics_config",
+        lambda _entry: {"enabled": True, "chain": "cardano", "blockchains": ["cardano"]},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["Orchestrator"],
+        "why_join": "orchestrator",
+        "blockchain": "cardano",
+        "wallet_address": "addr_test1qpz9examplewallet",
+        "wallet_chain": "cardano",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 200
+    assert recording_mgr.last_payload["roles"] == ["orchestrator"]
+    assert recording_mgr.state["form_data"]["roles"] == ["Orchestrator"]
+
+
+def test_join_submit_surfaces_remote_validation_error(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-submit-error-detail"
+    org_entry = {
+        "name": "Failing Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    failing_mgr = _build_recording_onboarding_manager()
+
+    def _raise_submit_error(payload, resource_info=None):
+        raise RuntimeError(
+            "Onboarding submit failed (400): "
+            "Configured organization wallet address is not a valid cardano address."
+        )
+
+    failing_mgr.api_submit_join = _raise_submit_error
+    monkeypatch.setattr(org_router, "_onboarding", failing_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(
+        org_router,
+        "get_tokenomics_config",
+        lambda _entry: {"enabled": True, "chain": "cardano", "blockchains": ["cardano"]},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+        "blockchain": "cardano",
+        "wallet_address": "addr_test1qpz9examplewallet",
+        "wallet_chain": "cardano",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 502
+    assert "valid cardano address" in response.json()["detail"]
+
+
+def test_join_submit_rejects_wallet_chain_mismatch_with_selected_blockchain(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-chain-mismatch"
+    org_entry = {
+        "name": "Wallet Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(
+        org_router,
+        "get_tokenomics_config",
+        lambda _entry: {"enabled": True, "chain": None, "blockchains": ["ethereum", "cardano"]},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+        "blockchain": "ethereum",
+        "wallet_address": "addr_test1qpz9examplewallet",
+        "wallet_chain": "cardano",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 400
+    assert "does not match selected blockchain" in response.json()["detail"]
+
+
+def test_poll_join_uses_status_message_for_remote_rejections(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    class PollingManager:
+        def __init__(self):
+            self.state = {
+                "step": "join_data_sent",
+                "request_id": "req-789",
+                "status_token": "tok-789",
+                "api_status": "processing",
+                "logs": [],
+            }
+
+        def update_state(self, **kwargs):
+            self.state.update(kwargs)
+
+        def get_onboarding_status(self):
+            return dict(self.state)
+
+        def api_check_status(self, request_id, token):
+            assert request_id == "req-789"
+            assert token == "tok-789"
+            return {
+                "status": "error",
+                "status_message": "Phase 2 failed: unsupported blockchain CARDANO on remote worker",
+                "rejection_reason": "",
+            }
+
+    mgr = PollingManager()
+    monkeypatch.setattr(org_router, "_onboarding", mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda _mgr: None)
+
+    response = client.get("/organizations/join/poll")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["step"] == "rejected"
+    assert "unsupported blockchain CARDANO" in body["state"]["rejection_reason"]
+
+
+def test_poll_join_contract_caps_ready_does_not_reject(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    class PollingManager:
+        def __init__(self):
+            self.state = {
+                "step": "join_data_sent",
+                "request_id": "req-caps",
+                "status_token": "tok-caps",
+                "api_status": "processing",
+                "contract_caps_applied": False,
+                "logs": [],
+            }
+            self.applied_caps: str | None = None
+            self.confirmed_cap_type: str | None = None
+
+        def update_state(self, **kwargs):
+            self.state.update(kwargs)
+
+        def get_onboarding_status(self):
+            return dict(self.state)
+
+        def api_check_status(self, request_id, token):
+            assert request_id == "req-caps"
+            assert token == "tok-caps"
+            return {
+                "status": "contract_caps_ready",
+                "status_message": "Contract capabilities generated",
+                "contract_caps": "cap-token-123",
+            }
+
+        def apply_contract_capabilities(self, contract_caps):
+            self.applied_caps = contract_caps
+            return True
+
+        def api_confirm_caps(self, request_id, token, cap_type):
+            assert request_id == "req-caps"
+            assert token == "tok-caps"
+            self.confirmed_cap_type = cap_type
+            return {"status": "ok"}
+
+    mgr = PollingManager()
+    monkeypatch.setattr(org_router, "_onboarding", mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda _mgr: None)
+
+    response = client.get("/organizations/join/poll")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["status"] == "pending"
+    assert body["api_status"] == "contract_caps_ready"
+    assert body["step"] == "contract_caps_applied"
+    assert body["state"]["step"] == "contract_caps_applied"
+    assert body["state"].get("rejection_reason") in (None, "")
+    assert mgr.applied_caps == "cap-token-123"
+    assert mgr.confirmed_cap_type == "contract"
+
+
+def test_poll_join_contract_caps_confirmed_with_failure_message_rejects(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    class PollingManager:
+        def __init__(self):
+            self.state = {
+                "step": "contract_caps_applied",
+                "request_id": "req-caps-confirmed",
+                "status_token": "tok-caps-confirmed",
+                "api_status": "contract_caps_ready",
+                "contract_caps_applied": True,
+                "logs": [],
+            }
+
+        def update_state(self, **kwargs):
+            self.state.update(kwargs)
+
+        def get_onboarding_status(self):
+            return dict(self.state)
+
+        def api_check_status(self, request_id, token):
+            assert request_id == "req-caps-confirmed"
+            assert token == "tok-caps-confirmed"
+            return {
+                "status": "contract_caps_confirmed",
+                "status_message": "Contract creation returned no contract DID",
+            }
+
+    mgr = PollingManager()
+    monkeypatch.setattr(org_router, "_onboarding", mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda _mgr: None)
+
+    response = client.get("/organizations/join/poll")
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["status"] == "error"
+    assert body["api_status"] == "contract_caps_confirmed"
+    assert body["step"] == "rejected"
+    assert "no contract DID" in body["state"]["rejection_reason"]
+
+
+def test_poll_join_deployment_failed_rejects_with_remote_message(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    class PollingManager:
+        def __init__(self):
+            self.state = {
+                "step": "deployment_caps_applied",
+                "request_id": "req-deploy-fail",
+                "status_token": "tok-deploy-fail",
+                "api_status": "deployment_caps_ready",
+                "logs": [],
+            }
+
+        def update_state(self, **kwargs):
+            self.state.update(kwargs)
+
+        def get_onboarding_status(self):
+            return dict(self.state)
+
+        def api_check_status(self, request_id, token):
+            assert request_id == "req-deploy-fail"
+            assert token == "tok-deploy-fail"
+            return {
+                "status": "deployment_failed",
+                "status_message": "Deployment test failed on orchestrator node",
+            }
+
+    mgr = PollingManager()
+    monkeypatch.setattr(org_router, "_onboarding", mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda _mgr: None)
+
+    response = client.get("/organizations/join/poll")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["api_status"] == "deployment_failed"
+    assert body["step"] == "rejected"
+    assert "Deployment test failed" in body["state"]["rejection_reason"]
 
 
 def test_onboarding_manager_onboarded_status_detection():
@@ -980,7 +1359,7 @@ def test_onboarding_manager_onboarded_status_detection():
     assert OnboardingManager._is_onboarded_status("pending") is False
     assert OnboardingManager._is_onboarded_status(True) is True
     assert OnboardingManager._is_onboarded_status(False) is False
-def test_ensemble_templates_list_uses_relative_paths(authed_client, tmp_path):
+def test_ensemble_templates_list_uses_relative_paths(client, tmp_path):
     from backend.nunet_api.routers import ensemble as ensemble_router
 
     base_dir = tmp_path / "ensembles"
@@ -998,11 +1377,11 @@ def test_ensemble_templates_list_uses_relative_paths(authed_client, tmp_path):
         def get_ensemble_files(self):
             return [(0, template_path)]
 
-    authed_client.app.dependency_overrides[ensemble_router.get_mgr] = lambda: StubEnsembleManager()
+    client.app.dependency_overrides[ensemble_router.get_mgr] = lambda: StubEnsembleManager()
     try:
-        response = authed_client.get("/ensemble/templates")
+        response = client.get("/ensemble/templates")
     finally:
-        authed_client.app.dependency_overrides.pop(ensemble_router.get_mgr, None)
+        client.app.dependency_overrides.pop(ensemble_router.get_mgr, None)
 
     assert response.status_code == 200
     items = response.json()["items"]
@@ -1016,620 +1395,3 @@ def test_no_websocket_routes_registered(app):
         if route.__class__.__name__ == "WebSocketRoute" and route.endpoint.__module__.startswith("backend.nunet_api")
     ]
     assert not ws_routes, "WebSocket routes should be removed from backend.nunet_api"
-
-
-@pytest.fixture
-def authed_client(client):
-    client.app.dependency_overrides[security_module.require_auth] = lambda: "admin"
-    try:
-        yield client
-    finally:
-        client.app.dependency_overrides.pop(security_module.require_auth, None)
-
-
-@pytest.fixture
-def filesystem_root(monkeypatch, tmp_path):
-    import backend.nunet_api.routers.filesystem as fs_router
-
-    root = tmp_path / "fsroot"
-    root.mkdir()
-    resolved = root.resolve()
-    monkeypatch.setattr(fs_router, "ROOT_DIR", resolved)
-    monkeypatch.setattr(fs_router, "ALLOWED_ROOTS", [resolved])
-    monkeypatch.setattr(fs_router, "LISTABLE_DIRS", {resolved})
-    return root
-
-
-def test_filesystem_list_happy(authed_client, filesystem_root):
-    docs = filesystem_root / "docs"
-    docs.mkdir()
-    (docs / "note.txt").write_text("hi", encoding="utf-8")
-    (filesystem_root / "readme.md").write_text("ok", encoding="utf-8")
-
-    response = authed_client.get("/filesystem/list", params={"path": str(filesystem_root)})
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["root"] == str(filesystem_root)
-    assert body["path"] == str(filesystem_root)
-    assert body["relative_path"] == "."
-
-    items = body["items"]
-    names = {item["name"] for item in items}
-    assert {"docs", "readme.md"} <= names
-
-    dir_indexes = [idx for idx, item in enumerate(items) if item["is_dir"]]
-    file_indexes = [idx for idx, item in enumerate(items) if item["is_file"]]
-    if dir_indexes and file_indexes:
-        assert max(dir_indexes) < min(file_indexes)
-
-
-def test_filesystem_list_rejects_file_path(authed_client, filesystem_root):
-    target = filesystem_root / "file.txt"
-    target.write_text("content", encoding="utf-8")
-    response = authed_client.get("/filesystem/list", params={"path": str(target)})
-    assert response.status_code == 400
-
-
-def test_filesystem_list_rejects_outside_root(authed_client, filesystem_root):
-    outside = filesystem_root.parent
-    response = authed_client.get("/filesystem/list", params={"path": str(outside)})
-    assert response.status_code == 400
-
-
-def test_filesystem_upload_happy(authed_client, filesystem_root):
-    dest = filesystem_root / "uploads"
-    files = [
-        ("files", ("a.txt", b"alpha", "text/plain")),
-        ("files", ("b.txt", b"beta", "text/plain")),
-    ]
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(dest), "overwrite": "false"},
-        files=files,
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["status"] == "success"
-    assert (dest / "a.txt").read_text(encoding="utf-8") == "alpha"
-    assert (dest / "b.txt").read_text(encoding="utf-8") == "beta"
-
-
-def test_filesystem_upload_rejects_existing_file(authed_client, filesystem_root):
-    dest = filesystem_root / "uploads"
-    dest.mkdir()
-    (dest / "a.txt").write_text("old", encoding="utf-8")
-
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(dest), "overwrite": "false"},
-        files=[("files", ("a.txt", b"new", "text/plain"))],
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-
-
-def test_filesystem_copy_happy(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("copy me", encoding="utf-8")
-    dest_dir = filesystem_root / "copied"
-    dest_dir.mkdir()
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(src)], "destination": str(dest_dir), "overwrite": False},
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["status"] == "success"
-    assert (dest_dir / "source.txt").read_text(encoding="utf-8") == "copy me"
-
-
-def test_filesystem_copy_rejects_outside_root(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("copy me", encoding="utf-8")
-    outside = filesystem_root.parent / "outside"
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(src)], "destination": str(outside), "overwrite": False},
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_copy_rejects_symlink_destination(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("copy me", encoding="utf-8")
-    dest_real = filesystem_root / "dest"
-    dest_real.mkdir()
-    dest_link = filesystem_root / "dest_link"
-    try:
-        dest_link.symlink_to(dest_real, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported on this platform")
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(src)], "destination": str(dest_link), "overwrite": False},
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_copy_requires_directory_for_multiple_sources(authed_client, filesystem_root):
-    first = filesystem_root / "one.txt"
-    second = filesystem_root / "two.txt"
-    first.write_text("one", encoding="utf-8")
-    second.write_text("two", encoding="utf-8")
-    dest = filesystem_root / "target.txt"
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(first), str(second)], "destination": str(dest), "overwrite": False},
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_move_happy(authed_client, filesystem_root):
-    src = filesystem_root / "move.txt"
-    src.write_text("move me", encoding="utf-8")
-    dest_dir = filesystem_root / "moved"
-    dest_dir.mkdir()
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(src)], "destination": str(dest_dir), "overwrite": False},
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["status"] == "success"
-    assert not src.exists()
-    assert (dest_dir / "move.txt").read_text(encoding="utf-8") == "move me"
-
-
-def test_filesystem_move_requires_directory_for_multiple_sources(authed_client, filesystem_root):
-    first = filesystem_root / "one.txt"
-    second = filesystem_root / "two.txt"
-    first.write_text("one", encoding="utf-8")
-    second.write_text("two", encoding="utf-8")
-    dest = filesystem_root / "target.txt"
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(first), str(second)], "destination": str(dest), "overwrite": False},
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_move_rejects_symlink_destination(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("move me", encoding="utf-8")
-    dest_real = filesystem_root / "dest"
-    dest_real.mkdir()
-    dest_link = filesystem_root / "dest_link"
-    try:
-        dest_link.symlink_to(dest_real, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported on this platform")
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(src)], "destination": str(dest_link), "overwrite": False},
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_delete_happy(authed_client, filesystem_root):
-    target = filesystem_root / "trash.txt"
-    target.write_text("delete me", encoding="utf-8")
-
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(target)], "recursive": False},
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["status"] == "success"
-    assert not target.exists()
-
-
-def test_filesystem_delete_rejects_directory_without_recursive(authed_client, filesystem_root):
-    folder = filesystem_root / "folder"
-    folder.mkdir()
-    (folder / "nested.txt").write_text("nested", encoding="utf-8")
-
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(folder)], "recursive": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-    assert folder.exists()
-
-
-def test_filesystem_download_happy(authed_client, filesystem_root):
-    target = filesystem_root / "download.txt"
-    target.write_text("download me", encoding="utf-8")
-
-    response = authed_client.get("/filesystem/download", params={"path": str(target)})
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    assert response.content == b"download me"
-
-
-def test_filesystem_download_rejects_directory(authed_client, filesystem_root):
-    folder = filesystem_root / "dir"
-    folder.mkdir()
-
-    response = authed_client.get("/filesystem/download", params={"path": str(folder)})
-    assert response.status_code == 400
-
-
-def test_filesystem_list_rejects_symlink(authed_client, filesystem_root):
-    target = filesystem_root / "real"
-    target.mkdir()
-    link = filesystem_root / "link"
-    link.symlink_to(target, target_is_directory=True)
-
-    response = authed_client.get("/filesystem/list", params={"path": str(link)})
-    assert response.status_code == 400
-
-
-def test_filesystem_copy_rejects_symlink_source(authed_client, filesystem_root):
-    target = filesystem_root / "real.txt"
-    target.write_text("real", encoding="utf-8")
-    link = filesystem_root / "link.txt"
-    link.symlink_to(target)
-    dest = filesystem_root / "dest"
-    dest.mkdir()
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(link)], "destination": str(dest), "overwrite": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-
-
-def test_filesystem_move_rejects_symlink_source(authed_client, filesystem_root):
-    target = filesystem_root / "real.txt"
-    target.write_text("real", encoding="utf-8")
-    link = filesystem_root / "link.txt"
-    link.symlink_to(target)
-    dest = filesystem_root / "dest"
-    dest.mkdir()
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(link)], "destination": str(dest), "overwrite": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-    assert link.exists()
-
-
-def test_filesystem_download_rejects_symlink(authed_client, filesystem_root):
-    target = filesystem_root / "real.txt"
-    target.write_text("real", encoding="utf-8")
-    link = filesystem_root / "link.txt"
-    link.symlink_to(target)
-
-    response = authed_client.get("/filesystem/download", params={"path": str(link)})
-    assert response.status_code == 400
-
-
-def test_filesystem_delete_symlink_happy(authed_client, filesystem_root):
-    target = filesystem_root / "real.txt"
-    target.write_text("real", encoding="utf-8")
-    link = filesystem_root / "link.txt"
-    link.symlink_to(target)
-
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(link)], "recursive": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "success"
-    assert not link.exists()
-    assert target.exists()
-
-
-def test_filesystem_delete_broken_symlink_happy(authed_client, filesystem_root):
-    target = filesystem_root / "missing.txt"
-    link = filesystem_root / "broken.txt"
-    link.symlink_to(target)
-
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(link)], "recursive": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "success"
-    assert not link.exists()
-
-
-def test_filesystem_upload_rejects_invalid_filename(authed_client, filesystem_root):
-    dest = filesystem_root / "uploads"
-    dest.mkdir()
-
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(dest), "overwrite": "false"},
-        files=[("files", ("../bad.txt", b"bad", "text/plain"))],
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-
-
-def test_filesystem_upload_rejects_path_when_destination_is_file(authed_client, filesystem_root):
-    dest = filesystem_root / "dest.txt"
-    dest.write_text("not a dir", encoding="utf-8")
-
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(dest), "overwrite": "false"},
-        files=[("files", ("a.txt", b"alpha", "text/plain"))],
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_upload_rejects_path_traversal(authed_client, filesystem_root):
-    outside = filesystem_root / ".."
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(outside), "overwrite": "false"},
-        files=[("files", ("a.txt", b"alpha", "text/plain"))],
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_upload_rejects_symlink_destination(authed_client, filesystem_root):
-    target = filesystem_root / "real_uploads"
-    target.mkdir()
-    link = filesystem_root / "link_uploads"
-    try:
-        link.symlink_to(target, target_is_directory=True)
-    except OSError:
-        pytest.skip("symlinks not supported on this platform")
-
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(link), "overwrite": "false"},
-        files=[("files", ("a.txt", b"alpha", "text/plain"))],
-    )
-    assert response.status_code == 400
-
-
-def test_filesystem_copy_overwrite_file(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("new", encoding="utf-8")
-    dest = filesystem_root / "target.txt"
-    dest.write_text("old", encoding="utf-8")
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(src)], "destination": str(dest), "overwrite": True},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "success"
-    assert dest.read_text(encoding="utf-8") == "new"
-
-
-def test_filesystem_move_overwrite_file(authed_client, filesystem_root):
-    src = filesystem_root / "source.txt"
-    src.write_text("new", encoding="utf-8")
-    dest = filesystem_root / "target.txt"
-    dest.write_text("old", encoding="utf-8")
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(src)], "destination": str(dest), "overwrite": True},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "success"
-    assert dest.read_text(encoding="utf-8") == "new"
-    assert not src.exists()
-
-
-def test_filesystem_delete_nonexistent_reports_error(authed_client, filesystem_root):
-    missing = filesystem_root / "missing.txt"
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(missing)], "recursive": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-
-
-def test_filesystem_download_rejects_outside_root(authed_client, filesystem_root):
-    outside = filesystem_root.parent / "outside.txt"
-    outside.write_text("nope", encoding="utf-8")
-    response = authed_client.get("/filesystem/download", params={"path": str(outside)})
-    assert response.status_code == 400
-
-
-def test_filesystem_folder_happy(authed_client, filesystem_root):
-    folder = filesystem_root / "new_dir"
-    response = authed_client.post(
-        "/filesystem/folder",
-        json={"path": str(folder), "parents": False, "exist_ok": False},
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    body = response.json()
-    assert body["status"] == "success"
-    assert folder.is_dir()
-
-
-def test_filesystem_folder_exist_ok(authed_client, filesystem_root):
-    folder = filesystem_root / "existing"
-    folder.mkdir()
-    response = authed_client.post(
-        "/filesystem/folder",
-        json={"path": str(folder), "parents": False, "exist_ok": True},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "success"
-
-
-def test_filesystem_folder_rejects_when_file_exists(authed_client, filesystem_root):
-    target = filesystem_root / "occupied"
-    target.write_text("nope", encoding="utf-8")
-    response = authed_client.post(
-        "/filesystem/folder",
-        json={"path": str(target), "parents": False, "exist_ok": False},
-    )
-    assert response.status_code == 409
-
-
-@pytest.fixture
-def filesystem_allowlist(monkeypatch, tmp_path):
-    import backend.nunet_api.routers.filesystem as fs_router
-
-    root = tmp_path / "home"
-    allowed_appliance = root / "nunet" / "appliance"
-    allowed_ensembles = root / "ensembles"
-    allowed_contracts = root / "contracts"
-    disallowed = root / "other"
-    disallowed_hidden = root / ".secrets"
-
-    allowed_appliance.mkdir(parents=True)
-    allowed_ensembles.mkdir(parents=True)
-    allowed_contracts.mkdir(parents=True)
-    disallowed.mkdir(parents=True)
-    disallowed_hidden.mkdir(parents=True)
-    (root / "nunet" / "other").mkdir(parents=True)
-
-    root_resolved = root.resolve()
-    nunet_resolved = (root / "nunet").resolve()
-    allowed_roots = [allowed_appliance.resolve(), allowed_ensembles.resolve(), allowed_contracts.resolve()]
-
-    monkeypatch.setattr(fs_router, "ROOT_DIR", root_resolved)
-    monkeypatch.setattr(fs_router, "ALLOWED_ROOTS", allowed_roots)
-    monkeypatch.setattr(
-        fs_router,
-        "LISTABLE_DIRS",
-        {root_resolved, nunet_resolved, *allowed_roots},
-    )
-
-    return {
-        "root": root,
-        "allowed_appliance": allowed_appliance,
-        "allowed_ensembles": allowed_ensembles,
-        "allowed_contracts": allowed_contracts,
-        "disallowed": disallowed,
-    }
-
-
-def test_filesystem_list_filters_root_to_allowlist(authed_client, filesystem_allowlist):
-    root = filesystem_allowlist["root"]
-    response = authed_client.get("/filesystem/list", params={"path": str(root)})
-    assert response.status_code == 200
-    items = response.json()["items"]
-    names = {item["name"] for item in items}
-    assert {"contracts", "ensembles", "nunet"} <= names
-    assert "other" not in names
-    assert ".secrets" not in names
-
-
-def test_filesystem_list_filters_bridge_dir(authed_client, filesystem_allowlist):
-    bridge = filesystem_allowlist["root"] / "nunet"
-    response = authed_client.get("/filesystem/list", params={"path": str(bridge)})
-    assert response.status_code == 200
-    items = response.json()["items"]
-    names = {item["name"] for item in items}
-    assert names == {"appliance"}
-
-
-def test_filesystem_list_rejects_disallowed_dir(authed_client, filesystem_allowlist):
-    disallowed = filesystem_allowlist["disallowed"]
-    response = authed_client.get("/filesystem/list", params={"path": str(disallowed)})
-    assert response.status_code == 403
-
-
-def test_filesystem_download_rejects_disallowed_path(authed_client, filesystem_allowlist):
-    disallowed = filesystem_allowlist["disallowed"]
-    target = disallowed / "secret.txt"
-    target.write_text("nope", encoding="utf-8")
-    response = authed_client.get("/filesystem/download", params={"path": str(target)})
-    assert response.status_code == 403
-
-
-def test_filesystem_upload_rejects_disallowed_destination(authed_client, filesystem_allowlist):
-    disallowed = filesystem_allowlist["disallowed"]
-    response = authed_client.post(
-        "/filesystem/upload",
-        data={"path": str(disallowed), "overwrite": "false"},
-        files=[("files", ("a.txt", b"alpha", "text/plain"))],
-    )
-    assert response.status_code == 403
-
-
-def test_filesystem_folder_rejects_disallowed_path(authed_client, filesystem_allowlist):
-    disallowed = filesystem_allowlist["disallowed"] / "new_dir"
-    response = authed_client.post(
-        "/filesystem/folder",
-        json={"path": str(disallowed), "parents": True, "exist_ok": False},
-    )
-    assert response.status_code == 403
-
-
-def test_filesystem_copy_rejects_disallowed_destination(authed_client, filesystem_allowlist):
-    allowed_contracts = filesystem_allowlist["allowed_contracts"]
-    source = allowed_contracts / "source.txt"
-    source.write_text("ok", encoding="utf-8")
-    disallowed = filesystem_allowlist["disallowed"] / "copy_here"
-
-    response = authed_client.post(
-        "/filesystem/copy",
-        json={"sources": [str(source)], "destination": str(disallowed), "overwrite": False},
-    )
-    assert response.status_code == 403
-
-
-def test_filesystem_move_rejects_disallowed_destination(authed_client, filesystem_allowlist):
-    allowed_contracts = filesystem_allowlist["allowed_contracts"]
-    source = allowed_contracts / "source.txt"
-    source.write_text("ok", encoding="utf-8")
-    disallowed = filesystem_allowlist["disallowed"] / "move_here"
-
-    response = authed_client.post(
-        "/filesystem/move",
-        json={"sources": [str(source)], "destination": str(disallowed), "overwrite": False},
-    )
-    assert response.status_code == 403
-
-
-def test_filesystem_delete_disallowed_path_reports_error(authed_client, filesystem_allowlist):
-    disallowed = filesystem_allowlist["disallowed"] / "secret.txt"
-    disallowed.write_text("nope", encoding="utf-8")
-
-    response = authed_client.request(
-        "DELETE",
-        "/filesystem",
-        json={"paths": [str(disallowed)], "recursive": False},
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "error"
-    assert body["items"][0]["status"] == "error"
-    assert body["items"][0]["message"] == "Path is not allowed"

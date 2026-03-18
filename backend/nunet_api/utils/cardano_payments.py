@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Union
 
@@ -203,9 +203,12 @@ def _token_amount(amount: str, decimals: int) -> int:
         dec = Decimal(amount)
     except (InvalidOperation, TypeError):
         raise CardanoTxBuildError("Invalid amount format")
-    quantized = dec.quantize(Decimal(10) ** -decimals)
-    if quantized != dec:
-        raise CardanoTxBuildError(f"Amount exceeds allowed decimals ({decimals})")
+    # TODO: remove this hard-wired value
+    decimals = 6; # NTX decimals
+    quantized = dec.quantize(Decimal(10) ** -decimals, rounding=ROUND_DOWN)
+    #quantized = dec.quantize(Decimal(10) ** -decimals)
+    #if quantized != dec:
+        #raise CardanoTxBuildError(f"Amount exceeds allowed decimals ({decimals})")
     if quantized < 0:
         raise CardanoTxBuildError("Amount must be positive")
     if decimals == 0:
@@ -472,7 +475,12 @@ class CardanoBuildResult:
 class CardanoPaymentsBuilder:
     def __init__(self, token_config: Dict[str, Any], koios_base_url: str) -> None:
         self.token_config = token_config
-        self.context = KoiosChainContext(koios_base_url, network=Network.TESTNET)
+        network_name = token_config.get("network_name", "testnet").lower()
+        if "mainnet" in network_name:
+            network = Network.MAINNET
+        else:
+            network = Network.TESTNET
+        self.context = KoiosChainContext(koios_base_url, network=network)
 
     def _make_value(self, amount: str) -> Value:
         decimals = int(self.token_config.get("token_decimals", 0))

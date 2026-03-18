@@ -110,7 +110,16 @@ const compareVersions = (current?: string | null, latest?: string | null) => {
   const currentParts = parseVersionParts(current);
   const latestParts = parseVersionParts(latest);
   if (currentParts && latestParts) {
-    return compareVersionParts(currentParts, latestParts);
+    const numericComparison = compareVersionParts(currentParts, latestParts);
+    if (numericComparison !== 0) {
+      return numericComparison;
+    }
+    // Same numeric core (e.g. 1.2.3), but different suffix/build metadata:
+    // treat as indeterminate so backend "available" flag can decide.
+    if (current && latest && normalizeVersion(current) !== normalizeVersion(latest)) {
+      return null;
+    }
+    return 0;
   }
   if (current && latest) {
     return normalizeVersion(current) === normalizeVersion(latest) ? 0 : null;
@@ -554,10 +563,9 @@ export function SectionCards() {
   const currentDmsVersion = sysinfo?.dmsUpdateInfo?.current ?? info?.dms_version;
   const latestDmsVersion = sysinfo?.dmsUpdateInfo?.latest;
   const dmsVersionComparison = compareVersions(currentDmsVersion, latestDmsVersion);
+  const dmsBackendAvailable = parseUpdateAvailable(sysinfo?.dmsUpdateInfo?.available);
   const dmsUpdateAvailable =
-    dmsVersionComparison === null
-      ? parseUpdateAvailable(sysinfo?.dmsUpdateInfo?.available)
-      : dmsVersionComparison < 0;
+    dmsVersionComparison === null ? dmsBackendAvailable : dmsVersionComparison < 0 || dmsBackendAvailable;
   const isDmsUpdateInProgress = isUpdatingDms || isPollingDmsVersion;
   const dmsUpdateLabel = isDmsUpdateInProgress
     ? "Updating..."
@@ -572,10 +580,11 @@ export function SectionCards() {
     currentApplianceVersion,
     latestApplianceVersion
   );
+  const applianceBackendAvailable = parseUpdateAvailable(sysinfo?.updateInfo?.available);
   const applianceUpdateAvailable =
     applianceVersionComparison === null
-      ? parseUpdateAvailable(sysinfo?.updateInfo?.available)
-      : applianceVersionComparison < 0;
+      ? applianceBackendAvailable
+      : applianceVersionComparison < 0 || applianceBackendAvailable;
   const isApplianceUpdateInProgress = isUpdating || isPollingApplianceVersion;
   const applianceUpdateLabel = isApplianceUpdateInProgress
     ? "Updating..."

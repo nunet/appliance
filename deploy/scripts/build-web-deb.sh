@@ -3,7 +3,11 @@ set -euo pipefail
 
 # -------- settings you may tweak ----------
 VERSION="${1:-1.0.0}"                 # deb version; pass as 1st arg to override
-DEB_VERSION=$(echo "${VERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+DEB_VERSION="$(echo "${VERSION}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+if [ -z "$DEB_VERSION" ]; then
+  DEB_VERSION="${PACKAGE_VERSION_FALLBACK:-0.0.0}"
+  echo "Warning: invalid package version '${VERSION}', falling back to Debian version '${DEB_VERSION}'."
+fi
 SERVICE_USER="${SERVICE_USER:-ubuntu}" # run the service as this user
 # ------------------------------------------
 
@@ -108,6 +112,7 @@ cat > "$PKGDIR/etc/nunet-appliance-web/app.env" <<'EOF'
 #WORKERS=1
 #NUNET_STATIC_DIR=/usr/share/nunet-appliance-web/frontend/dist
 #NUNET_DATA_DIR=/usr/share/nunet-appliance-web/data
+APPLIANCE_ENV=production
 EOF
 
 # systemd unit (runs as 'ubuntu' by default)
@@ -159,6 +164,30 @@ ReadWritePaths=/home/ubuntu/nunet/appliance /home/ubuntu/.cache /home/ubuntu/.lo
 [Install]
 WantedBy=multi-user.target
 EOF
+
+## Auto-restart web service when environment overrides change.
+#cat > "$PKGDIR/lib/systemd/system/nunet-appliance-web-env-reload.service" <<'EOF'
+#[Unit]
+#Description=Reload NuNet Appliance Web after app.env changes
+
+#[Service]
+#Type=oneshot
+#ExecStart=/bin/systemctl restart nunet-appliance-web.service
+#User=root
+#EOF
+
+#cat > "$PKGDIR/lib/systemd/system/nunet-appliance-web-env-reload.path" <<'EOF'
+#[Unit]
+#Description=Watch NuNet Appliance environment overrides
+
+#[Path]
+#PathExists=/etc/nunet-appliance-web/app.env
+#PathChanged=/etc/nunet-appliance-web/app.env
+#Unit=nunet-appliance-web-env-reload.service
+
+#[Install]
+#WantedBy=multi-user.target
+#EOF
 
 # Caddy proxy monitor service (installed to /etc/systemd/system/)
 # Create a wrapper script to run the module from the PEX
@@ -215,6 +244,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/lib/nunet-appliance-web/updater.sh
 User=root
 EOF
@@ -241,6 +271,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/lib/nunet-appliance-web/dms-updater.sh
 User=root
 EOF
@@ -426,6 +457,7 @@ fi
 systemctl daemon-reload
 systemctl enable nunet-appliance-web.service >/dev/null 2>&1 || true
 systemctl enable --now nunet-appliance-updater.timer >/dev/null 2>&1 || true
+# systemctl enable --now nunet-appliance-web-env-reload.path >/dev/null 2>&1 || true
 systemctl restart nunet-appliance-web.service || true
 
 # Enable and start caddy proxy monitor service
@@ -448,6 +480,7 @@ cat > "$PKGDIR/DEBIAN/prerm" <<'EOF'
 #!/bin/sh -e
 if [ "$1" = remove ] || [ "$1" = deconfigure ] || [ "$1" = upgrade ]; then
   systemctl stop nunet-appliance-web.service || true
+  # systemctl disable --now nunet-appliance-web-env-reload.path >/dev/null 2>&1 || true
   systemctl stop nunet-caddy-proxy-monitor.service || true
   systemctl disable --now nunet-appliance-updater.timer >/dev/null 2>&1 || true
   # Clean up PEX cache directory before upgrade
@@ -464,6 +497,8 @@ cat > "$PKGDIR/DEBIAN/postrm" <<'EOF'
 systemctl daemon-reload || true
 if [ "$1" = purge ]; then
   systemctl disable nunet-appliance-web.service || true
+  # systemctl disable nunet-appliance-web-env-reload.path || true
+  # systemctl disable nunet-appliance-web-env-reload.service || true
   systemctl disable nunet-caddy-proxy-monitor.service || true
   rm -rf /etc/nunet-appliance-web
 fi

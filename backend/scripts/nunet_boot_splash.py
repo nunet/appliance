@@ -238,27 +238,88 @@ class NuNetBootSplash:
 :+*:::::::::::=#*+%+:::::*%*+=====+*#*-::::+@@*::::::::-#@@@@@-:::-#@@@@@@@@@@@@@@#::::::*@@+:::::::
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::"""
     
-    def get_local_ip(self) -> str:
-        """Get the local IP address"""
+    def is_wsl(self) -> bool:
+        """Detect if running inside WSL (Windows Subsystem for Linux)."""
+        if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+            return True
         try:
-            # Try to get IP from hostname first
+            with open("/proc/version", "r") as f:
+                return "Microsoft" in f.read() or "WSL" in f.read()
+        except Exception:
+            pass
+        return False
+
+    def _is_wsl_nat_or_internal(self, ip: str) -> bool:
+        """Return True if IP is a WSL NAT/internal address we should hide from the splash."""
+        if not ip or "." not in ip:
+            return True
+        if ip.startswith("127."):
+            return True
+        # WSL relay / internal
+        if ip.startswith("10.255."):
+            return True
+        # Docker bridge
+        if ip.startswith("172.17."):
+            return True
+        # Typical WSL2 NAT range
+        if ip.startswith("172."):
+            parts = ip.split(".")
+            if len(parts) == 4 and parts[0] == "172":
+                try:
+                    second = int(parts[1])
+                    if 16 <= second <= 31:
+                        return True
+                except ValueError:
+                    pass
+        return False
+
+    def get_local_ip(self) -> str:
+        """Get the local IP address. On WSL, prefer LAN (e.g. 192.168.x.x) and ignore NAT/internal IPs."""
+        # On WSL: get all IPs and filter to LAN-only, prefer 192.168.x.x
+        if self.is_wsl():
+            try:
+                result = subprocess.run(
+                    ["hostname", "-I"], capture_output=True, text=True, check=True
+                )
+                ips = [s.strip() for s in result.stdout.strip().split() if s.strip()]
+                # Prefer 192.168.x.x, then other 10.x (not 10.255.x), then first remaining
+                lan = []
+                other_private = []
+                rest = []
+                for ip in ips:
+                    if self._is_wsl_nat_or_internal(ip):
+                        continue
+                    if ip.startswith("192.168."):
+                        lan.append(ip)
+                    elif ip.startswith("10.") and not ip.startswith("10.255."):
+                        other_private.append(ip)
+                    else:
+                        rest.append(ip)
+                for candidate in (lan, other_private, rest):
+                    if candidate:
+                        return candidate[0]
+            except Exception:
+                pass
+            return "localhost"
+
+        # Non-WSL: original behavior
+        try:
             hostname = socket.gethostname()
             local_ip = socket.gethostbyname(hostname)
-            if local_ip and not local_ip.startswith('127.'):
+            if local_ip and not local_ip.startswith("127."):
                 return local_ip
-        except:
+        except Exception:
             pass
-        
-        # Fallback: try to get IP from network interfaces
         try:
-            result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                ["hostname", "-I"], capture_output=True, text=True, check=True
+            )
             ips = result.stdout.strip().split()
             for ip in ips:
-                if not ip.startswith('127.') and '.' in ip:
+                if not ip.startswith("127.") and "." in ip:
                     return ip
-        except:
+        except Exception:
             pass
-        
         return "localhost"
     
     def get_public_ip(self) -> str:
@@ -444,29 +505,33 @@ class NuNetBootSplash:
             # First boot scenario - use setup_token
             setup_token = self.get_setup_token()
         
-        # Build base URLs
+        # Build base URLs (localhost is always available for host access / WSL)
+        localhost_url_base = "https://localhost:8443"
         local_url_base = f"https://{local_host_label}:8443"
         ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
         public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
-        
+
         # Add token to URLs based on scenario
         # Note: For HashRouter, tokens must be in the hash URL, not the root query string
         if reset_token and needs_reset:
             params = urlencode({"reset_token": reset_token})
+            localhost_url = f"{localhost_url_base}#/setup?{params}"
             local_url = f"{local_url_base}#/setup?{params}"
             ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
             public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
         elif setup_token and not password_set:
             params = urlencode({"setup_token": setup_token})
+            localhost_url = f"{localhost_url_base}#/setup?{params}"
             local_url = f"{local_url_base}#/setup?{params}"
             ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
             public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
         else:
+            localhost_url = localhost_url_base
             local_url = local_url_base
             ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
             public_url = public_url_base if public_ip not in ("Unknown", "") else ip_url
-        
-        # Selected URL defaults to local IP
+
+        # Selected URL defaults to LAN IP (on WSL get_local_ip() already returns LAN only)
         selected_url = ip_url
         
         # Check service status
@@ -490,13 +555,14 @@ class NuNetBootSplash:
             qr_lines = [f"QR Code Error: {str(e)}"]
         
         # Create information text with utilization data
+        lan_label = "LAN IP" if self.is_wsl() else "Local IP"
         text_lines = [
             f"{self.colors.GREEN}Scan QR Code{self.colors.NC}",
             "",
             f"{self.colors.CYAN}Selected URL: {selected_url}{self.colors.NC}",
+            f"Localhost: {localhost_url}",
             f"mDNS URL:  {local_url}",
-            f"Local IP:  {ip_url}",
-            f"Local URL:  {local_url}",
+            f"{lan_label}:  {ip_url}",
             f"Public URL: {public_url}",
             f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
         ]
@@ -530,7 +596,7 @@ class NuNetBootSplash:
             f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access {self.colors.YELLOW}(Coming Soon){self.colors.NC}",
             f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
             "",
-            f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
+            f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'l' (Localhost), 'm' (mDNS), 'i' (LAN IP), 'p' (Public)",
             "",
             f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
             f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"
@@ -542,7 +608,7 @@ class NuNetBootSplash:
         try:
             choice = input().strip()
             # Lightweight re-render for URL toggle without leaving splash
-            if choice.lower() in ("m", "i", "p"):
+            if choice.lower() in ("l", "m", "i", "p"):
                 # Recompute to avoid stale IPs/hostname
                 local_ip = self.get_local_ip()
                 public_ip = self.get_public_ip()
@@ -551,7 +617,12 @@ class NuNetBootSplash:
                 except Exception:
                     hostname = "nunet-appliance"
                 local_host_label = f"{hostname}.local"
-                
+
+                localhost_url_base = "https://localhost:8443"
+                local_url_base = f"https://{local_host_label}:8443"
+                ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
+                public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
+
                 # Check password status and get appropriate token
                 needs_reset = False
                 password_set = self.is_password_set()
@@ -562,37 +633,36 @@ class NuNetBootSplash:
                             needs_reset = creds_data.get('needs_reset', False)
                     except Exception:
                         pass
-                
+
                 setup_token = None
                 reset_token = None
                 if needs_reset:
                     reset_token = self.get_reset_token()
                 elif not password_set:
                     setup_token = self.get_setup_token()
-                
-                # Build base URLs
-                local_url_base = f"https://{local_host_label}:8443"
-                ip_url_base = f"https://{local_ip}:8443" if local_ip not in ("localhost", "", "Unknown") else local_url_base
-                public_url_base = f"https://{public_ip}:8443" if public_ip not in ("Unknown", "") else ip_url_base
-                
+
                 # Add token to URLs based on scenario
-                # Note: For HashRouter, tokens must be in the hash URL, not the root query string
                 if reset_token and needs_reset:
                     params = urlencode({"reset_token": reset_token})
+                    localhost_url = f"{localhost_url_base}#/setup?{params}"
                     local_url = f"{local_url_base}#/setup?{params}"
                     ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
                     public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
                 elif setup_token and not password_set:
                     params = urlencode({"setup_token": setup_token})
+                    localhost_url = f"{localhost_url_base}#/setup?{params}"
                     local_url = f"{local_url_base}#/setup?{params}"
                     ip_url = f"{ip_url_base}#/setup?{params}" if local_ip not in ("localhost", "", "Unknown") else local_url
                     public_url = f"{public_url_base}#/setup?{params}" if public_ip not in ("Unknown", "") else ip_url
                 else:
+                    localhost_url = localhost_url_base
                     local_url = local_url_base
                     ip_url = ip_url_base if local_ip not in ("localhost", "", "Unknown") else local_url
                     public_url = public_url_base if public_ip not in ("Unknown", "") else ip_url
-                
-                if choice.lower() == "m":
+
+                if choice.lower() == "l":
+                    selected_url = localhost_url
+                elif choice.lower() == "m":
                     selected_url = local_url
                 elif choice.lower() == "i":
                     selected_url = ip_url
@@ -609,13 +679,14 @@ class NuNetBootSplash:
                 print(f"{self.colors.YELLOW}{self.colors.BOLD}NUNET APPLIANCE - WEB MANAGEMENT ACCESS{self.colors.NC}\n")
                 system_info = self.get_system_info()
                 web_service_running = self.check_web_manager_service()
+                lan_label = "LAN IP" if self.is_wsl() else "Local IP"
                 text_lines = [
                     f"{self.colors.GREEN}Scan QR Code{self.colors.NC}",
                     "",
                     f"{self.colors.CYAN}Selected URL: {selected_url}{self.colors.NC}",
+                    f"Localhost: {localhost_url}",
                     f"mDNS URL:  {local_url}",
-                    f"Local IP:  {ip_url}",
-                    f"Local URL:  {local_url}",
+                    f"{lan_label}:  {ip_url}",
                     f"Public URL: {public_url}",
                     f"{self.colors.MAGENTA}Admin Password: {self.colors.NC} {password_color}{password_status}{self.colors.NC}",
                     "",
@@ -632,7 +703,7 @@ class NuNetBootSplash:
                     f"{self.colors.WHITE}3{self.colors.NC} Enable SSH Access {self.colors.YELLOW}(Coming Soon){self.colors.NC}",
                     f"{self.colors.WHITE}4{self.colors.NC} Quit to Terminal",
                     "",
-                    f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'm' (mDNS), 'i' (Local IP), 'p' (Public)",
+                    f"{self.colors.BLUE}URL Selection:{self.colors.NC} Press 'l' (Localhost), 'm' (mDNS), 'i' (LAN IP), 'p' (Public)",
                     "",
                     f"{self.colors.CYAN}Scan the QR code or open the URL above{self.colors.NC}",
                     f"{self.colors.MAGENTA}Time: {datetime.now().strftime('%H:%M:%S')}{self.colors.NC}"

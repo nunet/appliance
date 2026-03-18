@@ -56,19 +56,53 @@ def normalize_tokenomics(value: Any) -> Tuple[Optional[Dict[str, Any]], List[str
         warnings.append("Tokenomics 'enabled' was coerced to boolean.")
     block["enabled"] = enabled
 
+    chains: List[str] = []
+
+    def _add_chain(candidate: Any, *, source_label: str) -> None:
+        if not isinstance(candidate, str) or not candidate.strip():
+            warnings.append(f"Tokenomics {source_label} values must be non-empty strings.")
+            return
+        normalized = candidate.strip().lower()
+        if normalized not in TOKENOMICS_CHAIN_ALLOWLIST:
+            warnings.append(
+                f"Tokenomics {source_label} '{candidate}' is not supported. Expected one of {sorted(TOKENOMICS_CHAIN_ALLOWLIST)}."
+            )
+            return
+        if normalized not in chains:
+            chains.append(normalized)
+
+    blockchains_raw = block.get("blockchains")
+    if isinstance(blockchains_raw, list):
+        for idx, candidate in enumerate(blockchains_raw):
+            _add_chain(candidate, source_label=f"blockchains[{idx}]")
+    elif blockchains_raw not in (None, ""):
+        warnings.append("Tokenomics 'blockchains' must be a list of string identifiers.")
+
     chain_raw = block.get("chain")
     chain: Optional[str] = None
     if isinstance(chain_raw, str) and chain_raw.strip():
-        chain_candidate = chain_raw.strip().lower()
-        if chain_candidate in TOKENOMICS_CHAIN_ALLOWLIST:
-            chain = chain_candidate
+        normalized_chain = chain_raw.strip().lower()
+        if normalized_chain in TOKENOMICS_CHAIN_ALLOWLIST:
+            chain = normalized_chain
+            if chain not in chains:
+                chains.insert(0, chain)
         else:
             warnings.append(
                 f"Tokenomics chain '{chain_raw}' is not supported. Expected one of {sorted(TOKENOMICS_CHAIN_ALLOWLIST)}."
             )
+    elif isinstance(chain_raw, list):
+        for idx, candidate in enumerate(chain_raw):
+            _add_chain(candidate, source_label=f"chain[{idx}]")
+        if chains:
+            chain = chains[0]
     elif chain_raw not in (None, ""):
         warnings.append("Tokenomics 'chain' must be a string identifier.")
+
+    if chain is None and chains:
+        chain = chains[0]
+
     block["chain"] = chain
+    block["blockchains"] = chains
 
     return block, warnings
 
@@ -76,7 +110,10 @@ def normalize_tokenomics(value: Any) -> Tuple[Optional[Dict[str, Any]], List[str
 def get_tokenomics_config(org_entry: Any) -> Dict[str, Any]:
     """
     Return a consistent tokenomics configuration dictionary for an organisation.
-    Ensures callers can safely assume ``enabled`` (bool) and ``chain`` (str|None).
+    Ensures callers can safely assume:
+    - ``enabled``: bool
+    - ``chain``: str|None (primary/default chain)
+    - ``blockchains``: list[str] (allowed chain options)
     """
     if isinstance(org_entry, dict):
         tokenomics_value = org_entry.get("tokenomics")
@@ -85,8 +122,9 @@ def get_tokenomics_config(org_entry: Any) -> Dict[str, Any]:
             return {
                 "enabled": bool(block.get("enabled")),
                 "chain": block.get("chain"),
+                "blockchains": list(block.get("blockchains") or ([] if block.get("chain") is None else [block.get("chain")])),
             }
-    return {"enabled": False, "chain": None}
+    return {"enabled": False, "chain": None, "blockchains": []}
 def normalize_org_roles(org_entry: Any) -> Tuple[List[str], List[str]]:
     """
     Extract supported role identifiers from an organization entry.

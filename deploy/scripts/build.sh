@@ -8,8 +8,13 @@ set -exuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-APPLIANCE_VERSION=$(git describe --tags --always --abbrev=0 --dirty | sed 's/^v//')
-PKGVERSION="${APPLIANCE_VERSION:-0.0.0}"
+RAW_VERSION="$(git describe --tags --always --abbrev=0 --dirty 2>/dev/null || echo "0.0.0")"
+APPLIANCE_VERSION="$(printf '%s' "$RAW_VERSION" | sed 's/^v//')"
+PKGVERSION="$(printf '%s' "$APPLIANCE_VERSION" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+if [ -z "$PKGVERSION" ]; then
+    PKGVERSION="${PACKAGE_VERSION_FALLBACK:-0.0.0}"
+    echo "Warning: semantic version tag not found from '$RAW_VERSION'; using package version '$PKGVERSION'."
+fi
 
 # Generate version file for backend
 echo "__version__ = \"${PKGVERSION}\"" > "$ROOT/backend/_version.py"

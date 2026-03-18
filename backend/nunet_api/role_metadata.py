@@ -77,6 +77,7 @@ def record_role_selection(
     wormhole: Optional[str] = None,
     wallet_address: Optional[str] = None,
     wallet_chain: Optional[str] = None,
+    blockchain: Optional[str] = None,
     renewal: bool = False,
 ) -> None:
     """
@@ -119,6 +120,7 @@ def record_role_selection(
             "updated_at": timestamp,
             "wallet_address": wallet_address,
             "wallet_chain": wallet_chain,
+            "blockchain": _clean_str(blockchain.lower()) if isinstance(blockchain, str) else None,
         }
     )
     if renewal:
@@ -146,6 +148,9 @@ def record_join_payload(org_did: str, payload: Dict[str, Any]) -> None:
             sanitized[key] = _safe_roles(value if isinstance(value, list) else [value])
             continue
         if key == "wallet_chain" and isinstance(value, str):
+            sanitized[key] = value.lower()
+            continue
+        if key == "blockchain" and isinstance(value, str):
             sanitized[key] = value.lower()
             continue
         if isinstance(value, (str, int, float, bool)):

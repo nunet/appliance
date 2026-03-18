@@ -31,8 +31,7 @@ _DMS_PEERS_LOCK = threading.Lock()
 
 _ANSI_RE = re.compile(r"\u001b\[[0-9;]*m")
 _PRIVATE_IPV4 = re.compile(r"/ip4/(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)")
-# Log snippet length; full stdout/stderr are still returned to callers (e.g. contract list JSON).
-_LOG_OUTPUT_MAX = 32_000
+_LOG_OUTPUT_MAX = 4000
 
 
 class DmsCommandResult(TypedDict, total=False):
@@ -341,9 +340,9 @@ def contract_list_incoming(*, timeout: int = 30) -> DmsCommandResult:
             cp,
             expect_json=True,
         )
-    fallback_argv, fallback_cp = _run_contract_command("/dms/tokenomics/contract/list", timeout=timeout)
+    fallback_argv, fallback_cp = _run_contract_command("/dms/tokenomics/contract/list_incoming", timeout=timeout)
     return _build_contract_result(
-        "/dms/tokenomics/contract/list",
+        "/dms/tokenomics/contract/list_incoming",
         fallback_argv,
         fallback_cp,
         expect_json=True,
@@ -573,99 +572,15 @@ def _fmt_resources(resources_json: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             return 0
 
-    def _safe_float(val: Any) -> float:
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _clean_text(val: Any, fallback: str = "Unknown") -> str:
-        text = str(val or "").replace(",", " ").strip()
-        if not text:
-            return fallback
-        return " ".join(text.split())
-
-    def _extract_gpu_entries(data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        for key in ("gpus", "gpu"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return [entry for entry in value if isinstance(entry, dict)]
-            if isinstance(value, dict):
-                cards = value.get("cards")
-                if isinstance(cards, list):
-                    return [entry for entry in cards if isinstance(entry, dict)]
-        return []
-
-    def _extract_gpu_count(data: Dict[str, Any], gpu_entries: List[Dict[str, Any]]) -> Optional[float]:
-        if gpu_entries:
-            return float(len(gpu_entries))
-
-        # DMS can report GPU in different shapes:
-        # - "gpu_count": N
-        # - "gpus": {"count": N}
-        # - "gpu": {"count": N}
-        direct_count = data.get("gpu_count")
-        if direct_count is not None:
-            return _safe_float(direct_count)
-
-        for key in ("gpus", "gpu"):
-            value = data.get(key)
-            if isinstance(value, dict):
-                for count_key in ("count", "size", "cards_count"):
-                    count_val = value.get(count_key)
-                    if count_val is not None:
-                        return _safe_float(count_val)
-            elif value is not None and not isinstance(value, list):
-                return _safe_float(value)
-
-        return None
-
     cores = resources.get("cpu", {}).get("cores")
     ram_bytes = _safe_int(resources.get("ram", {}).get("size"))
     disk_bytes = _safe_int(resources.get("disk", {}).get("size"))
-    gpu_entries = _extract_gpu_entries(resources)
-    gpu_count = _extract_gpu_count(resources, gpu_entries)
 
     cores_display = cores if cores not in (None, "") else "N/A"
     ram_gb = _bytes_to_gb(ram_bytes)
     disk_gb = _bytes_to_gb(disk_bytes)
 
-    parts = [
-        f"Cores: {cores_display}",
-        f"RAM: {ram_gb} GB",
-        f"Disk: {disk_gb} GB",
-    ]
-    if gpu_count is not None:
-        if gpu_count.is_integer():
-            gpu_display = str(int(gpu_count))
-        else:
-            gpu_display = str(gpu_count)
-        parts.append(f"GPU Count: {gpu_display}")
-
-    for idx, gpu in enumerate(gpu_entries):
-        raw_gpu_index = gpu.get("index")
-        if isinstance(raw_gpu_index, int):
-            gpu_index = raw_gpu_index
-        elif isinstance(raw_gpu_index, str) and raw_gpu_index.isdigit():
-            gpu_index = int(raw_gpu_index)
-        else:
-            gpu_index = idx
-
-        model = _clean_text(gpu.get("model"), fallback="")
-        vendor = _clean_text(gpu.get("vendor"), fallback="")
-        if model:
-            descriptor = model
-        elif vendor:
-            descriptor = vendor
-        else:
-            descriptor = "Unknown GPU"
-
-        vram_bytes = _safe_int(gpu.get("vram"))
-        if vram_bytes > 0:
-            descriptor = f"{descriptor} ({_bytes_to_gb(vram_bytes)} GB VRAM)"
-        parts.append(f"GPU {gpu_index}: {descriptor}")
-
-    return ", ".join(parts)
+    return f"Cores: {cores_display}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
 
 def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
     """
@@ -680,63 +595,134 @@ def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
     return payload
 
 
-def _parse_onboarded_flag(value: Any) -> Optional[bool]:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        if value in (0, 1):
-            return bool(value)
+def _coerce_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
         return None
-    if isinstance(value, str):
-        normalized = _ANSI_RE.sub("", value).strip().upper()
-        if not normalized:
-            return None
-        if "NOT ONBOARD" in normalized:
-            return False
-        if "ONBOARDED" in normalized:
-            return True
-        if normalized in {"TRUE", "YES", "Y", "SUCCESS"}:
-            return True
-        if normalized in {"FALSE", "NO", "N", "PENDING", "PROCESSING", "ONBOARDING"}:
-            return False
-    return None
 
 
-def _extract_onboarded_flag(payload: Any) -> Optional[bool]:
-    direct_flag = _parse_onboarded_flag(payload)
-    if direct_flag is not None:
-        return direct_flag
+def _coerce_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
+
+def _iter_gpu_entries(value: Any) -> Iterable[Dict[str, Any]]:
+    if isinstance(value, list):
+        for entry in value:
+            if isinstance(entry, dict):
+                yield entry
+    elif isinstance(value, dict):
+        for index, entry in value.items():
+            if not isinstance(entry, dict):
+                continue
+            normalized = dict(entry)
+            normalized.setdefault("index", index)
+            yield normalized
+
+
+def _normalize_gpu_entry(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(entry, dict):
+        return None
+
+    normalized: Dict[str, Any] = {}
+
+    index = _coerce_int(entry.get("index"))
+    if index is None:
+        index = _coerce_int(entry.get("gpu_index"))
+    if index is not None:
+        normalized["index"] = index
+
+    make = _coerce_text(entry.get("make")) or _coerce_text(entry.get("vendor"))
+    vendor = _coerce_text(entry.get("vendor")) or make
+    model = _coerce_text(entry.get("model")) or _coerce_text(entry.get("name"))
+    pci_address = (
+        _coerce_text(entry.get("pci_address"))
+        or _coerce_text(entry.get("pciAddress"))
+        or _coerce_text(entry.get("bus_id"))
+    )
+    uuid = _coerce_text(entry.get("uuid")) or _coerce_text(entry.get("id"))
+    vram = _coerce_int(entry.get("vram"))
+
+    if make:
+        normalized["make"] = make
+    if vendor:
+        normalized["vendor"] = vendor
+    if model:
+        normalized["model"] = model
+    if pci_address:
+        normalized["pci_address"] = pci_address
+    if uuid:
+        normalized["uuid"] = uuid
+    if vram is not None and vram > 0:
+        normalized["vram"] = vram
+
+    return normalized or None
+
+
+def _extract_hardware_spec_gpus(payload: Any) -> List[Dict[str, Any]]:
     if not isinstance(payload, dict):
-        return None
+        return []
 
-    for key in (
-        "onboarded",
-        "Onboarded",
-        "is_onboarded",
-        "isOnboarded",
-        "onboarding_status",
-        "onboardingStatus",
-        "status",
-        "Status",
-        "state",
-        "State",
-    ):
-        if key not in payload:
-            continue
-        parsed = _parse_onboarded_flag(payload.get(key))
-        if parsed is not None:
-            return parsed
+    resources = payload.get("Resources")
+    if isinstance(resources, dict):
+        gpu_source = resources.get("gpus")
+    else:
+        gpu_source = payload.get("gpus")
 
-    for nested_key in ("ok", "OK", "result", "Result", "data", "Data", "payload", "Payload"):
-        nested = payload.get(nested_key)
-        if nested is None:
-            continue
-        parsed = _extract_onboarded_flag(nested)
-        if parsed is not None:
-            return parsed
+    normalized: List[Dict[str, Any]] = []
+    for entry in _iter_gpu_entries(gpu_source):
+        candidate = _normalize_gpu_entry(entry)
+        if candidate:
+            normalized.append(candidate)
+    return normalized
 
-    return None
+
+def _merge_gpu_metadata(
+    resource_snapshot: Dict[str, Any],
+    hardware_spec: Any,
+) -> Dict[str, Any]:
+    merged = dict(resource_snapshot) if isinstance(resource_snapshot, dict) else {}
+
+    current_gpus: List[Dict[str, Any]] = []
+    for entry in _iter_gpu_entries(merged.get("gpus")):
+        normalized = _normalize_gpu_entry(entry)
+        if normalized:
+            current_gpus.append(normalized)
+
+    spec_gpus = _extract_hardware_spec_gpus(hardware_spec)
+    if not current_gpus:
+        if spec_gpus:
+            merged["gpus"] = spec_gpus
+        return merged
+
+    spec_by_uuid = {gpu.get("uuid"): gpu for gpu in spec_gpus if gpu.get("uuid")}
+    spec_by_index = {gpu.get("index"): gpu for gpu in spec_gpus if gpu.get("index") is not None}
+    spec_by_pci = {gpu.get("pci_address"): gpu for gpu in spec_gpus if gpu.get("pci_address")}
+
+    final_gpus: List[Dict[str, Any]] = []
+    for gpu in current_gpus:
+        match = None
+        if gpu.get("uuid"):
+            match = spec_by_uuid.get(gpu["uuid"])
+        if match is None and gpu.get("index") is not None:
+            match = spec_by_index.get(gpu["index"])
+        if match is None and gpu.get("pci_address"):
+            match = spec_by_pci.get(gpu["pci_address"])
+
+        combined = dict(match or {})
+        combined.update(gpu)
+        if not combined.get("make"):
+            combined["make"] = combined.get("vendor")
+        if not combined.get("vendor") and combined.get("make"):
+            combined["vendor"] = combined["make"]
+
+        final_gpus.append(combined)
+
+    merged["gpus"] = final_gpus
+    return merged
 
 
 def get_dms_resource_info() -> Dict[str, Any]:
@@ -752,12 +738,9 @@ def get_dms_resource_info() -> Dict[str, Any]:
 
     onboarding = _call_actor_json("/dms/node/onboarding/status")
     onboarded = False
-    onboarded_flag = _extract_onboarded_flag(onboarding)
-    if onboarded_flag is True:
-        onboarded = True
-        info["onboarding_status"] = "ONBOARDED"
-    elif onboarded_flag is False:
-        info["onboarding_status"] = "NOT ONBOARDED"
+    if onboarding is not None:
+        onboarded = bool(onboarding.get("onboarded", False))
+        info["onboarding_status"] = "ONBOARDED" if onboarded else "NOT ONBOARDED"
     else:
         info["onboarding_status"] = "Unknown"
 
@@ -791,7 +774,9 @@ def get_dms_resource_info() -> Dict[str, Any]:
         or raw_snapshots.get("free")
         or {}
     )
-    info["dms_resources"] = _extract_resource_snapshot(detail_snapshot)
+    resource_snapshot = _extract_resource_snapshot(detail_snapshot)
+    hardware_spec_snapshot = _call_actor_json("/dms/node/hardware/spec")
+    info["dms_resources"] = _merge_gpu_metadata(resource_snapshot, hardware_spec_snapshot)
 
     return info
 
