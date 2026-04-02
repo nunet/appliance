@@ -5,12 +5,16 @@ import { Badge } from "../ui/badge";
 import { Coins, Loader2 } from "lucide-react";
 import { getPaymentsList } from "../../api/api";
 
+const PAYMENTS_LIST_REFRESH_MS = 60 * 60 * 1000; // 1 hour
+
 export function PaymentsBadge() {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["payments", "list"],
     queryFn: getPaymentsList,
-    refetchInterval: 30000, // 30s
+    staleTime: PAYMENTS_LIST_REFRESH_MS,
+    gcTime: PAYMENTS_LIST_REFRESH_MS,
+    refetchInterval: PAYMENTS_LIST_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
 

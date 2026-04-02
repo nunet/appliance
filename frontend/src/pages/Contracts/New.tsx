@@ -23,6 +23,7 @@ import { RefreshCw, ArrowLeft, ArrowRight, FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
 
 type ContractWizardStep = "select" | "configure" | "review";
+const DMS_STATUS_CACHE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface ContractFormState {
   solutionEnablerDid: string;
@@ -647,9 +648,10 @@ export default function NewContractPage(): JSX.Element {
   const shouldPrefillRequestor = React.useRef(true);
 
   const dmsStatusQuery = useQuery({
-    queryKey: ["dms", "status", "contracts", "new"],
+    queryKey: ["dms", "status"],
     queryFn: getDmsStatus,
-    staleTime: 1000 * 60 * 5,
+    staleTime: DMS_STATUS_CACHE_MS,
+    gcTime: DMS_STATUS_CACHE_MS,
     refetchOnWindowFocus: false,
   });
   const cachedDashboardInfo = queryClient.getQueryData<{ dms_did?: string }>(["apiData"]);

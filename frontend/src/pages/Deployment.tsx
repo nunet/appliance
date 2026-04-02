@@ -359,7 +359,9 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
 
           <div className="mt-3 flex flex-col sm:flex-row sm:gap-2">
             <RefreshButton
-              onClick={() => void refetch()}
+              onClick={async () => {
+                await refetch();
+              }}
               isLoading={!!isFetching}
               tooltip="Refresh Deployment Info"
               children="Refresh Info..."
@@ -499,7 +501,9 @@ export function DeploymentProgressCard({
             {details.status.deployment_status.toUpperCase()}
           </span>
           <RefreshButton
-            onClick={() => void refetch()}
+            onClick={async () => {
+              await refetch();
+            }}
             isLoading={!!isFetching}
             tooltip="Refresh Deployment Info"
           />
@@ -546,7 +550,9 @@ function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
         <CardDescription className="flex items-center gap-2 justify-between w-full">
           <span>Allocations</span>
           <RefreshButton
-            onClick={() => void refetch()}
+            onClick={async () => {
+              await refetch();
+            }}
             isLoading={!!isFetching}
             tooltip="Refresh Allocations"
           />

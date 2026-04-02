@@ -19,7 +19,7 @@ CYPRESS_IMAGE="${CYPRESS_IMAGE:-cypress/included:13.15.2}"
 SPECS_DEFAULT="cypress/e2e/join-org-mailhog.cy.ts,cypress/e2e/offboard-onboard.cy.ts,cypress/e2e/deployments.cy.ts,cypress/e2e/ensembles.cy.ts,cypress/e2e/org-leave.cy.ts"
 CYPRESS_SPECS="${CYPRESS_SPECS:-$SPECS_DEFAULT}"
 
-PNPM_VERSION="${PNPM_VERSION:-10.4.0}"
+PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
 
 DOCKER_NETWORK="${DOCKER_NETWORK:-}"
 DOCKER_ARGS=()
@@ -53,7 +53,7 @@ docker run --rm -t \
   -e PNPM_STORE_DIR=/pnpm-store \
   -e XDG_RUNTIME_DIR=/tmp/xdg \
   "$CYPRESS_IMAGE" \
-  -lc "mkdir -p /tmp/xdg && chmod 700 /tmp/xdg && npm install -g pnpm@${PNPM_VERSION} && pnpm install --frozen-lockfile && pnpm exec cypress install && pnpm cy:run --browser electron --spec \"$CYPRESS_SPECS\""
+  -lc "mkdir -p /tmp/xdg && chmod 700 /tmp/xdg && corepack prepare pnpm@${PNPM_VERSION} --activate && corepack pnpm install --frozen-lockfile && corepack pnpm exec cypress install && corepack pnpm cy:run --browser electron --spec \"$CYPRESS_SPECS\""
 
 status=$?
 exit $status

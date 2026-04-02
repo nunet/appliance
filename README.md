@@ -19,6 +19,8 @@ If you are familiar with the legacy menu / Flask stack, note that almost all of 
 | FastAPI application | [`backend/nunet_api/README.md`](backend/nunet_api/README.md) | Detailed guide for the REST API (routers, authentication, dependencies). |
 | Frontend | `frontend/` | React/Vite SPA that consumes the API; see comments in source files and the dashboard components. |
 | Deployment tooling | [`deploy/scripts/devctl.sh`](deploy/scripts/devctl.sh) | Main CLI entrypoint for local development and deployments (see below). |
+| Dependency security | [`docs/dependency-security.md`](docs/dependency-security.md) | Lockfile, audit gating, and supply-chain hardening policy. |
+| Dependency update runbook | [`docs/dependency-update-procedure.md`](docs/dependency-update-procedure.md) | Step-by-step procedure for adding/updating dependencies safely. |
 
 ---
 
@@ -64,7 +66,7 @@ Internally, the script performs a few key tasks:
 
 ## Getting Started
 
-1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.4.0` is available).
+1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.33.0` is available).
 2. **Bootstrap the dev environment** by running `./deploy/scripts/devctl.sh dev up` (this creates virtual envs, installs dependencies, and starts both backend and frontend).
 3. **Open the API** – once running, the backend exposes `http://127.0.0.1:8080` (default) and the frontend runs on `http://127.0.0.1:5173` (or whichever Vite port is configured).
 4. **Explore the documentation** linked above to understand module responsibilities and API endpoints.
@@ -91,6 +93,14 @@ File `nunet-dms.log` will appear in the *user's choice* folder.
 
 - Dev (`devctl dev up`): backend/frontend logs live under `.devctl/run/backend.log` and `.devctl/run/frontend.log` in the repo.
 - Prod (deb install): backend logs via `journalctl -u nunet-appliance-web -f`; DMS logs at `/home/ubuntu/nunet/appliance/logs/nunet-dms.log`.
+
+---
+
+## Dependency Security
+
+- Frontend installs are locked with `pnpm-lock.yaml` and must use `pnpm install --frozen-lockfile` in build/dev scripts.
+- CI includes dedicated dependency gates for both Python (`pip-audit`) and frontend (`pnpm audit`) and blocks builds when vulnerabilities are detected.
+- See [`docs/dependency-security.md`](docs/dependency-security.md) for update workflow and emergency override guidance.
 
 ---
 

@@ -140,6 +140,23 @@ def status_full(
         onboarded_resources=resources.get("onboarded_resources", "Unknown"),
     )
 
+
+@router.get("/status/resources", response_model=ResourcesInfo)
+def status_resources(
+    fresh: bool = Query(
+        False,
+        alias="refresh",
+        description="When true, bypass the DMS resource cache for a fresh read.",
+    )
+):
+    resources = get_cached_dms_resource_info(force_refresh=fresh) or {}
+    return ResourcesInfo(
+        onboarding_status=resources.get("onboarding_status", "Unknown"),
+        free_resources=resources.get("free_resources", "Unknown"),
+        allocated_resources=resources.get("allocated_resources", "Unknown"),
+        onboarded_resources=resources.get("onboarded_resources", "Unknown"),
+    )
+
 @router.get("/peer-id", response_model=str)
 def peer_id(mgr: DMSManager = Depends(get_mgr)):
     pid = mgr.get_peer_id()

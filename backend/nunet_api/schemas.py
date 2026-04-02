@@ -164,6 +164,7 @@ class CardanoSubmitResponse(PaymentReportOut):
 
 class PaymentQuoteGetRequest(BaseModel):
     unique_id: str
+    dest: str = PydField(min_length=1)
 
 
 class PaymentQuoteGetResponse(BaseModel):
@@ -178,6 +179,7 @@ class PaymentQuoteGetResponse(BaseModel):
 
 class PaymentQuoteValidateRequest(BaseModel):
     quote_id: str
+    dest: str = PydField(min_length=1)
 
 
 class PaymentQuoteValidateResponse(BaseModel):
@@ -194,6 +196,7 @@ class PaymentQuoteValidateResponse(BaseModel):
 
 class PaymentQuoteCancelRequest(BaseModel):
     quote_id: str
+    dest: str = PydField(min_length=1)
 
 
 class PaymentQuoteCancelResponse(BaseModel):

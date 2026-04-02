@@ -10,12 +10,13 @@ export default function Page() {
     data: peers = [],
     isLoading,
     error,
-    refetch,
   } = useQuery({
     queryKey: ["connected-peers-main"],
-    queryFn: getConnectedPeers,
-    staleTime: Infinity, // ✅ data stays "fresh" for 30s
-    gcTime: Infinity, // ♾️ never garbage collect
+    queryFn: () => getConnectedPeers(false),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
   });
 
   return (
