@@ -143,7 +143,34 @@ function walletDisplayName(type: WalletType) {
 }
 
 function isConversionPayment(item: DmsPaymentItem): boolean {
-  return Boolean(item.requires_conversion || (item.pricing_currency ?? "").trim());
+  if (typeof item.requires_conversion === "boolean") {
+    return item.requires_conversion;
+  }
+
+  // Backward-compatibility fallback for older payloads that may omit
+  // requires_conversion but still include pricing/original amount fields.
+  const pricingCurrency = (item.pricing_currency ?? "").trim();
+  if (!pricingCurrency) {
+    return false;
+  }
+
+  const originalAmount = (item.original_amount ?? "").trim();
+  if (!originalAmount) {
+    return true;
+  }
+
+  const convertedAmount = (item.amount ?? "").trim();
+  if (!convertedAmount) {
+    return true;
+  }
+
+  const originalNum = Number(originalAmount);
+  const convertedNum = Number(convertedAmount);
+  if (Number.isFinite(originalNum) && Number.isFinite(convertedNum)) {
+    return originalNum !== convertedNum;
+  }
+
+  return originalAmount !== convertedAmount;
 }
 
 function extractQuoteId(message: string): string | null {
@@ -437,6 +464,7 @@ function DetailFieldRow({ field }: { field: PaymentDetailField }) {
   );
 }
 type StatusFilter = "all" | "paid" | "unpaid";
+const PAYMENTS_LIST_REFRESH_MS = 60 * 60 * 1000; // 1 hour
 
 export default function PaymentsPage() {
   const [search, setSearch] = useState("");
@@ -469,7 +497,9 @@ export default function PaymentsPage() {
   const listQ = useQuery({
     queryKey: ["payments", "list"],
     queryFn: getPaymentsList,
-    refetchInterval: autoRefresh ? 300000 : false, // 5 minutes to avoid excessive polling
+    staleTime: PAYMENTS_LIST_REFRESH_MS,
+    gcTime: PAYMENTS_LIST_REFRESH_MS,
+    refetchInterval: autoRefresh ? PAYMENTS_LIST_REFRESH_MS : false,
     refetchOnWindowFocus: false,
   });
 
@@ -513,16 +543,26 @@ export default function PaymentsPage() {
       const unpaidIds = new Set(
         items.filter((entry) => entry.status === "unpaid").map((entry) => entry.unique_id)
       );
+      const paymentsById = new Map(items.map((entry) => [entry.unique_id, entry]));
 
       const recovered: Record<string, StoredPaymentQuote> = {};
       for (const quote of entries) {
         if (!unpaidIds.has(quote.uniqueId)) {
           continue;
         }
+        const payment = paymentsById.get(quote.uniqueId);
+        const validatorDid = (payment?.payment_validator_did ?? "").trim();
+        if (!validatorDid) {
+          toast.info(`Recovered quote ${quote.quoteId} is missing validator DID and was cancelled.`);
+          continue;
+        }
         try {
-          const validation = await validatePaymentQuote({ quote_id: quote.quoteId });
+          const validation = await validatePaymentQuote({
+            quote_id: quote.quoteId,
+            dest: validatorDid,
+          });
           if (!validation.valid) {
-            await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+            await cancelQuoteForValidator(quote.quoteId, validatorDid);
             toast.info(`Recovered quote ${quote.quoteId} is no longer valid and was cancelled.`);
             continue;
           }
@@ -537,7 +577,7 @@ export default function PaymentsPage() {
             expiresAt: validation.expires_at ?? quote.expiresAt,
           };
         } catch {
-          await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+          await cancelQuoteForValidator(quote.quoteId, validatorDid);
           toast.info(`Recovered quote ${quote.quoteId} could not be validated and was cancelled.`);
         }
       }
@@ -606,6 +646,14 @@ export default function PaymentsPage() {
       delete next[uniqueId];
       return next;
     });
+  }
+
+  async function cancelQuoteForValidator(quoteId: string, validatorDid: string): Promise<void> {
+    const normalizedDid = (validatorDid ?? "").trim();
+    if (!normalizedDid) {
+      return;
+    }
+    await cancelPaymentQuote({ quote_id: quoteId, dest: normalizedDid }).catch(() => {});
   }
 
   async function executePayment(
@@ -761,10 +809,22 @@ export default function PaymentsPage() {
     p: DmsPaymentItem,
     quote: StoredPaymentQuote
   ): Promise<StoredPaymentQuote | null> {
+    const validatorDid = (p.payment_validator_did ?? "").trim();
+    if (!validatorDid) {
+      removeActiveQuote(p.unique_id);
+      setQuoteIssue({
+        payment: p,
+        message: "Missing payment validator DID for quote validation.",
+      });
+      return null;
+    }
     try {
-      const validation = await validatePaymentQuote({ quote_id: quote.quoteId });
+      const validation = await validatePaymentQuote({
+        quote_id: quote.quoteId,
+        dest: validatorDid,
+      });
       if (!validation.valid) {
-        await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+        await cancelQuoteForValidator(quote.quoteId, validatorDid);
         removeActiveQuote(p.unique_id);
         setQuoteIssue({
           payment: p,
@@ -775,7 +835,7 @@ export default function PaymentsPage() {
 
       const convertedAmount = (validation.converted_amount ?? quote.convertedAmount).trim();
       if (!convertedAmount) {
-        await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+        await cancelQuoteForValidator(quote.quoteId, validatorDid);
         removeActiveQuote(p.unique_id);
         setQuoteIssue({
           payment: p,
@@ -809,16 +869,30 @@ export default function PaymentsPage() {
     const chain = (p.blockchain || "ETHEREUM").toUpperCase();
     const chainConfig = chain === "CARDANO" ? cardanoConfig : ethConfig;
     const tokenSymbol = chainConfig?.token_symbol ?? "NTX";
+    const validatorDid = (p.payment_validator_did ?? "").trim();
+    if (!validatorDid) {
+      setQuoteIssue({
+        payment: p,
+        message: "Missing payment validator DID for quote request.",
+      });
+      return null;
+    }
 
     const fetchQuote = async () => {
       try {
-        return await getPaymentQuote({ unique_id: p.unique_id });
+        return await getPaymentQuote({
+          unique_id: p.unique_id,
+          dest: validatorDid,
+        });
       } catch (error) {
         const message = getRawErrorMessage(error);
         const activeQuoteId = extractQuoteId(message);
         if (activeQuoteId) {
-          await cancelPaymentQuote({ quote_id: activeQuoteId }).catch(() => {});
-          return getPaymentQuote({ unique_id: p.unique_id });
+          await cancelQuoteForValidator(activeQuoteId, validatorDid);
+          return getPaymentQuote({
+            unique_id: p.unique_id,
+            dest: validatorDid,
+          });
         }
         throw error;
       }
@@ -826,9 +900,12 @@ export default function PaymentsPage() {
 
     try {
       const quote = await fetchQuote();
-      const validation = await validatePaymentQuote({ quote_id: quote.quote_id });
+      const validation = await validatePaymentQuote({
+        quote_id: quote.quote_id,
+        dest: validatorDid,
+      });
       if (!validation.valid) {
-        await cancelPaymentQuote({ quote_id: quote.quote_id }).catch(() => {});
+        await cancelQuoteForValidator(quote.quote_id, validatorDid);
         setQuoteIssue({
           payment: p,
           message: validation.error || "Quote expired or is no longer valid.",
@@ -838,7 +915,7 @@ export default function PaymentsPage() {
 
       const convertedAmount = (validation.converted_amount ?? quote.converted_amount ?? "").trim();
       if (!convertedAmount) {
-        await cancelPaymentQuote({ quote_id: quote.quote_id }).catch(() => {});
+        await cancelQuoteForValidator(quote.quote_id, validatorDid);
         setQuoteIssue({
           payment: p,
           message: "Quote did not include a converted amount.",
@@ -941,9 +1018,10 @@ export default function PaymentsPage() {
       return;
     }
     const { payment, quote } = quoteConfirmation;
+    const validatorDid = (payment.payment_validator_did ?? "").trim();
     setQuoteConfirming(true);
     try {
-      await cancelPaymentQuote({ quote_id: quote.quoteId }).catch(() => {});
+      await cancelQuoteForValidator(quote.quoteId, validatorDid);
       removeActiveQuote(payment.unique_id);
       setQuoteConfirmation(null);
       toast.info("Payment quote cancelled.");

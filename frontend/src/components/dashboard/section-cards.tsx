@@ -20,8 +20,9 @@ import {
   DialogTrigger,
 } from "../ui/dialog";
 import {
-  allInfo,
   allSysInfo,
+  getDmsFullStatus,
+  getDmsStatus,
   getDockerContainer,
   offboardCompute,
   onboardCompute,
@@ -40,11 +41,10 @@ import {
 } from "lucide-react";
 import { Separator } from "../ui/separator";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SectionCardsSkeleton } from "./DashboardSkeleton";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Collapsible,
@@ -53,6 +53,7 @@ import {
 } from "../ui/collapsible";
 
 type ResourcePair = { label: string; value: string };
+const DASHBOARD_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
 const parseResourcePairs = (input?: string): ResourcePair[] => {
   if (!input) return [];
@@ -227,7 +228,7 @@ function ResourceOverviewCard({
               type="button"
               variant="ghost"
               size="sm"
-              className="w-full justify-between border border-blue-500/20 bg-muted/20 px-3"
+              className="w-full justify-between border border-blue-500/40 bg-muted/20 px-3"
               data-testid={`${resourceKey}-resources-toggle`}
               disabled={!hasPairs}
             >
@@ -245,7 +246,7 @@ function ResourceOverviewCard({
               pairs.map((pair, idx) => (
                 <div
                   key={`${resourceKey}-${pair.label}-${idx}`}
-                  className="flex items-start justify-between gap-3 rounded-md border border-blue-500/20 bg-muted/20 px-3 py-2"
+                  className="flex items-start justify-between gap-3 rounded-md border border-blue-500/40 bg-muted/20 px-3 py-2"
                 >
                   <span
                     className={cn(
@@ -273,36 +274,94 @@ function ResourceOverviewCard({
 }
 
 export function SectionCards() {
-  const {
-    data: info,
-    isLoading: load1,
-    refetch: refetchInfo,
-    isRefetching: isRefetchingInfo,
-  } = useQuery({
-    queryKey: ["apiData"],
-    queryFn: allInfo,
-    refetchOnMount: true,
-    staleTime: Infinity,
-    gcTime: Infinity,
+  const dmsStatusQuery = useQuery({
+    queryKey: ["dms", "status", "dashboard"],
+    queryFn: () => getDmsStatus(false),
+    staleTime: DASHBOARD_REFRESH_MS,
+    gcTime: DASHBOARD_REFRESH_MS,
+    refetchInterval: DASHBOARD_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
 
+  const dmsResourcesQuery = useQuery({
+    queryKey: ["dms", "resources", "dashboard"],
+    queryFn: () => getDmsFullStatus(false),
+    staleTime: DASHBOARD_REFRESH_MS,
+    gcTime: DASHBOARD_REFRESH_MS,
+    refetchInterval: DASHBOARD_REFRESH_MS,
+    refetchOnWindowFocus: false,
+  });
+
+  const info = useMemo(
+    () => ({
+      dms_status: "Unknown",
+      dms_version: "Unknown",
+      dms_running: false,
+      dms_context: "Unknown",
+      dms_did: "Unknown",
+      dms_peer_id: "Unknown",
+      dms_is_relayed: null as boolean | null,
+      onboarding_status: "Unknown",
+      free_resources: "Unknown",
+      allocated_resources: "Unknown",
+      onboarded_resources: "Unknown",
+      ...(dmsStatusQuery.data ?? {}),
+      ...(dmsResourcesQuery.data ?? {}),
+    }),
+    [dmsStatusQuery.data, dmsResourcesQuery.data]
+  );
+
   const {
     data: sysinfo,
-    isLoading: loadSys,
     refetch: refetchSys,
     isRefetching: isRefetchingSys,
   } = useQuery({
     queryKey: ["sysInfo"],
     queryFn: allSysInfo,
-    staleTime: Infinity,
-    gcTime: Infinity,
-    refetchInterval: 1000 * 120, // 2 mins
+    staleTime: DASHBOARD_REFRESH_MS,
+    gcTime: DASHBOARD_REFRESH_MS,
+    refetchInterval: DASHBOARD_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
 
   const queryClient = useQueryClient();
   const [confirmOffboardOpen, setConfirmOffboardOpen] = useState(false);
+  const isRefetchingStatus = dmsStatusQuery.isFetching;
+  const isRefetchingResources = dmsResourcesQuery.isFetching;
+
+  const refreshStatusSection = useCallback(async () => {
+    queryClient.removeQueries({ queryKey: ["dms", "status", "dashboard"] });
+    await queryClient.fetchQuery({
+      queryKey: ["dms", "status", "dashboard"],
+      queryFn: () => getDmsStatus(true),
+      staleTime: DASHBOARD_REFRESH_MS,
+      gcTime: DASHBOARD_REFRESH_MS,
+    });
+  }, [queryClient]);
+
+  const refreshResourcesSection = useCallback(async () => {
+    queryClient.removeQueries({ queryKey: ["dms", "resources", "dashboard"] });
+    await queryClient.fetchQuery({
+      queryKey: ["dms", "resources", "dashboard"],
+      queryFn: () => getDmsFullStatus(true),
+      staleTime: DASHBOARD_REFRESH_MS,
+      gcTime: DASHBOARD_REFRESH_MS,
+    });
+  }, [queryClient]);
+
+  const refreshSysSection = useCallback(async () => {
+    queryClient.removeQueries({ queryKey: ["sysInfo"] });
+    await queryClient.fetchQuery({
+      queryKey: ["sysInfo"],
+      queryFn: allSysInfo,
+      staleTime: DASHBOARD_REFRESH_MS,
+      gcTime: DASHBOARD_REFRESH_MS,
+    });
+  }, [queryClient]);
+
+  const refetchInfo = useCallback(async () => {
+    await Promise.allSettled([dmsStatusQuery.refetch(), dmsResourcesQuery.refetch()]);
+  }, [dmsResourcesQuery, dmsStatusQuery]);
 
   const cleanedOnboardingStatus = useMemo(() => {
     const raw = info?.onboarding_status ?? "";
@@ -641,12 +700,10 @@ export function SectionCards() {
     refetchOnWindowFocus: false,
   });
 
-  if (load1 || loadSys) return <SectionCardsSkeleton />;
-
   return (
     <>
       <div className="grid grid-cols-1 gap-4 px-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg text-wrap break-words">
           <CardHeader className="flex items-center justify-between gap-2">
             <div>
               <CardDescription>Peer ID:</CardDescription>
@@ -737,12 +794,6 @@ export function SectionCards() {
                   )}
                 </Button>
               )}
-              {/* Refresh sysInfo button */}
-              <RefreshButton
-                onClick={() => refetchSys()}
-                isLoading={isRefetchingSys}
-                tooltip="Refresh System Info"
-              />
             </div>
           </CardHeader>
           <CardFooter className="flex-col items-start gap-1.5 text-sm">
@@ -840,8 +891,15 @@ export function SectionCards() {
 
             <div className="w-full mt-2 flex flex-col lg:flex-row gap-4">
               {/* Left column */}
-              <div className="flex-1 flex flex-col border border-blue-500 p-2 main_board flex-grow-1 w-full">
-                <h2 className="font-bold text-sm lg:text-lg my-2">Status:</h2>
+              <div className="flex-1 flex flex-col border border-blue-500/40 p-2 main_board flex-grow-1 w-full">
+                <div className="my-2 flex items-center justify-between">
+                  <h2 className="font-bold text-sm lg:text-lg">Status:</h2>
+                  <RefreshButton
+                    onClick={refreshStatusSection}
+                    isLoading={isRefetchingStatus}
+                    tooltip="Refresh DMS Status"
+                  />
+                </div>
                 <Separator />
                 <div className="flex-grow flex flex-col justify-center gap-2 mt-2">
                   <div
@@ -884,8 +942,15 @@ export function SectionCards() {
               </div>
 
               {/* Right column (sysInfo) */}
-              <div className="flex-1 flex flex-col border border-blue-500 p-2 main_board flex-grow-1 w-full">
-                <h2 className="font-bold text-sm lg:text-lg my-2">System Info:</h2>
+              <div className="flex-1 flex flex-col border border-blue-500/40 p-2 main_board flex-grow-1 w-full">
+                <div className="my-2 flex items-center justify-between">
+                  <h2 className="font-bold text-sm lg:text-lg">System Info:</h2>
+                  <RefreshButton
+                    onClick={refreshSysSection}
+                    isLoading={isRefetchingSys}
+                    tooltip="Refresh System Info"
+                  />
+                </div>
                 <Separator />
                 <div className="flex-grow flex flex-col justify-center gap-2 mt-2">
                   <div className="flex main_board_info">
@@ -931,46 +996,61 @@ export function SectionCards() {
         </Card>
       </div>
 
-      {!((info?.free_resources ?? "").toLowerCase().includes("not")) && (
-        <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-2 xl:grid-cols-3 lg:px-6">
-          <ResourceOverviewCard
-            resourceKey="free"
-            title="Free"
-            description="Capacity currently available for new jobs."
-            pairs={freeResourcePairs}
-            Icon={CirclePlusIcon}
-            colorClass="text-green-500"
-            accentClass="border-green-500/40 bg-green-500/10 text-green-400"
-            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
-          />
+      <div className="grid grid-cols-1 gap-4 px-4">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg">
+          <CardHeader className="flex items-center justify-between">
+            <h2 className="font-bold text-sm lg:text-lg">Resources</h2>
+            <RefreshButton
+              onClick={refreshResourcesSection}
+              isLoading={isRefetchingResources}
+              tooltip="Refresh Resources"
+            />
+          </CardHeader>
+          {!dmsResourcesQuery.isLoading &&
+            !((info?.free_resources ?? "").toLowerCase().includes("not")) && (
+              <CardContent>
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                  <ResourceOverviewCard
+                    resourceKey="free"
+                    title="Free"
+                    description="Capacity currently available for new jobs."
+                    pairs={freeResourcePairs}
+                    Icon={CirclePlusIcon}
+                    colorClass="text-green-500"
+                    accentClass="border-green-500/40 bg-green-500/10 text-green-400"
+                    cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500/40 rounded-lg"
+                  />
 
-          <ResourceOverviewCard
-            resourceKey="allocated"
-            title="Allocated"
-            description="Capacity currently consumed by running jobs."
-            pairs={allocatedResourcePairs}
-            Icon={CircleMinusIcon}
-            colorClass="text-red-500"
-            accentClass="border-red-500/40 bg-red-500/10 text-red-400"
-            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
-          />
+                  <ResourceOverviewCard
+                    resourceKey="allocated"
+                    title="Allocated"
+                    description="Capacity currently consumed by running jobs."
+                    pairs={allocatedResourcePairs}
+                    Icon={CircleMinusIcon}
+                    colorClass="text-red-500"
+                    accentClass="border-red-500/40 bg-red-500/10 text-red-400"
+                    cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500/40 rounded-lg"
+                  />
 
-          <ResourceOverviewCard
-            resourceKey="onboarded"
-            title="Onboarded"
-            description="Capacity currently published to NuNet."
-            pairs={onboardedResourcePairs}
-            Icon={CircleMinusIcon}
-            colorClass="text-blue-500"
-            accentClass="border-blue-500/40 bg-blue-500/10 text-blue-400"
-            cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]"
-          />
-        </div>
-      )}
+                  <ResourceOverviewCard
+                    resourceKey="onboarded"
+                    title="Onboarded"
+                    description="Capacity currently published to NuNet."
+                    pairs={onboardedResourcePairs}
+                    Icon={CircleMinusIcon}
+                    colorClass="text-blue-500"
+                    accentClass="border-blue-500/40 bg-blue-500/10 text-blue-400"
+                    cardClassName="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500/40 rounded-lg"
+                  />
+                </div>
+              </CardContent>
+            )}
+        </Card>
+      </div>
 
       {/* Docker section */}
       <div className="grid grid-cols-1 gap-4 px-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg animate-[neonPulse_1.5s_infinite]">
+        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg">
           <CardHeader className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="font-semibold text-sm lg:text-lg">
@@ -998,7 +1078,7 @@ export function SectionCards() {
               {docker?.containers.map((c) => (
                 <div
                   key={c.id}
-                  className="flex flex-col md:flex-row md:items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 p-3 bg-muted/30"
+                  className="flex flex-col md:flex-row md:items-center justify-between rounded-lg border border-blue-500/40 p-3 bg-muted/30"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="font-mono text-sm truncate">{c.name}</p>

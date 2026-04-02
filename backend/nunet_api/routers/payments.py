@@ -323,7 +323,7 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
 
 @router.post("/quote/get", response_model=PaymentQuoteGetResponse)
 def get_payment_quote(body: PaymentQuoteGetRequest, mgr: DMSManager = Depends(get_mgr)):
-    result = mgr.get_payment_quote(body.unique_id)
+    result = mgr.get_payment_quote(body.unique_id, body.dest)
     if result.get("status") != "success":
         message = result.get("message", "Failed to get payment quote")
         status_code = 409 if isinstance(message, str) and "active quote already exists" in message.lower() else 502
@@ -343,7 +343,7 @@ def get_payment_quote(body: PaymentQuoteGetRequest, mgr: DMSManager = Depends(ge
 
 @router.post("/quote/validate", response_model=PaymentQuoteValidateResponse)
 def validate_payment_quote(body: PaymentQuoteValidateRequest, mgr: DMSManager = Depends(get_mgr)):
-    result = mgr.validate_payment_quote(body.quote_id)
+    result = mgr.validate_payment_quote(body.quote_id, body.dest)
     if result.get("status") != "success":
         raise HTTPException(status_code=502, detail=result.get("message", "Failed to validate payment quote"))
 
@@ -362,7 +362,7 @@ def validate_payment_quote(body: PaymentQuoteValidateRequest, mgr: DMSManager = 
 
 @router.post("/quote/cancel", response_model=PaymentQuoteCancelResponse)
 def cancel_payment_quote(body: PaymentQuoteCancelRequest, mgr: DMSManager = Depends(get_mgr)):
-    result = mgr.cancel_payment_quote(body.quote_id)
+    result = mgr.cancel_payment_quote(body.quote_id, body.dest)
     if result.get("status") != "success":
         raise HTTPException(status_code=502, detail=result.get("message", "Failed to cancel payment quote"))
     return PaymentQuoteCancelResponse(status="success")

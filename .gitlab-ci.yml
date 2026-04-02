@@ -1,5 +1,6 @@
 stages:
   - version
+  - security
   - build
   - deploy
 
@@ -18,6 +19,35 @@ default:
   tags:
     - dedicated
     - docker
+
+variables:
+  PNPM_VERSION: "10.33.0"
+  STRICT_PNPM_AUDIT: "1"
+
+security:python-deps:
+  stage: security
+  image: python:3.12-bookworm
+  script:
+    - python -m pip install --upgrade pip
+    - python -m pip install pip-audit
+    - python -m pip_audit -r backend/nunet_api/requirements.txt --strict
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
+
+security:frontend-deps:
+  stage: security
+  image: node:22-bookworm
+  script:
+    - cd frontend
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - corepack pnpm install --frozen-lockfile
+    - corepack pnpm audit --prod --audit-level=high
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
 
 .build-deb:
   stage: build
@@ -41,10 +71,16 @@ default:
 build:x86:
   extends:
     - .build-deb
+  needs:
+    - security:python-deps
+    - security:frontend-deps
 
 build:arm64:
   extends:
     - .build-deb
+  needs:
+    - security:python-deps
+    - security:frontend-deps
   tags:
     - saas-linux-small-arm64
 

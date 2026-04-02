@@ -211,11 +211,15 @@ export const getDmsVersion = () =>
 export const getInstallStatus = () =>
   api.get<InstallStatus>("/dms/install").then((res) => res.data);
 
-export const getDmsStatus = () =>
-  api.get<DmsStatus>("/dms/status").then((res) => res.data);
+export const getDmsStatus = (refresh = false) =>
+  api
+    .get<DmsStatus>("/dms/status", { params: refresh ? { refresh: true } : undefined })
+    .then((res) => res.data);
 
-export const getDmsFullStatus = () =>
-  api.get<ResourcesInfo>("/dms/status/full").then((res) => res.data);
+export const getDmsFullStatus = (refresh = false) =>
+  api
+    .get<ResourcesInfo>("/dms/status/resources", { params: refresh ? { refresh: true } : undefined })
+    .then((res) => res.data);
 
 export const getPeerId = () =>
   api.get<string>("/dms/peer-id").then((res) => res.data);
@@ -319,8 +323,8 @@ export const getApplianceUptime = () =>
 export const getHealth = () =>
   api.get<{ ok: boolean }>("/health").then((res) => res.data);
 
-export const allInfo = () => {
-  return Promise.all([getDmsStatus(), getDmsFullStatus(), getSelfPeers()]).then(
+export const allInfo = (refresh = false) => {
+  return Promise.all([getDmsStatus(refresh), getDmsFullStatus(refresh), getSelfPeers()]).then(
     ([status, fullStats, peerData]) => ({
       ...status,
       ...fullStats,
@@ -347,32 +351,39 @@ export const allSysInfo = () => {
   }));
 };
 
-export async function getConnectedPeers(): Promise<string[]> {
+export async function getConnectedPeers(refresh = false): Promise<string[]> {
   try {
-    const res = await api.get("/dms/peers/connected");
+    const res = await api.get("/dms/peers/connected", {
+      params: refresh ? { refresh: true } : undefined,
+    });
+    const peers = Array.isArray(res.data?.peers) ? res.data.peers : [];
+    if (peers.length > 0) {
+      return peers
+        .map((entry: { peer_id?: unknown } | string) =>
+          typeof entry === "string"
+            ? entry
+            : typeof entry?.peer_id === "string"
+              ? entry.peer_id
+              : ""
+        )
+        .filter((value: string) => value.trim().length > 0);
+    }
 
-    // The backend gives a "raw" string with line breaks and indentation
     const raw = res.data?.raw || "";
-
-    // Extract peer IDs safely
-    const peers = raw
-      .split("\n") // break into lines
-      .map((line) => line.trim()) // trim spaces
+    return raw
+      .split("\n")
+      .map((line: string) => line.trim())
       .filter(
-        (line) =>
-          line.length > 0 && // remove empty
-          !line.startsWith("{") && // remove { or JSON braces
+        (line: string) =>
+          line.length > 0 &&
+          !line.startsWith("{") &&
           !line.startsWith("}") &&
           !line.startsWith('"Peers"') &&
           !line.includes("[") &&
           !line.includes("]") &&
           !line.includes(":")
       )
-      .map(
-        (line) => line.replace(/["',]/g, "") // remove quotes and commas
-      );
-
-    return peers;
+      .map((line: string) => line.replace(/["',]/g, ""));
   } catch (err) {
     console.error("Failed to fetch connected peers:", err);
     return [];
@@ -473,6 +484,7 @@ export interface CardanoSubmitPayload {
 
 export interface PaymentQuoteGetPayload {
   unique_id: string;
+  dest: string;
 }
 
 export interface PaymentQuote {
@@ -487,6 +499,7 @@ export interface PaymentQuote {
 
 export interface PaymentQuoteValidatePayload {
   quote_id: string;
+  dest: string;
 }
 
 export interface PaymentQuoteValidation {
@@ -503,6 +516,7 @@ export interface PaymentQuoteValidation {
 
 export interface PaymentQuoteCancelPayload {
   quote_id: string;
+  dest: string;
 }
 
 // ==== PAYMENTS ENDPOINTS ====

@@ -659,7 +659,9 @@ export default function Page() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg font-semibold">DMS Logs</CardTitle>
                 <RefreshButton
-                  onClick={() => void refetchDmsLogs()}
+                  onClick={async () => {
+                    await refetchDmsLogs();
+                  }}
                   isLoading={isFetchingDmsLogs}
                   tooltip="Refresh DMS Logs"
                 />

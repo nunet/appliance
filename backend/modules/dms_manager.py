@@ -1068,11 +1068,15 @@ class DMSManager:
                 time.sleep(retry_delay_sec)
         return {"status": "error", "message": last_error or "Transaction confirmation failed"}
 
-    def get_payment_quote(self, unique_id: str) -> Dict[str, Any]:
+    def get_payment_quote(self, unique_id: str, dest: str) -> Dict[str, Any]:
+        normalized_dest = (dest or "").strip()
+        if not normalized_dest:
+            return {"status": "error", "message": "Missing payment validator DID for quote get"}
         cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/payment/quote/get",
             "--unique-id", unique_id,
+            "--dest", normalized_dest,
         ]
         cp = run_dms_command_with_passphrase(
             cmd,
@@ -1107,11 +1111,15 @@ class DMSManager:
         payload.update(parsed)
         return payload
 
-    def validate_payment_quote(self, quote_id: str) -> Dict[str, Any]:
+    def validate_payment_quote(self, quote_id: str, dest: str) -> Dict[str, Any]:
+        normalized_dest = (dest or "").strip()
+        if not normalized_dest:
+            return {"status": "error", "message": "Missing payment validator DID for quote validation"}
         cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/payment/quote/validate",
             "--quote-id", quote_id,
+            "--dest", normalized_dest,
         ]
         cp = run_dms_command_with_passphrase(
             cmd,
@@ -1141,11 +1149,15 @@ class DMSManager:
         payload.update(parsed)
         return payload
 
-    def cancel_payment_quote(self, quote_id: str) -> Dict[str, Any]:
+    def cancel_payment_quote(self, quote_id: str, dest: str) -> Dict[str, Any]:
+        normalized_dest = (dest or "").strip()
+        if not normalized_dest:
+            return {"status": "error", "message": "Missing payment validator DID for quote cancellation"}
         cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/payment/quote/cancel",
             "--quote-id", quote_id,
+            "--dest", normalized_dest,
         ]
         cp = run_dms_command_with_passphrase(
             cmd,

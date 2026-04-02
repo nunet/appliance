@@ -276,8 +276,14 @@ describe("Payments quote conversion flow", () => {
     cy.wait("@quoteGet");
     cy.wait("@quoteValidate");
     cy.then(() => {
-      expect(getRequestBody).to.deep.equal({ unique_id: payment.unique_id });
-      expect(validateRequestBody).to.deep.equal({ quote_id: quoteId });
+      expect(getRequestBody).to.deep.equal({
+        unique_id: payment.unique_id,
+        dest: payment.payment_validator_did,
+      });
+      expect(validateRequestBody).to.deep.equal({
+        quote_id: quoteId,
+        dest: payment.payment_validator_did,
+      });
     });
 
     cy.contains("Confirm conversion quote").should("be.visible");
@@ -288,7 +294,10 @@ describe("Payments quote conversion flow", () => {
     cy.get('[role="dialog"] button:visible').contains("Cancel").click();
     cy.wait("@quoteCancel");
     cy.then(() => {
-      expect(cancelRequestBody).to.deep.equal({ quote_id: quoteId });
+      expect(cancelRequestBody).to.deep.equal({
+        quote_id: quoteId,
+        dest: payment.payment_validator_did,
+      });
     });
 
     cy.contains("Confirm conversion quote").should("not.exist");
