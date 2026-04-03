@@ -76,6 +76,9 @@ __all__ = [
     "ContractTemplateDetail",
     "ContractTemplateListResponse",
     "ApplianceUptime",
+    "TelemetryPluginConfig",
+    "TelemetryPluginConfigUpdate",
+    "TelemetryPluginStatus",
 ]
 
 class TokenConfig(BaseModel):
@@ -486,6 +489,74 @@ class ContractTemplateListResponse(BaseModel):
 
 class ApplianceUptime(BaseModel):
     uptime: str
+
+
+class TelemetryPluginConfig(BaseModel):
+    enabled: bool = False
+    remote_enabled: bool = False
+    local_enabled: bool = False
+    dcgm_exporter_enabled: bool = False
+    grafana_enabled: bool = False
+    nvidia_gpu_available: bool = False
+    gateway_url: str = "https://telemetry.orgs.nunet.network"
+    token_set: bool = False
+    token_last8: Optional[str] = None
+    generated_config_path: str = "/home/ubuntu/nunet/appliance/alloy/config.generated.alloy"
+    local_grafana_running: bool = False
+    cadvisor_running: bool = False
+    grafana_url: str = "/sys/plugins/telemetry-exporter/grafana/"
+
+
+class TelemetryPluginConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    remote_enabled: Optional[bool] = None
+    local_enabled: Optional[bool] = None
+    dcgm_exporter_enabled: Optional[bool] = None
+    grafana_enabled: Optional[bool] = None
+    gateway_url: Optional[str] = None
+    telemetry_token: Optional[str] = None  # Empty string clears token
+    generated_config_path: Optional[str] = None
+
+
+class TelemetryPluginStatus(BaseModel):
+    plugin_id: str = "telemetry-exporter"
+    installed_version: Optional[str] = None
+    updated_at: Optional[str] = None
+    alloy_installed: Optional[bool] = None
+    alloy_running: Optional[bool] = None
+    local_mimir_running: Optional[bool] = None
+    dcgm_exporter_running: Optional[bool] = None
+    local_grafana_running: Optional[bool] = None
+    cadvisor_running: Optional[bool] = None
+    grafana_enabled: Optional[bool] = None
+    grafana_url: Optional[str] = None
+    nvidia_gpu_available: Optional[bool] = None
+    enabled: Optional[bool] = None
+    token_set: Optional[bool] = None
+    raw_status: Optional[Dict[str, Any]] = None
+
+
+class TelemetryLocalMetricPoint(BaseModel):
+    ts: int
+    cpu_percent: Optional[float] = None
+    memory_percent: Optional[float] = None
+    disk_utilization_percent: Optional[float] = None
+    disk_read_bytes_per_sec: Optional[float] = None
+    disk_write_bytes_per_sec: Optional[float] = None
+    network_rx_bytes_per_sec: Optional[float] = None
+    network_tx_bytes_per_sec: Optional[float] = None
+    gpu_utilization_percent: Optional[float] = None
+    gpu_temp_celsius: Optional[float] = None
+    gpu_vram_used_mib: Optional[float] = None
+
+
+class TelemetryLocalMetricsResponse(BaseModel):
+    available: bool = False
+    reason: Optional[str] = None
+    range_minutes: int = 60
+    step_seconds: int = 30
+    points: List[TelemetryLocalMetricPoint] = PydField(default_factory=list)
+
 
 class SshStatus(BaseModel):
     running: bool

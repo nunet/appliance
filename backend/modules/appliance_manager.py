@@ -5,6 +5,7 @@ _SERVICES: List[str] = [
     "nunet-appliance-web.service",
     "nunet-appliance-updater.service",
     "nunet-dms-updater.service",
+    "alloy.service",
     "nunet-caddy-proxy-monitor.service",
     "avahi-daemon.service",
 ]

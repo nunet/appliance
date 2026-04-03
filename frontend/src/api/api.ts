@@ -97,6 +97,73 @@ export interface ApplianceUptime {
   uptime: string;
 }
 
+export interface TelemetryPluginConfig {
+  enabled: boolean;
+  remote_enabled: boolean;
+  local_enabled: boolean;
+  dcgm_exporter_enabled: boolean;
+  grafana_enabled: boolean;
+  nvidia_gpu_available: boolean;
+  gateway_url: string;
+  token_set: boolean;
+  token_last8?: string | null;
+  generated_config_path: string;
+  local_grafana_running: boolean;
+  cadvisor_running: boolean;
+  grafana_url: string;
+}
+
+export interface TelemetryPluginConfigUpdate {
+  enabled?: boolean;
+  remote_enabled?: boolean;
+  local_enabled?: boolean;
+  dcgm_exporter_enabled?: boolean;
+  grafana_enabled?: boolean;
+  gateway_url?: string;
+  telemetry_token?: string;
+  generated_config_path?: string;
+}
+
+export interface TelemetryPluginStatus {
+  plugin_id: string;
+  installed_version?: string | null;
+  updated_at?: string | null;
+  alloy_installed?: boolean | null;
+  alloy_running?: boolean | null;
+  local_mimir_running?: boolean | null;
+  dcgm_exporter_running?: boolean | null;
+  local_grafana_running?: boolean | null;
+  cadvisor_running?: boolean | null;
+  grafana_enabled?: boolean | null;
+  grafana_url?: string | null;
+  nvidia_gpu_available?: boolean | null;
+  enabled?: boolean | null;
+  token_set?: boolean | null;
+  raw_status?: Record<string, unknown> | null;
+}
+
+export interface TelemetryLocalMetricPoint {
+  ts: number;
+  cpu_percent?: number | null;
+  memory_percent?: number | null;
+  disk_utilization_percent?: number | null;
+  disk_read_bytes_per_sec?: number | null;
+  disk_write_bytes_per_sec?: number | null;
+  network_rx_bytes_per_sec?: number | null;
+  network_tx_bytes_per_sec?: number | null;
+  gpu_utilization_percent?: number | null;
+  gpu_temp_celsius?: number | null;
+  gpu_vram_used_mib?: number | null;
+}
+
+export interface TelemetryLocalMetricsResponse {
+  available: boolean;
+  reason?: string | null;
+  range_minutes: number;
+  step_seconds: number;
+  points: TelemetryLocalMetricPoint[];
+}
+
 // ==== AXIOS INSTANCE ====
 // In development, Vite runs on 5173 and backend on 8080
 // In production, both frontend and backend serve from the same port
@@ -129,6 +196,7 @@ let unauthorizedHandler: (() => void) | null = null;
 let onTokenRefreshedHandler: ((response: AuthResponse) => void) | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
+const TOKEN_KEY = "nunet-admin-token";
 const TOKEN_EXPIRY_KEY = "nunet-admin-expiry";
 const REFRESH_THRESHOLD_MS = 60 * 1000; // 1 minute
 
@@ -202,6 +270,16 @@ export const setUnauthorizedHandler = (handler: (() => void) | null) => {
 
 export const setOnTokenRefreshedHandler = (handler: (response: AuthResponse) => void) => {
   onTokenRefreshedHandler = handler;
+};
+
+export const refreshAuthToken = async (): Promise<AuthResponse> => {
+  const res = await api.post<AuthResponse>("/auth/refresh");
+  const data = res.data;
+  authToken = data.access_token;
+  localStorage.setItem(TOKEN_KEY, data.access_token);
+  localStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + data.expires_in * 1000));
+  onTokenRefreshedHandler?.(data);
+  return data;
 };
 
 // ==== DMS ENDPOINTS ====
@@ -298,6 +376,28 @@ export const checkUpdates = () =>
 
 export const triggerUpdate = () =>
   api.post<CommandResult>("/sys/trigger-update").then((res) => res.data);
+
+export const triggerPluginSync = () =>
+  api.post<CommandResult>("/sys/trigger-plugin-sync").then((res) => res.data);
+
+export const uninstallTelemetryPlugin = () =>
+  api.post<CommandResult>("/sys/plugins/telemetry-exporter/uninstall").then((res) => res.data);
+
+export const getTelemetryPluginConfig = () =>
+  api.get<TelemetryPluginConfig>("/sys/plugins/telemetry-exporter/config").then((res) => res.data);
+
+export const updateTelemetryPluginConfig = (payload: TelemetryPluginConfigUpdate) =>
+  api.put<TelemetryPluginConfig>("/sys/plugins/telemetry-exporter/config", payload).then((res) => res.data);
+
+export const getTelemetryPluginStatus = () =>
+  api.get<TelemetryPluginStatus>("/sys/plugins/telemetry-exporter/status").then((res) => res.data);
+
+export const getTelemetryLocalMetrics = (rangeMinutes = 60, stepSeconds = 30) =>
+  api
+    .get<TelemetryLocalMetricsResponse>("/sys/plugins/telemetry-exporter/local-metrics", {
+      params: { range_minutes: rangeMinutes, step_seconds: stepSeconds },
+    })
+    .then((res) => res.data);
 
 export const getDockerContainer = () =>
   api

@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "remote_enabled": false,
+  "local_enabled": false,
+  "dcgm_exporter_enabled": false,
+  "grafana_enabled": false,
+  "gateway_url": "https://telemetry.orgs.nunet.network",
+  "telemetry_token": "",
+  "generated_config_path": "/home/ubuntu/nunet/appliance/alloy/config.generated.alloy"
+}

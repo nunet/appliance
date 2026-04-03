@@ -63,6 +63,12 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
+# --- Run plugin lifecycle sync (root-owned) ---
+if [ -x /usr/lib/nunet-appliance-web/plugin-manager.sh ]; then
+  /usr/lib/nunet-appliance-web/plugin-manager.sh sync || \
+    echo "Plugin manager sync failed; continuing with appliance update." >&2
+fi
+
 echo "Checking for new appliance version for $ARCH (env=$ENVIRONMENT, channel=$PREFERRED_CHANNEL)..."
 
 TMP_DEB=$(mktemp --suffix=.deb)

@@ -1,0 +1,36 @@
+{
+  "id": "telemetry-exporter",
+  "name": "Telemetry Exporter",
+  "version": "0.1.0",
+  "plugin_api_version": "v1",
+  "description": "Installs and manages Grafana Alloy telemetry export for appliance metrics/logs.",
+  "owner": "nunet-appliance",
+  "execution": {
+    "run_as": "root",
+    "timeout_seconds": 300
+  },
+  "config": {
+    "path": "/home/ubuntu/nunet/appliance/plugins/telemetry-exporter/config.json",
+    "default_path": "deploy/plugins/telemetry-exporter/default-config.json"
+  },
+  "lifecycle": {
+    "install": "hooks/install.sh",
+    "apply": "hooks/apply.sh",
+    "status": "hooks/status.sh",
+    "remove": "hooks/remove.sh"
+  },
+  "capabilities": [
+    "apt",
+    "systemd",
+    "filesystem:/etc/systemd/system/alloy.service.d",
+    "filesystem:/var/lib/nunet-appliance/alloy"
+  ],
+  "artifacts": {
+    "state_dir": "/var/lib/nunet-appliance/plugins/telemetry-exporter",
+    "log_dir": "/var/log/nunet-appliance/plugins/telemetry-exporter"
+  },
+  "notes": {
+    "token_policy": "No default token. Token must come from join flow or explicit user config.",
+    "gateway_default": "https://telemetry.orgs.nunet.network"
+  }
+}

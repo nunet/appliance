@@ -10,6 +10,7 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
 
 from modules.path_constants import ADMIN_CREDENTIALS_PATH
 
@@ -152,12 +153,19 @@ def validate_token(token: str) -> bool:
         return False
 
 
-def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme)) -> str:
+def require_auth(
+    request: HTTPConnection,
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+) -> str:
     if not is_password_set():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin password not configured")
-    if not credentials or not credentials.credentials:
+    token = (
+        credentials.credentials
+        if credentials and credentials.credentials
+        else request.query_params.get("access_token") or request.cookies.get("nunet_admin_token")
+    )
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    token = credentials.credentials
     try:
         payload = jwt.decode(token, _jwt_secret(), algorithms=[ALGORITHM])
     except jwt.ExpiredSignatureError:
