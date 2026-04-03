@@ -75,7 +75,7 @@ dropin_dir() { echo "/etc/systemd/system/${active_service}.d"; }
 dropin_file() { echo "$(dropin_dir)/override.conf"; }
 
 require_repo() {
-  [[ -d "$REPO_ROOT/.git" ]] || { echo "ERROR: Not a git clone at $REPO_ROOT" >&2; exit 1; }
+  [[ -e "$REPO_ROOT/.git" ]] || { echo "ERROR: Not a git clone/worktree at $REPO_ROOT" >&2; exit 1; }
   [[ -f "$BACKEND_DIR/nunet_api/main.py" ]] || { echo "ERROR: Missing $BACKEND_DIR/nunet_api/main.py" >&2; exit 1; }
   [[ -f "$REQ_FILE" ]] || { echo "ERROR: Missing $REQ_FILE" >&2; exit 1; }
   [[ -f "$FRONTEND_DIR/package.json" ]] || { echo "ERROR: Missing $FRONTEND_DIR/package.json" >&2; exit 1; }

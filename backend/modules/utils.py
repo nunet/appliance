@@ -455,6 +455,141 @@ def trigger_dms_update() -> Dict[str, Any]:
         }
 
 
+def trigger_plugin_sync() -> Dict[str, Any]:
+    """Triggers the systemd service to run plugin manager sync asynchronously."""
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", "systemctl", "start", "nunet-appliance-plugin-sync.service"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return {
+                "status": "success",
+                "message": "Plugin sync service triggered successfully. Sync is running in the background.",
+                "stdout": "",
+                "stderr": "",
+                "returncode": 0,
+            }
+
+        stderr = (proc.stderr or "").lower()
+        if "not found" in stderr or "not be found" in stderr:
+            # Dev-on fallback when plugin sync systemd unit is not installed.
+            candidates = [
+                Path(__file__).resolve().parents[2] / "deploy" / "scripts" / "plugin-manager.sh",
+                Path("/usr/lib/nunet-appliance-web/plugin-manager.sh"),
+            ]
+            plugin_manager = next((p for p in candidates if p.is_file()), None)
+            if not plugin_manager:
+                return {
+                    "status": "error",
+                    "message": "Plugin sync unit missing and plugin-manager fallback not found.",
+                    "stdout": proc.stdout,
+                    "stderr": proc.stderr,
+                    "returncode": proc.returncode,
+                }
+
+            fallback = subprocess.run(
+                ["sudo", "-n", str(plugin_manager), "sync", "telemetry-exporter"],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if fallback.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": "Plugin sync completed via plugin-manager fallback.",
+                    "stdout": fallback.stdout,
+                    "stderr": fallback.stderr,
+                    "returncode": fallback.returncode,
+                }
+            return {
+                "status": "error",
+                "message": "Failed to trigger plugin sync service or fallback.",
+                "stdout": fallback.stdout,
+                "stderr": fallback.stderr,
+                "returncode": fallback.returncode,
+            }
+
+        return {
+            "status": "error",
+            "message": "Failed to trigger plugin sync service.",
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Unexpected error triggering plugin sync: {e}",
+            "stdout": "",
+            "stderr": "",
+            "returncode": None,
+        }
+
+
+def trigger_telemetry_plugin_uninstall() -> Dict[str, Any]:
+    """Triggers telemetry plugin uninstall service asynchronously."""
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", "systemctl", "start", "nunet-appliance-plugin-remove-telemetry.service"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if proc.returncode != 0 and ("not found" in (proc.stderr or "").lower() or "not be found" in (proc.stderr or "").lower()):
+            # Dev-on fallback when the dedicated uninstall unit is not installed yet.
+            fallback = subprocess.run(
+                ["sudo", "-n", "/usr/lib/nunet-appliance-web/plugin-manager.sh", "run", "telemetry-exporter", "remove"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if fallback.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": "Telemetry uninstall completed via plugin-manager fallback.",
+                    "stdout": fallback.stdout,
+                    "stderr": fallback.stderr,
+                    "returncode": fallback.returncode,
+                }
+            return {
+                "status": "error",
+                "message": "Failed to trigger telemetry uninstall service or fallback.",
+                "stdout": fallback.stdout,
+                "stderr": fallback.stderr,
+                "returncode": fallback.returncode,
+            }
+        if proc.returncode != 0:
+            return {
+                "status": "error",
+                "message": "Failed to trigger telemetry uninstall service.",
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "returncode": proc.returncode,
+            }
+        return {
+            "status": "success",
+            "message": "Telemetry uninstall triggered successfully. Removal is running in the background.",
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Unexpected error triggering telemetry uninstall: {e}",
+            "stdout": "",
+            "stderr": "",
+            "returncode": None,
+        }
+
+
 def fetch_latest_appliance() -> str:
     """Fetch the latest appliance version for the active environment channel policy."""
     return str(_build_update_details("appliance").get("latest", ""))
