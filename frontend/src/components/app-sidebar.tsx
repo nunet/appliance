@@ -31,6 +31,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { getPaymentsList } from "@/api/api";
 
+const PAYMENTS_LIST_REFRESH_MS = 60 * 60 * 1000; // 1 hour
+
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navigate = useNavigate();
   const { mode } = useAppMode();
@@ -39,7 +41,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const paymentsQ = useQuery({
     queryKey: ["payments", "list"],
     queryFn: getPaymentsList,
-    refetchInterval: 30000,
+    staleTime: PAYMENTS_LIST_REFRESH_MS,
+    gcTime: PAYMENTS_LIST_REFRESH_MS,
+    refetchInterval: false,
     refetchOnWindowFocus: false,
   });
   const unpaidPayments = paymentsQ.isError ? 0 : (paymentsQ.data?.unpaid_count ?? 0);

@@ -49,7 +49,7 @@ STATE_DIR="${STATE_DIR:-/var/lib/nunet-appliance/devctl}"
 STATE_FILE="$STATE_DIR/web_install_state"
 PKG_NAME_WEBSVC="nunet-appliance-web"
 SYSTEMD_WEBSVC="nunet-appliance-web.service"
-PNPM_VERSION="${PNPM_VERSION:-10.4.0}"
+PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
 
 show_help() {
   cat <<EOF

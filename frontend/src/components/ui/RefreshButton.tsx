@@ -1,5 +1,6 @@
 // components/ui/RefreshButton.tsx
 import { Loader2, RotateCw } from "lucide-react";
+import { useState } from "react";
 import { Button } from "./button";
 import {
   Tooltip,
@@ -22,6 +23,9 @@ export function RefreshButton({
   tooltip,
   children,
 }: RefreshButtonProps) {
+  const [isPending, setIsPending] = useState(false);
+  const showLoading = isLoading || isPending;
+
   return (
     <TooltipProvider>
       <Tooltip>
@@ -30,18 +34,22 @@ export function RefreshButton({
             variant="outline"
             size="sm"
             onClick={async () => {
+              if (showLoading) return;
+              setIsPending(true);
               try {
                 await onClick(); // wait for the refresh to finish
                 toast.success("Page refreshed");
               } catch (error) {
                 console.error("Error in RefreshButton onClick:", error);
                 toast.error("Failed to refresh");
+              } finally {
+                setIsPending(false);
               }
             }}
-            disabled={isLoading}
+            disabled={showLoading}
             className="flex items-center gap-2"
           >
-            {isLoading ? (
+            {showLoading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {children}

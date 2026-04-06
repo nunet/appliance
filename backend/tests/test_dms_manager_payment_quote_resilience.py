@@ -9,6 +9,50 @@ def _cp(returncode: int, payload: dict | None = None, stderr: str = "") -> subpr
     return subprocess.CompletedProcess(args=["nunet"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
+def test_get_payment_quote_appends_dest_flag(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run_dms_command_with_passphrase(argv, **kwargs):
+        calls.append(list(argv))
+        return _cp(0, {"quote_id": "quote-1", "expires_at": "2030-01-01T00:00:00Z"})
+
+    monkeypatch.setattr(
+        dms_manager_module,
+        "run_dms_command_with_passphrase",
+        fake_run_dms_command_with_passphrase,
+    )
+
+    mgr = dms_manager_module.DMSManager()
+    result = mgr.get_payment_quote("unique-1", "did:key:z6MkDestExample")
+
+    assert result["status"] == "success"
+    assert len(calls) == 1
+    assert "--dest" in calls[0]
+    assert "did:key:z6MkDestExample" in calls[0]
+
+
+def test_validate_payment_quote_appends_dest_flag(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run_dms_command_with_passphrase(argv, **kwargs):
+        calls.append(list(argv))
+        return _cp(0, {"valid": True})
+
+    monkeypatch.setattr(
+        dms_manager_module,
+        "run_dms_command_with_passphrase",
+        fake_run_dms_command_with_passphrase,
+    )
+
+    mgr = dms_manager_module.DMSManager()
+    result = mgr.validate_payment_quote("quote-1", "did:key:z6MkDestExample")
+
+    assert result["status"] == "success"
+    assert len(calls) == 1
+    assert "--dest" in calls[0]
+    assert "did:key:z6MkDestExample" in calls[0]
+
+
 def test_confirm_transaction_retries_without_quote_id_on_terminal_quote_error(monkeypatch):
     calls: list[list[str]] = []
     responses = [
@@ -73,7 +117,10 @@ def test_confirm_transaction_stops_retrying_on_terminal_quote_error_without_quot
 
 
 def test_cancel_payment_quote_treats_already_used_as_success(monkeypatch):
+    calls: list[list[str]] = []
+
     def fake_run_dms_command_with_passphrase(argv, **kwargs):
+        calls.append(list(argv))
         return _cp(0, {"error": "quote already used"})
 
     monkeypatch.setattr(
@@ -83,13 +130,19 @@ def test_cancel_payment_quote_treats_already_used_as_success(monkeypatch):
     )
 
     mgr = dms_manager_module.DMSManager()
-    result = mgr.cancel_payment_quote("quote-123")
+    result = mgr.cancel_payment_quote("quote-123", "did:key:z6MkDestExample")
 
     assert result["status"] == "success"
+    assert len(calls) == 1
+    assert "--dest" in calls[0]
+    assert "did:key:z6MkDestExample" in calls[0]
 
 
 def test_cancel_payment_quote_treats_not_found_as_success_when_command_fails(monkeypatch):
+    calls: list[list[str]] = []
+
     def fake_run_dms_command_with_passphrase(argv, **kwargs):
+        calls.append(list(argv))
         return _cp(1, {"error": "quote not found"})
 
     monkeypatch.setattr(
@@ -99,6 +152,9 @@ def test_cancel_payment_quote_treats_not_found_as_success_when_command_fails(mon
     )
 
     mgr = dms_manager_module.DMSManager()
-    result = mgr.cancel_payment_quote("quote-123")
+    result = mgr.cancel_payment_quote("quote-123", "did:key:z6MkDestExample")
 
     assert result["status"] == "success"
+    assert len(calls) == 1
+    assert "--dest" in calls[0]
+    assert "did:key:z6MkDestExample" in calls[0]

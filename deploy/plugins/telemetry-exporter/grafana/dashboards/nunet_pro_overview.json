@@ -1,0 +1,65 @@
+{
+  "title": "NuNet Pro Overview",
+  "uid": "nunet-pro-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "CPU %",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [{ "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100)", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "Memory %",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [{ "expr": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "GPU Util %",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [{ "expr": "avg(DCGM_FI_DEV_GPU_UTIL)", "refId": "A" }]
+    },
+    {
+      "type": "stat",
+      "title": "GPU Temp C",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [{ "expr": "avg(DCGM_FI_DEV_GPU_TEMP)", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk Utilization %",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [{ "expr": "100 * (1 - (sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs\"}) / sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs\"})))", "refId": "A" }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network I/O Bytes/s",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "local_mimir" },
+      "targets": [
+        { "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[2m]))", "legendFormat": "rx", "refId": "A" },
+        { "expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|docker.*|veth.*|br-.*\"}[2m]))", "legendFormat": "tx", "refId": "B" }
+      ]
+    }
+  ]
+}

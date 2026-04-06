@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Local Mimir
+    uid: local_mimir
+    type: prometheus
+    access: proxy
+    isDefault: true
+    url: http://mimir:9009/prometheus
+    editable: false

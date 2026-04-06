@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@10.4.0",
+  "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=22 <25"
   },
@@ -43,7 +43,7 @@
     "@tailwindcss/vite": "^4.1.13",
     "@tanstack/react-query": "^5.87.1",
     "@tanstack/react-table": "^8.21.3",
-    "axios": "^1.11.0",
+    "axios": "1.14.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -55,13 +55,14 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-icons": "^5.5.0",
-    "react-router-dom": "^7.8.2",
-    "recharts": "^2.15.4",
+    "react-router-dom": "^7.13.2",
+    "recharts": "^3.8.1",
+    "react-is": "^19.2.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "@uiw/react-codemirror": "^4.22.0",
     "vaul": "^1.1.2",
-    "yaml": "^2.7.0",
+    "yaml": "^2.8.3",
     "zod": "^4.0.17",
     "zustand": "^5.0.7",
     "@scure/base": "^1.1.5"
@@ -88,6 +89,11 @@
     "vite": "^7.1.5"
   },
   "pnpm": {
+    "overrides": {
+      "lodash": "4.17.23",
+      "picomatch": "4.0.4",
+      "rollup": "4.59.0"
+    },
     "onlyBuiltDependencies": [
       "esbuild",
       "@swc/core"

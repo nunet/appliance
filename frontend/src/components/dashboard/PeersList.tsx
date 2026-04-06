@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "../ui/CopyButton";
 import { RefreshButton } from "../ui/RefreshButton";
 import { useQueryClient, useIsFetching } from "@tanstack/react-query";
+import { getConnectedPeers } from "@/api/api";
 
 type PeersListProps = {
   peers: string[];
@@ -32,7 +33,13 @@ export function PeersList({ peers }: PeersListProps) {
   const isFetching = useIsFetching({ queryKey: ["connected-peers-main"] }) > 0;
 
   const handleRefresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["connected-peers-main"] });
+    queryClient.removeQueries({ queryKey: ["connected-peers-main"] });
+    await queryClient.fetchQuery({
+      queryKey: ["connected-peers-main"],
+      queryFn: () => getConnectedPeers(true),
+      staleTime: 5 * 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+    });
   };
 
   return (

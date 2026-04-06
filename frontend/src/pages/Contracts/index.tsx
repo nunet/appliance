@@ -16,6 +16,8 @@ import { toast } from "sonner";
 
 const INCOMING_STATES = new Set<ContractMetadata["current_state"]>(["DRAFT"]);
 const SIGNED_STATES = new Set<ContractMetadata["current_state"]>(["ACCEPTED", "APPROVED", "SIGNED"]);
+const CONTRACTS_LIST_REFRESH_MS = 60 * 60 * 1000; // 1 hour
+const DMS_STATUS_CACHE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 const FILTER_TABS: Array<{ view: ContractListView; label: string; description: string }> = [
   {
@@ -161,12 +163,15 @@ export default function ContractsPage(): JSX.Element {
   const contractsQuery = useQuery({
     queryKey: ["contracts", "all"],
     queryFn: ({ signal }) => contractsApi.getContracts("all", signal),
+    staleTime: CONTRACTS_LIST_REFRESH_MS,
+    gcTime: CONTRACTS_LIST_REFRESH_MS,
     refetchOnWindowFocus: false,
   });
   const dmsStatusQuery = useQuery({
-    queryKey: ["dms", "status", "contracts", "list"],
+    queryKey: ["dms", "status"],
     queryFn: getDmsStatus,
-    staleTime: 1000 * 60 * 5,
+    staleTime: DMS_STATUS_CACHE_MS,
+    gcTime: DMS_STATUS_CACHE_MS,
     refetchOnWindowFocus: false,
   });
   const cachedDashboardInfo = queryClient.getQueryData<{ dms_did?: string }>(["apiData"]);

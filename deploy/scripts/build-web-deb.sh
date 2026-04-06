@@ -75,6 +75,7 @@ mkdir -p "$PKGDIR/usr/share/nunet-appliance-web/data/contracts"
 mkdir -p "$PKGDIR/lib/systemd/system"
 mkdir -p "$PKGDIR/etc/systemd/system"
 mkdir -p "$PKGDIR/etc/nunet-appliance-web"
+mkdir -p "$PKGDIR/etc/sudoers.d"
 mkdir -p "$PKGDIR/home/ubuntu/nunet/appliance/backend/scripts"
 
 # payload
@@ -82,6 +83,18 @@ install -m 0755 "$ROOT/release/nunet-dms.pex" "$PKGDIR/usr/lib/nunet-appliance-w
 install -m 0644 "$ROOT/release/gunicorn_conf.py" "$PKGDIR/usr/lib/nunet-appliance-web/gunicorn_conf.py"
 install -m 0755 "$ROOT/deploy/scripts/updater.sh" "$PKGDIR/usr/lib/nunet-appliance-web/updater.sh"
 install -m 0755 "$ROOT/deploy/scripts/dms-updater.sh" "$PKGDIR/usr/lib/nunet-appliance-web/dms-updater.sh"
+install -m 0755 "$ROOT/deploy/scripts/plugin-manager.sh" "$PKGDIR/usr/lib/nunet-appliance-web/plugin-manager.sh"
+cat > "$PKGDIR/etc/sudoers.d/nunet-appliance-services" <<'SUDOERS'
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl start nunet-appliance-updater.service
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl start nunet-dms-updater.service
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl start nunet-appliance-plugin-sync.service
+ubuntu ALL=(ALL) NOPASSWD: /usr/bin/systemctl start nunet-appliance-plugin-remove-telemetry.service
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl start nunet-appliance-updater.service
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl start nunet-dms-updater.service
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl start nunet-appliance-plugin-sync.service
+ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl start nunet-appliance-plugin-remove-telemetry.service
+SUDOERS
+chmod 0440 "$PKGDIR/etc/sudoers.d/nunet-appliance-services"
 cp -a "$ROOT/release/frontend-dist/." "$PKGDIR/usr/share/nunet-appliance-web/frontend/dist/"
 
 # Include known organizations metadata for backend defaults.
@@ -90,6 +103,32 @@ if [ -d "$ROOT/known_orgs" ]; then
   cp -a "$ROOT/known_orgs/." "$PKGDIR/usr/lib/nunet-appliance-web/known_orgs/" || true
 fi
 
+# Monitoring compose (Mimir + optional NVIDIA/Grafana); backend uses it when present
+if [ -f "$ROOT/deploy/monitoring/compose.yaml" ]; then
+  mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/monitoring"
+  install -m 0644 "$ROOT/deploy/monitoring/compose.yaml" "$PKGDIR/usr/lib/nunet-appliance-web/monitoring/compose.yaml"
+fi
+# Alloy profile templates (remote-only, remote-and-local, local-only, etc.)
+if [ -d "$ROOT/deploy/monitoring/alloy" ]; then
+  mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/monitoring/alloy"
+  for f in "$ROOT/deploy/monitoring/alloy"/*.alloy; do
+    [ -f "$f" ] && install -m 0644 "$f" "$PKGDIR/usr/lib/nunet-appliance-web/monitoring/alloy/"
+  done
+fi
+# Grafana provisioning (datasources + dashboards for Node Exporter and DCGM)
+if [ -d "$ROOT/deploy/monitoring/provisioning" ]; then
+  mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/monitoring/provisioning"
+  cp -a "$ROOT/deploy/monitoring/provisioning/." "$PKGDIR/usr/lib/nunet-appliance-web/monitoring/provisioning/"
+fi
+
+# Plugin manifests and hooks (run by plugin-manager.sh)
+if [ -d "$ROOT/deploy/plugins" ]; then
+  mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/plugins"
+  cp -a "$ROOT/deploy/plugins/." "$PKGDIR/usr/lib/nunet-appliance-web/plugins/"
+  if [ -d "$PKGDIR/usr/lib/nunet-appliance-web/plugins" ]; then
+    find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -name "*.sh" -exec chmod 0755 {} \;
+  fi
+fi
 # Include default ensembles (if present in repo)
 if [ -d "$ROOT/backend/ensembles" ]; then
   cp -a "$ROOT/backend/ensembles/." "$PKGDIR/usr/share/nunet-appliance-web/data/ensembles/" || true
@@ -273,6 +312,34 @@ Wants=network-online.target
 Type=oneshot
 EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/lib/nunet-appliance-web/dms-updater.sh
+User=root
+EOF
+
+# systemd unit for plugin sync service (on-demand trigger from API)
+cat > "$PKGDIR/lib/systemd/system/nunet-appliance-plugin-sync.service" <<EOF
+[Unit]
+Description=NuNet Appliance Plugin Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/nunet-appliance-web/app.env
+ExecStart=/usr/lib/nunet-appliance-web/plugin-manager.sh sync
+User=root
+EOF
+
+# systemd unit for telemetry plugin uninstall (on-demand trigger from API)
+cat > "$PKGDIR/lib/systemd/system/nunet-appliance-plugin-remove-telemetry.service" <<EOF
+[Unit]
+Description=NuNet Appliance Telemetry Plugin Uninstall
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/nunet-appliance-web/app.env
+ExecStart=/usr/lib/nunet-appliance-web/plugin-manager.sh run telemetry-exporter remove
 User=root
 EOF
 
@@ -472,6 +539,11 @@ systemctl daemon-reload || true
 systemctl enable nunet-caddy-proxy-monitor.service >/dev/null 2>&1 || true
 # Restart service to use new configuration (will start if not running)
 systemctl restart nunet-caddy-proxy-monitor.service || true
+
+# Run plugin lifecycle sync once on install/upgrade (best effort).
+if [ -x /usr/lib/nunet-appliance-web/plugin-manager.sh ]; then
+  /usr/lib/nunet-appliance-web/plugin-manager.sh sync || true
+fi
 
 exit 0
 EOF
