@@ -45,6 +45,7 @@ Use this workflow when intentionally updating dependencies:
 Do not regenerate lockfiles in deployment hotfixes unless the dependency change is intentional and reviewed.
 
 For Python dependency automation, use `deploy/scripts/update_python_deps.sh` (audit-only or `--apply-fixes` mode).
+For frontend dependency triage/remediation with release-age guardrails, use `deploy/scripts/update_frontend_deps.sh`.
 
 ## Emergency Response Pattern
 
