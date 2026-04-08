@@ -61,6 +61,22 @@ Use `deploy/scripts/update_python_deps.sh` to automate Python dependency auditin
 
 The script updates only direct `name==version` entries in `backend/nunet_api/requirements.txt`, then runs install + strict `pip-audit` validation.
 
+### Frontend update helper script
+
+Use `deploy/scripts/update_frontend_deps.sh` to automate frontend vulnerability triage and safe remediation recommendations:
+
+1. Audit + recommendations only:
+   - `deploy/scripts/update_frontend_deps.sh`
+2. Apply safe fixes (pnpm overrides) gated by minimum release age:
+   - `deploy/scripts/update_frontend_deps.sh --apply-fixes --min-release-age-days 7`
+
+Notes:
+
+- The script reads `pnpm audit --json` output and extracts remediation candidates from `fixAvailable`.
+- It checks npm publish age for each fix version and only auto-applies versions meeting the configured age threshold.
+- Auto-fixes are written to `frontend/package.json` under `pnpm.overrides`, then validated with install + strict audit.
+- If no age-compliant fix is available, the script reports the issue and makes no changes.
+
 ## Pull/Merge Request Checklist
 
 - [ ] `frontend/package.json` and `frontend/pnpm-lock.yaml` are both committed
