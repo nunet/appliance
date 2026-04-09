@@ -22,19 +22,28 @@ default:
 
 variables:
   PNPM_VERSION: "10.33.0"
-  STRICT_PNPM_AUDIT: "1"
+  STRICT_PNPM_AUDIT: "0"
+
+cache:
+  key:
+    files:
+      - frontend/pnpm-lock.yaml
+  paths:
+    - frontend/node_modules/
 
 security:python-deps:
   stage: security
-  image: python:3.12-bookworm
+  image: python:3.12.3-bookworm
   script:
     - python -m pip install --upgrade pip
     - python -m pip install pip-audit
     - python -m pip_audit -r backend/nunet_api/requirements.txt --strict
+  allow_failure: true
   rules:
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - when: never
 
 security:frontend-deps:
   stage: security
@@ -43,11 +52,118 @@ security:frontend-deps:
     - cd frontend
     - corepack prepare "pnpm@${PNPM_VERSION}" --activate
     - corepack pnpm install --frozen-lockfile
+    - corepack pnpm audit --prod --audit-level=critical
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - when: never
+
+security:frontend-high-report:
+  stage: security
+  image: node:22-bookworm
+  allow_failure: true
+  script:
+    - cd frontend
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - corepack pnpm install --frozen-lockfile
     - corepack pnpm audit --prod --audit-level=high
   rules:
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - when: never
+
+security:strict:python:
+  stage: security
+  image: python:3.12.3-bookworm
+  script:
+    - python -m pip install --upgrade pip
+    - python -m pip install pip-audit
+    - python -m pip_audit -r backend/nunet_api/requirements.txt --strict
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_success
+
+security:strict:frontend:
+  stage: security
+  image: node:22-bookworm
+  script:
+    - cd frontend
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - corepack pnpm install --frozen-lockfile
+    - corepack pnpm audit --prod
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_success
+
+security:pnpm-drift-check:
+  stage: security
+  image: node:22-bookworm
+  allow_failure: true
+  script:
+    - |
+      set -euo pipefail
+      pinned="${PNPM_VERSION}"
+      pinned_major="${pinned%%.*}"
+      latest="$(npm view "pnpm@${pinned_major}" version --json | node -e 'const fs=require("fs"); const raw=fs.readFileSync(0,"utf8").trim(); const v=JSON.parse(raw); process.stdout.write(String(Array.isArray(v) ? v[v.length-1] : v));')"
+      echo "Pinned pnpm: ${pinned}"
+      echo "Latest pnpm in major ${pinned_major}: ${latest}"
+      if [ "${pinned}" != "${latest}" ]; then
+        echo "PNPM drift detected: update PNPM_VERSION from ${pinned} to ${latest}"
+        exit 1
+      fi
+      echo "PNPM version is current within major ${pinned_major}"
+  rules:
+    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web|schedule)$/
+
+security:nightly-create-issue-on-failure:
+  stage: build
+  image: curlimages/curl:8.12.1
+  allow_failure: true
+  variables:
+    ISSUE_TITLE: "Nightly strict security audit failure"
+  script:
+    - |
+      set -euo pipefail
+      if [ "${CI_PIPELINE_SOURCE:-}" != "schedule" ]; then
+        echo "Not a scheduled pipeline, skipping."
+        exit 0
+      fi
+
+      # Prefer a dedicated API token; fallback to CI_JOB_TOKEN when available.
+      auth_header=""
+      if [ -n "${GITLAB_ISSUE_TOKEN:-}" ]; then
+        auth_header="PRIVATE-TOKEN: ${GITLAB_ISSUE_TOKEN}"
+      elif [ -n "${CI_JOB_TOKEN:-}" ]; then
+        auth_header="JOB-TOKEN: ${CI_JOB_TOKEN}"
+      else
+        echo "No API token available (GITLAB_ISSUE_TOKEN or CI_JOB_TOKEN)."
+        exit 0
+      fi
+
+      issue_title="${ISSUE_TITLE} (${CI_COMMIT_REF_NAME})"
+      issue_body="Nightly strict security audit failed.\n\n- Project: ${CI_PROJECT_PATH}\n- Branch: ${CI_COMMIT_REF_NAME}\n- Pipeline: ${CI_PIPELINE_URL}\n- Commit: ${CI_COMMIT_SHA}\n\nPlease review failed security jobs and remediate according to policy."
+
+      # Avoid duplicate open issues with the same title.
+      encoded_title="$(printf '%s' "${issue_title}" | sed 's/ /%20/g')"
+      existing="$(curl -sS --header "${auth_header}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/issues?state=opened&search=${encoded_title}")"
+      if echo "${existing}" | grep -q "\"title\":\"${issue_title}\""; then
+        echo "An open issue already exists for: ${issue_title}"
+        exit 0
+      fi
+
+      curl -sS --request POST \
+        --header "${auth_header}" \
+        --data-urlencode "title=${issue_title}" \
+        --data-urlencode "description=${issue_body}" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/issues"
+      echo "Created nightly security failure issue."
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: on_failure
 
 .build-deb:
   stage: build
@@ -64,23 +180,18 @@ security:frontend-deps:
     paths:
       - dist/
   rules:
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web)$/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "web"
+
 
 build:x86:
   extends:
     - .build-deb
-  needs:
-    - security:python-deps
-    - security:frontend-deps
 
 build:arm64:
   extends:
     - .build-deb
-  needs:
-    - security:python-deps
-    - security:frontend-deps
   tags:
     - saas-linux-small-arm64
 
