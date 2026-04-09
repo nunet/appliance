@@ -1,4 +1,4 @@
-﻿import { bech32 } from "@scure/base";
+import { bech32 } from "@scure/base";
 
 import type { WalletConnection } from "@/stores/walletStore";
 
