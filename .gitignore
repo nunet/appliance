@@ -58,6 +58,11 @@ frontend/build/
 frontend/.vite/
 frontend/.cache/
 
+# Cypress (local run artifacts)
+frontend/cypress/screenshots/
+frontend/cypress/videos/
+frontend/.env.e2e
+
 # IDE and editor files
 .vscode/
 .idea/

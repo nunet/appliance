@@ -24,6 +24,7 @@ import {
   getDmsFullStatus,
   getDmsStatus,
   getDockerContainer,
+  isCommandResultOk,
   offboardCompute,
   onboardCompute,
   triggerUpdate,
@@ -44,6 +45,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CopyButton } from "../ui/CopyButton";
 import { cn } from "../../lib/utils";
 import { RefreshButton } from "../ui/RefreshButton";
+import { usePollApplianceInfoAfterStatusChange } from "../../hooks/usePollApplianceInfoAfterStatusChange";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -403,6 +405,9 @@ export function SectionCards() {
     [info?.onboarded_resources]
   );
 
+  const { startPollingUntilOnboarded, startPollingUntilNotOnboarded } =
+    usePollApplianceInfoAfterStatusChange(isOnboarded, refetchInfo);
+
   const extractErrorMessage = (error: any, fallback: string) =>
     error?.response?.data?.message ??
     error?.response?.data?.detail ??
@@ -415,8 +420,17 @@ export function SectionCards() {
   } = useMutation({
     mutationFn: onboardCompute,
     onSuccess: async (res) => {
-      toast.success(res?.message || "Compute onboarding started");
+      if (!isCommandResultOk(res)) {
+        toast.error(res?.message || "Compute onboarding failed", {
+          testId: "dashboard-onboard-compute-error",
+        });
+        return;
+      }
+      toast.success(res?.message || "Compute onboarding started", {
+        testId: "dashboard-onboard-compute-success",
+      });
       await Promise.allSettled([refetchInfo(), refetchSys()]);
+      startPollingUntilOnboarded();
     },
     onError: (error) => {
       toast.error(extractErrorMessage(error, "Failed to start onboarding"));
@@ -429,9 +443,18 @@ export function SectionCards() {
   } = useMutation({
     mutationFn: offboardCompute,
     onSuccess: async (res) => {
-      toast.success(res?.message || "Compute offboarding started");
+      if (!isCommandResultOk(res)) {
+        toast.error(res?.message || "Compute offboarding failed", {
+          testId: "dashboard-offboard-compute-error",
+        });
+        return;
+      }
+      toast.success(res?.message || "Compute offboarding started", {
+        testId: "dashboard-offboard-compute-success",
+      });
       setConfirmOffboardOpen(false);
       await Promise.allSettled([refetchInfo(), refetchSys()]);
+      startPollingUntilNotOnboarded();
     },
     onError: (error) => {
       toast.error(extractErrorMessage(error, "Failed to start offboarding"));
@@ -703,7 +726,10 @@ export function SectionCards() {
   return (
     <>
       <div className="grid grid-cols-1 gap-4 px-4">
-        <Card className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg text-wrap break-words">
+        <Card
+          className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border border-blue-500 rounded-lg text-wrap break-words"
+          data-testid="dashboard-main-status"
+        >
           <CardHeader className="flex items-center justify-between gap-2">
             <div>
               <CardDescription>Peer ID:</CardDescription>
@@ -927,7 +953,10 @@ export function SectionCards() {
                   )}
                   <span>{info?.dms_running ? "Running" : "Not Running"}</span>
                 </div>
-                <div className={cn("main_board_info", onboardingStatusTone)}>
+                <div
+                  className={cn("main_board_info", onboardingStatusTone)}
+                  data-testid="dashboard-onboarding-status"
+                >
                   {displayOnboardingStatus}
                 </div>
                 <div

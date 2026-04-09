@@ -16,7 +16,7 @@ fi
 
 export APPLIANCE_ROOT=${APPLIANCE_ROOT:-$ROOT_DIR}
 export NUNET_STATIC_DIR=${NUNET_STATIC_DIR:-"$APPLIANCE_ROOT/frontend/dist"}
-export BACKEND_PORT=${BACKEND_PORT:-8080}
+export PORT=${PORT:-8443}
 
 VENV_DIR=${VENV_DIR:-"$ROOT_DIR/.venv"}
 if [ -d "$VENV_DIR" ]; then
@@ -27,7 +27,8 @@ fi
 
 cd backend
 
-gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app \
-  --bind "0.0.0.0:${BACKEND_PORT}" \
+# Use same gunicorn_conf as production (bind from PORT env)
+exec gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app \
+  -c "$ROOT_DIR/deploy/gunicorn_conf.py" \
   --reload \
   --workers 1

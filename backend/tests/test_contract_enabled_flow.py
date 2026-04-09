@@ -177,6 +177,10 @@ class TestApplyContractCapabilities:
                 with patch.object(mock_onboarding_manager, 'copy_capability_tokens_to_dms_user', return_value=True):
                     result = mock_onboarding_manager.apply_contract_capabilities("test-token")
         
+
+
+
+        
         # Should have called anchor command
         assert mock_run_cmd.called
 
@@ -256,7 +260,7 @@ class TestSignContract:
 class TestPollForContracts:
     """Test poll_for_contracts method."""
 
-    @patch('backend.modules.onboarding_manager.run_dms_command_with_passphrase')
+    @patch("backend.modules.dms_utils.run_dms_command_with_passphrase")
     def test_poll_for_contracts_returns_none_on_empty(
         self, mock_run_cmd, mock_onboarding_manager
     ):
@@ -269,7 +273,7 @@ class TestPollForContracts:
         result = mock_onboarding_manager.poll_for_contracts("test-id")
         assert result is None
 
-    @patch('backend.modules.onboarding_manager.run_dms_command_with_passphrase')
+    @patch("backend.modules.dms_utils.run_dms_command_with_passphrase")
     def test_poll_for_contracts_returns_new_contract(
         self, mock_run_cmd, mock_onboarding_manager
     ):
@@ -284,7 +288,7 @@ class TestPollForContracts:
         assert result is not None
         assert result["did"] == "did:contract:new"
 
-    @patch('backend.modules.onboarding_manager.run_dms_command_with_passphrase')
+    @patch("backend.modules.dms_utils.run_dms_command_with_passphrase")
     def test_poll_for_contracts_skips_seen_contracts(
         self, mock_run_cmd, mock_onboarding_manager
     ):

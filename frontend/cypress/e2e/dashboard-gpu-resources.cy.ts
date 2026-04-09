@@ -7,6 +7,37 @@ const setupDashboardInterceptors = () => {
     body: { password_set: true, username: "admin" },
   }).as("authStatus");
 
+  // Header + payments badge (401 here triggers logout → /login before dashboard renders)
+  cy.intercept("GET", "**/sys/environment*", {
+    statusCode: 200,
+    body: {
+      environment: "production",
+      updates: {
+        appliance: { channel: "stable", resolved_channel: "stable", fell_back: false },
+        dms: { channel: "stable", resolved_channel: "stable", fell_back: false },
+      },
+      ethereum: {
+        chain_id: 1,
+        token_address: "0x0000000000000000000000000000000000000000",
+        token_symbol: "NTX",
+        token_decimals: 18,
+        explorer_base_url: null,
+        network_name: null,
+      },
+    },
+  }).as("sysEnvironment");
+
+  cy.intercept("GET", "**/payments/list_payments*", {
+    statusCode: 200,
+    body: {
+      total_count: 0,
+      paid_count: 0,
+      unpaid_count: 0,
+      items: [],
+      ignored_count: 0,
+    },
+  }).as("paymentsList");
+
   cy.intercept("GET", /\/dms\/status\/?(?:\?.*)?$/, {
     statusCode: 200,
     body: {

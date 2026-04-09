@@ -9,6 +9,11 @@ export interface CommandResult {
   message?: string;
 }
 
+/** API returns HTTP 200 with `status: "error"` in the body for failed nunet/system commands. */
+export function isCommandResultOk(res: CommandResult | undefined): boolean {
+  return res?.status === "success" || res?.status === "warning";
+}
+
 export interface InstallStatus {
   status: string;
   version: string;

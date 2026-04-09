@@ -30,6 +30,7 @@ from .dms_utils import (
     contract_terminate,
     contract_state,
 )
+
 from .path_constants import (
     BACKEND_DIR,
     DMS_DEPLOYMENTS_DIR,
@@ -38,6 +39,32 @@ from .path_constants import (
     DMS_LOG_PATH,
     NUNET_CONFIG_PATH,
 )
+
+
+def _onboard_actor_error_from_stdout(stdout: str) -> Optional[str]:
+    """
+    nunet may exit 0 while printing JSON with success: false (e.g. high CPU usage).
+    If so, return the error string for the API; otherwise None (caller treats as success).
+    """
+    if not stdout or not stdout.strip():
+        return None
+    s = stdout.strip()
+    idx = s.find("{")
+    if idx == -1:
+        return None
+    try:
+        payload = json.loads(s[idx:])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("success") is not False:
+        return None
+    err = payload.get("error") or payload.get("message")
+    if err is None or str(err).strip() == "":
+        return "Onboarding rejected by DMS (success: false in actor output)"
+    return str(err).strip()
+
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +321,10 @@ class DMSManager:
         Calculate CPU, RAM, Disk, and GPU resources for onboarding.
         Uses /dms/node/hardware/spec endpoint for hardware information.
         Replicates the logic from onboard-max.sh bash script.
+
+        RAM uses current utilization (free -k vs total). CPU here uses hardware capacity
+        only (cores minus one for the host), not live load. DMS may still apply its own
+        rules at /dms/node/onboarding/onboard, including runtime CPU/RAM pressure.
         """
         resources: Dict[str, Any] = {
             "cpu_cores": 1,
@@ -324,7 +355,8 @@ class DMSManager:
         except Exception as exc:
             logger.warning("Failed to query hardware spec: %s", exc, exc_info=True)
 
-        # 1) CPU: total cores minus 1 (minimum 1)
+        # 1) CPU: total cores minus 1 (minimum 1), from hardware spec or os.cpu_count().
+        #    Does not read load average / utilization — DMS may factor that in when handling onboard.
         try:
             # Check multiple possible response structures
             cpu_cores = None
@@ -561,18 +593,28 @@ class DMSManager:
                 check=False,
             )
 
+            stdout_str = cp.stdout or ""
+            stderr_str = cp.stderr or ""
+
             if cp.returncode == 0:
+                actor_err = _onboard_actor_error_from_stdout(stdout_str)
+                if actor_err:
+                    logger.error("Onboarding rejected by DMS actor (rc=0): %s", actor_err)
+                    return {
+                        "status": "error",
+                        "message": actor_err,
+                        "stdout": stdout_str,
+                        "stderr": stderr_str,
+                        "returncode": cp.returncode,
+                    }
                 return {
                     "status": "success",
                     "message": "Compute resources onboarded successfully",
-                    "stdout": cp.stdout or "",
-                    "stderr": cp.stderr or "",
+                    "stdout": stdout_str,
+                    "stderr": stderr_str,
                 }
 
             # Build error message with available information
-            stdout_str = cp.stdout or ""
-            stderr_str = cp.stderr or ""
-            
             if not stdout_str and not stderr_str:
                 error_msg = f"Command failed with return code {cp.returncode} (no output captured)"
                 logger.error("Onboarding failed: %s. Command: %s", error_msg, " ".join(cmd))

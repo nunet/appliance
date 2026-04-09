@@ -19,6 +19,7 @@ If you are familiar with the legacy menu / Flask stack, note that almost all of 
 | FastAPI application | [`backend/nunet_api/README.md`](backend/nunet_api/README.md) | Detailed guide for the REST API (routers, authentication, dependencies). |
 | Frontend | `frontend/` | React/Vite SPA that consumes the API; see comments in source files and the dashboard components. |
 | Deployment tooling | [`deploy/scripts/devctl.sh`](deploy/scripts/devctl.sh) | Main CLI entrypoint for local development and deployments (see below). |
+| Integrated web mode (systemd) | [`deploy/scripts/nunet-web-mode.sh`](deploy/scripts/nunet-web-mode.sh) | **`dev-on` / `dev-off` / `rebuild` / `status`** — switch the real web unit between packaged and repo-backed execution, rebuild frontend, and inspect active unit config. |
 | Dependency security | [`docs/dependency-security.md`](docs/dependency-security.md) | Lockfile, audit gating, and supply-chain hardening policy. |
 | Dependency update runbook | [`docs/dependency-update-procedure.md`](docs/dependency-update-procedure.md) | Step-by-step procedure for adding/updating dependencies safely. |
 
@@ -26,25 +27,32 @@ If you are familiar with the legacy menu / Flask stack, note that almost all of 
 
 ## `deploy/scripts/devctl.sh` Overview
 
-`devctl` is the primary helper script used during development, packaging, and testing. It wraps common tasks for both the backend and frontend. Available subcommands include (run `./deploy/scripts/devctl.sh help` for the latest list):
+`devctl` is the primary helper script used during development and packaging. Run `./deploy/scripts/devctl.sh` with no arguments (or `help`) to print the current command list—it matches what is implemented in `deploy/scripts/devctl.sh` (for example `dev up` / `dev down`, `prod up` / `prod down`, `build`, `install`, `rollback`, `status`, `logs`, `ps`, `doctor`).
 
-| Command | Purpose |
-| --- | --- |
-| `dev up` | Start the FastAPI backend (with `uvicorn`) and the frontend dev server. Uses a Python venv under `deploy/.dev-venv` and a Node.js install under `frontend`. |
-| `dev test` | Run backend unit tests (`pytest`) and any other configured checks. |
-| `dev lint` | Example placeholder for linting (add your linters or formatters here). |
-| `build backend` | Build backend distributables (e.g., wheel or PEX) – adjust to your packaging needs. |
-| `build frontend` | Run `pnpm install` and `pnpm run build` to produce the production bundle under `frontend/dist`. |
-| `clean` | Remove temporary build artifacts, virtual environments, cached dependencies, etc. |
+Internally, `dev up` ensures a Python venv (default `$ROOT/.venv`), installs `backend/nunet_api/requirements.txt`, installs frontend deps with pnpm, and starts the backend and Vite dev servers.
 
-Internally, the script performs a few key tasks:
+**Backend tests** are not run by `devctl`. From the **repository root**, use **`deploy/scripts/run-pytest.sh`**: it activates **`$ROOT/.venv`** (same default as `devctl` / `nunet-web-mode`), sets **`PYTHONPATH`** for `backend.*` and `modules.*`, installs **`pytest`** and **`httpx`** into that venv if missing, then runs pytest.
 
-* Ensures the Python virtual environment exists and installs `backend/nunet_api/requirements.txt`
-* Ensures frontend dependencies are installed (`pnpm install`)
-* Starts/stops the appropriate processes depending on the subcommand
-* Provides a single entrypoint for CI/CD automation and local workflows
+```bash
+./deploy/scripts/run-pytest.sh
+./deploy/scripts/run-pytest.sh -q --tb=short
+./deploy/scripts/run-pytest.sh backend/tests/test_environment_profile.py -v
+```
 
-> **Tip:** Run `./deploy/scripts/devctl.sh help` to see the most up-to-date list of commands, as the script evolves over time.
+See `frontend/README.md` for Cypress E2E. The `.cursor/rules/testing.mdc` rule summarizes both.
+
+### `deploy/scripts/nunet-web-mode.sh` Overview
+
+Use this script when testing against the integrated service on `https://localhost:8443`:
+
+```bash
+./deploy/scripts/nunet-web-mode.sh dev-on    # repo backend+frontend via systemd drop-in
+./deploy/scripts/nunet-web-mode.sh rebuild   # refresh venv + frontend build, restart service
+./deploy/scripts/nunet-web-mode.sh status    # show active service/unit wiring
+./deploy/scripts/nunet-web-mode.sh dev-off   # return to packaged systemd defaults
+```
+
+`dev-on` writes a systemd drop-in override so the service uses repo paths (`backend/`, `.venv`, `frontend/dist`) instead of packaged paths. `dev-off` removes that override.
 
 ---
 
@@ -57,7 +65,9 @@ Internally, the script performs a few key tasks:
 │   └── nunet_api/         # FastAPI application (documented in nunet_api/README.md)
 ├── deploy/
 │   └── scripts/
-│       └── devctl.sh      # Development CLI helper
+│       ├── devctl.sh           # Development CLI helper
+│       ├── nunet-web-mode.sh   # dev-on/off + rebuild/status for real web service
+│       └── run-pytest.sh       # Backend pytest (venv + PYTHONPATH + optional deps)
 ├── frontend/              # React/Vite SPA
 └── README.md              # This document
 ```
@@ -109,7 +119,7 @@ File `nunet-dms.log` will appear in the *user's choice* folder.
 * Keep `backend/modules` in sync with the API – only helpers needed by the routers should live there.
 * Update the backend and frontend READMEs whenever you add or remove functionality.
 * Prefer introducing new functionality via the FastAPI routers rather than reviving legacy menu scripts.
-* Run `./deploy/scripts/devctl.sh dev test` before opening a merge request.
+* Run `./deploy/scripts/run-pytest.sh` from the repo root (and any relevant Cypress specs) before opening a merge request. For integrated-service testing, switch to repo-backed mode with **`./deploy/scripts/nunet-web-mode.sh dev-on`**, then run **`./deploy/scripts/nunet-web-mode.sh rebuild`** after frontend changes so the running bundle matches the repo.
 
 Happy hacking! 🚀
 

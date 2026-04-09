@@ -1,0 +1,54 @@
+---
+description: Installed appliance vs repo, org join & capabilities, packaged OS, dev workflow
+alwaysApply: true
+---
+
+# NuNet Appliance — Overview
+
+## Installed appliance vs. this repository
+
+These are **not the same thing**:
+
+| Topic | **Installed appliance (default)** | **This git repository** |
+|:------|:----------------------------------|:------------------------|
+| **What it is** | The running OS image: **`.deb` packages**, systemd units, installed binaries and static UI under `/usr/...`, config under `/etc/...`, runtime data under documented home paths. | **Source + build tooling** used to develop and produce those packages. |
+| **On disk** | **Does not include** a clone of this repo. Behavior comes from packaged artifacts and the configured environment. | A **checkout** you use for edits, tests, and building debs; paths like `backend/`, `frontend/`, `deploy/` exist only here. |
+| **Purpose** | Production and end-user operation. | Development, CI, and packaging. |
+
+**Development workflow**: Engineers **clone this repo onto an appliance** (or equivalent VM) so changes are exercised **inside the real OS**—same services, sudo policy, paths, and constraints as production—not on a generic laptop filesystem alone. Features must still work when the repo is **absent** and only installed packages remain.
+
+### Sandbox on the appliance (agents and integration-style dev)
+
+In practice, **treat the appliance as the sandbox**: edit, commit, and test **on the machine** that runs the real stack. Use **`./deploy/scripts/nunet-web-mode.sh`** to control the real web service against repo source:
+
+- **`dev-on`**: create/update repo venv, build `frontend/dist`, write systemd override, restart service.
+- **`dev-off`**: remove override and restart to packaged defaults.
+- **`rebuild`**: rebuild frontend (and refresh venv) then restart service.
+- **`status`**: show service unit paths, `ExecStart`, and environment.
+
+This is the preferred path when validating behavior through the real `nunet-appliance-web` service on `https://localhost:8443`.
+
+For a lighter loop (uvicorn + Vite without switching the system unit), **`deploy/scripts/devctl.sh dev up`** is still available—prefer **`nunet-web-mode`** when validating behavior **through the real `nunet-appliance-web` service**.
+
+Monorepo layout here: **FastAPI** (`backend/nunet_api/`), **Python helpers** (`backend/modules/`), **React/Vite SPA** (`frontend/`), **deploy/dev** (`deploy/scripts/devctl.sh`). **Product**: local control plane for a NuNet node—API + dashboard; production serves API and static SPA from the **installed** stack unless **dev-on** is active.
+
+## Organizations and capabilities
+
+An **appliance joins organizations** through the onboarding flow (UI wizard + `/organizations` API). The operator **submits a request** to join an org; the **organization** (via upstream onboarding / approval) **accepts or rejects** it.
+
+When a join is **approved**, the org (or its services) **grant capabilities** to the node—what it may run or access under that org—and return **artifacts** such as **contacts**, **contracts**, capability tokens, and other org-specific data. Those outcomes are **applied on the appliance** (DMS caps, persisted onboarding state, known-org metadata) so the dashboard and DMS reflect the new role.
+
+**Code map:** orchestration and upstream calls live in **`onboarding_manager`**; join scripts in **`organization_manager`**; parsing known-org files in **`org_utils`**. Details and router wiring are in **`backend/modules/README.md`** and the **`organizations`** router.
+
+## Packaged operating environment
+
+The shipping appliance is a **Debian-based image** with **well-defined `.deb` packages** (e.g. `nunet-appliance-web`, `nunet-appliance-base`) and **systemd-managed services**. Treat the host as a **fixed platform**: predictable units under `/lib/systemd/system` and `/etc/systemd/system`, packaged app layout under `/usr/lib/nunet-appliance-web` and `/usr/share/nunet-appliance-web`, and data paths documented in the root `README.md` (ensembles, contracts, DMS state, logs). **Packaging** scripts live in this repo under `deploy/scripts/` (e.g. `build-web-deb.sh`, `build-base-deb.sh`); they **produce** what gets installed—they are not assumed to exist on a production machine.
+
+- **Services**: Core behavior is split across named units (web stack, DMS/updater, Caddy proxy monitor, Avahi, etc.)—see `modules/appliance_manager.py` (`_SERVICES`) and packaging scripts. Prefer **service boundaries** and **journald** for ops visibility over ad hoc daemons.
+- **File structure**: Follow **FHS-style** expectations: config under `/etc/nunet-appliance-web` where packaged; writable runtime data under stable paths (e.g. `/home/ubuntu`, `/home/nunet` per root `README.md`), not repo-relative locations in production.
+- **Security**: OS-level **sudoers** and service users constrain what the API may run; the **dashboard** adds **JWT bearer** auth (`require_auth` on most routes; public `/auth/*`, `/health`, setup/login per `backend/nunet_api/README.md`). New privileged operations must align with **least privilege** and packaging/sudo policy—not only Python checks.
+
+- **Config**: `APPLIANCE_ENV` validated at startup; default paths on appliance FS—see root `README.md`.
+- **Before MR**: run **`./deploy/scripts/run-pytest.sh`** from the repo root (and relevant E2E); `devctl` has no test subcommand.
+
+When adding features, update **backend** `README.md` files (`backend/modules/README.md`, `backend/nunet_api/README.md`) if routes or module contracts change.
