@@ -1,0 +1,52 @@
+---
+description: Pytest backend tests, Cypress E2E, env, real service vs split dev
+alwaysApply: true
+---
+
+# Testing (NuNet Appliance)
+
+Full detail: **`frontend/README.md`** (E2E), root **`README.md`** (dev paths). Default GitLab CI here builds packages; it does **not** run pytest/Cypress unless a job is added.
+
+## Backend — pytest
+
+- Prefer **`./deploy/scripts/run-pytest.sh`** from the repo root: uses **`$REPO_ROOT/.venv`** (same as `devctl` / `nunet-web-mode`), sets **`PYTHONPATH`**, auto-installs **`pytest`** + **`httpx`** in that venv if needed. Pass pytest args: `./deploy/scripts/run-pytest.sh -q`, `./deploy/scripts/run-pytest.sh backend/tests/test_foo.py -v`.
+- Manual equivalent: `PYTHONPATH=$PWD:$PWD/backend` and `python -m pytest backend/tests/` with venv activated.
+- **`test_nunet_api_api.py`** uses a session **stub** of `modules.*`; tests are **not** full-stack against real DMS/Docker unless a file explicitly integrates them.
+
+## Frontend — Cypress
+
+- **Not Python:** Cypress uses **Node** under **`frontend/`** only — no **`venv`** (that is for **`run-pytest.sh`**). Install with e.g. **`npx --yes pnpm@10.4.0 install --frozen-lockfile`** if **`pnpm`** is not on `PATH`.
+- **Env file:** `frontend/.env.e2e` — **copy from** `.env.e2e.example` (`cp .env.e2e.example .env.e2e`). Without it, `source .env.e2e` will fail.
+- **Vars:** `CYPRESS_ADMIN_PASSWORD`, `CYPRESS_BASE_URL`, `CYPRESS_BACKEND_BASE_URL`; optional Mailhog, setup token paths, `CYPRESS_VERIFY_SSL=false` (sets `NODE_TLS_REJECT_UNAUTHORIZED=0` when using **`run-cypress.sh`** or the Docker runner). **`CYPRESS_REBUILD_FRONTEND=true`** — before the run, **`cypress.config.ts`** executes **`./deploy/scripts/nunet-web-mode.sh rebuild`** (needs repo root + sudo for **`systemctl`**). Use **`pnpm cy:run:e2e:rebuild`** or add the var to **`.env.e2e`**.
+- **Run:** **`./frontend/scripts/run-cypress.sh`** prefers **`node_modules/.bin/cypress`**; **`pnpm cy:run:e2e`** only works if **`pnpm`** is installed. **`frontend/scripts/run-e2e-docker.sh`** runs in Docker with cached `node_modules`.
+- **Support:** `cypress/support/e2e.ts` — `loginOrInitialize` uses **`BACKEND_BASE_URL`** for `cy.request` (`/auth/status`, `/auth/token`).
+
+## Real web service (production bundle) vs split dev
+
+**`cypress.config.ts` defaults** (when env vars are unset): **`https://localhost:8443`** for both **`baseUrl`** and **`BACKEND_BASE_URL`**. If **`CYPRESS_BASE_URL`** is set in the shell or **`frontend/.env.e2e`**, it **overrides** that default (an old **`.env.e2e`** often still has **5173**). Cypress logs **`[cypress.config] baseUrl:`** on startup.
+
+| Mode | `CYPRESS_BASE_URL` | `CYPRESS_BACKEND_BASE_URL` |
+|------|--------------------|------------------------------|
+| **Split dev** (Vite + API) | e.g. `http://localhost:5173` | e.g. `http://localhost:8080` |
+| **Integrated service** (built SPA + API same origin) | e.g. `https://host:8443` | **Same URL** as base (required: production `api.ts` uses relative API paths) |
+
+### `nunet-web-mode.sh` (integrated service control)
+
+Use **`./deploy/scripts/nunet-web-mode.sh`** when you need the real systemd web unit to run from repo source:
+
+- **`dev-on`**: create/update repo venv, build frontend, write systemd drop-in override, restart web service.
+- **`dev-off`**: remove override and restart back to packaged unit defaults.
+- **`rebuild`**: refresh venv + frontend build and restart service (use after frontend changes).
+- **`status`**: print active service info (`FragmentPath`, `DropInPaths`, `ExecStart`, `Environment`).
+
+This script auto-detects either service name variant (`nunet-appliance-web.service` and historical `nunet-applinace-web.service`) and exports `SYSTEMD_PAGER=cat` so status/show output does not block on a pager.
+
+**Live service using repo checkout:** When systemd (e.g. **nunet-web-mode** / **dev-on**) serves **`frontend/dist`** from the clone via **`NUNET_STATIC_DIR`**, Cypress still uses the **same** `https://host:port` for both vars—build with **`pnpm run build`**, restart/rebuild the unit, then **`pnpm cy:run:e2e`** with **`CYPRESS_VERIFY_SSL=false`** if needed. See **`frontend/README.md`** and **`frontend/.env.e2e.example`**.
+
+**Flow for integrated runs:** from repo root, **`./deploy/scripts/nunet-web-mode.sh rebuild`** (builds **`frontend/dist`** and restarts **`nunet-appliance-web`**) → align Cypress **`CYPRESS_*`** URLs with that service → run Cypress.
+
+## What to use when
+
+- **pytest** — API logic, parsing, env profiles, mocked flows; fast feedback.
+- **Cypress** — **`cypress/e2e/real-appliance-dashboard.cy.ts`** is the integration path: **real** login + **real** API (set **`CYPRESS_ADMIN_PASSWORD`**, same origin for base + backend URL). Older specs (**`payments-metadata`**, **`dashboard-gpu-resources`**, etc.) use **`cy.intercept`** to isolate UI; keep them in sync with new API routes when they change.
+- After API or contract changes, update **pytest** and/or **Cypress** and any **`.env.e2e.example`** knobs.

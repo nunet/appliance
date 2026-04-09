@@ -1,0 +1,13 @@
+---
+description: React SPA—routing, API clients, auth
+globs: appliance/frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Frontend (`frontend`)
+
+- **Routing**: `HashRouter` in `main.tsx` — URLs are `#/…`. New pages: add route + align with backend prefix (see `nunet-appliance-ui-docs/frontend-routes-and-fastapi.md` or project docs).
+- **API**: Call the FastAPI backend via clients in `src/api/`. Dev: same host `:8080` unless `VITE_API_BASE_URL` is set.
+- **Auth**: JWT via `useAuth` / axios interceptors; `POST /auth/refresh` near expiry. Protected UI wraps authenticated routes.
+- **Server state**: TanStack Query—match query keys to API modules and invalidate on mutations where appropriate.
+- **Types**: Shared UI types in `src/types/`; keep API response types aligned with `schemas`/router responses.

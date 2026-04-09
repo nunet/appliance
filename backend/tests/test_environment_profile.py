@@ -19,7 +19,7 @@ def test_environment_profile_defaults_to_production(monkeypatch):
 
     assert profile.environment == "production"
     assert profile.appliance_updates.preferred_channel == "stable"
-    assert profile.appliance_updates.fallback_channel == "latest"
+    assert profile.appliance_updates.fallback_channel is None
     assert profile.ethereum.chain_id == 1
     assert profile.ethereum.network_name == "Ethereum Mainnet"
 

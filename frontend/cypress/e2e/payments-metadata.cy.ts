@@ -146,6 +146,25 @@ const setupAuthAndShellInterceptors = () => {
     body: { password_set: true, username: "admin" },
   }).as("authStatus");
 
+  cy.intercept("GET", "**/sys/environment*", {
+    statusCode: 200,
+    body: {
+      environment: "production",
+      updates: {
+        appliance: { channel: "stable", resolved_channel: "stable", fell_back: false },
+        dms: { channel: "stable", resolved_channel: "stable", fell_back: false },
+      },
+      ethereum: {
+        chain_id: 1,
+        token_address: "0x0000000000000000000000000000000000000000",
+        token_symbol: "NTX",
+        token_decimals: 18,
+        explorer_base_url: null,
+        network_name: null,
+      },
+    },
+  });
+
   cy.intercept("GET", "**/dms/status", {
     statusCode: 200,
     body: {

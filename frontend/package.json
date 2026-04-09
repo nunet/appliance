@@ -13,7 +13,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "cy:open": "cypress open",
-    "cy:run": "cypress run"
+    "cy:run": "cypress run",
+    "cy:run:e2e": "bash scripts/run-cypress.sh run --browser electron",
+    "cy:open:e2e": "bash scripts/run-cypress.sh open",
+    "cy:run:e2e:rebuild": "bash -c 'export CYPRESS_REBUILD_FRONTEND=1; ./scripts/run-cypress.sh run --browser electron'"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

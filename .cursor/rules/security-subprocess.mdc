@@ -1,0 +1,12 @@
+---
+description: Subprocess, sudo, and input safety for appliance backend
+globs: appliance/backend/**/*.py
+alwaysApply: false
+---
+
+# Security and subprocesses
+
+- Many endpoints rely on **`nunet`**, **`docker`**, **`sudo -n`**, **`systemctl`**, **`journalctl`**—failures should become clear API errors (e.g. `FileNotFoundError` handling where already used).
+- **Never** build shell commands by concatenating unvalidated user strings; validate paths (no traversal), use argument lists with `subprocess`, and keep parsing strict.
+- **Secrets**: DMS passphrase and tokens—follow existing injection/logging rules in `dms_utils`; do not log secrets.
+- New privileged behavior may require **sudoers** / packaging updates—note in code comments and MR description when relevant.

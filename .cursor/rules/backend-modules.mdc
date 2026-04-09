@@ -1,0 +1,13 @@
+---
+description: Python modules layer—DMS, ensembles, onboarding, subprocess patterns
+globs: appliance/backend/modules/**/*.py
+alwaysApply: false
+---
+
+# Backend modules (`backend/modules`)
+
+- **Role**: Thin, testable helpers for subprocesses, DMS CLI, Docker, onboarding, DDNS, UPnP, Caddy. See `backend/modules/README.md` for the inventory matrix.
+- **DMS**: Call the `nunet` CLI via `dms_utils.run_dms_command_with_passphrase`. Reuse cache helpers; use `force_refresh` when the API must show fresh data. New contract verbs → mirror existing helpers (`contract_*`) and `DmsCommandResult` / `_contract_success` / `_contract_error` patterns in `dms_manager`.
+- **Ensembles**: Orchestration in `ensemble_manager_v2`; YAML/templates/validation in `ensemble_utils`. Return dicts routers can forward.
+- **Onboarding / orgs**: State under `~/nunet/appliance/onboarding_state.json`; keep `org_utils` pure (no subprocess) where possible.
+- **Cross-module**: Prefer small shared helpers in `utils` over circular imports between managers.

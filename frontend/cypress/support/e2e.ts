@@ -39,7 +39,7 @@ const MAIL_POLL_DELAY_MS = getEnvNumber("MAIL_POLL_DELAY_MS", 30000);
 const MAIL_TIMEOUT_MS = getEnvNumber("MAIL_TIMEOUT_MS", 600000);
 
 const getBackendBaseUrl = () =>
-  (Cypress.env("BACKEND_BASE_URL") as string) || "http://localhost:8080";
+  (Cypress.env("BACKEND_BASE_URL") as string) || "https://localhost:8443";
 
 const getMailhogBaseUrl = () =>
   ((Cypress.env("MAILHOG_BASE_URL") as string) || "https://mailhog.nunet.network").replace(/\/$/, "");

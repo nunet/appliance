@@ -20,9 +20,19 @@ def test_is_remote_version_newer_falls_back_to_semver(monkeypatch):
 
 
 def test_get_updates_uses_new_comparator(monkeypatch):
-    monkeypatch.setattr(utils, "fetch_latest_appliance", lambda: "0.14.1-2")
     monkeypatch.setattr(utils, "get_appliance_version", lambda: "0.14.1-1")
     monkeypatch.setattr(utils, "_dpkg_lt_version", lambda current, latest: True)
+    monkeypatch.setattr(
+        utils,
+        "_build_update_details",
+        lambda kind: {
+            "environment": "production",
+            "channel": "stable",
+            "resolved_channel": "stable",
+            "fell_back": False,
+            "latest": "0.14.1-2",
+        },
+    )
 
     payload = json.loads(utils.get_appliance_updates())
     assert payload["available"] is True
