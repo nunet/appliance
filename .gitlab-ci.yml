@@ -144,7 +144,11 @@ security:nightly-create-issue-on-failure:
       fi
 
       issue_title="${ISSUE_TITLE} (${CI_COMMIT_REF_NAME})"
-      issue_body="Nightly strict security audit failed.\n\n- Project: ${CI_PROJECT_PATH}\n- Branch: ${CI_COMMIT_REF_NAME}\n- Pipeline: ${CI_PIPELINE_URL}\n- Commit: ${CI_COMMIT_SHA}\n\nPlease review failed security jobs and remediate according to policy."
+      issue_body=$(printf "Nightly strict security audit failed.\n\n- Project: %s\n- Branch: %s\n- Pipeline: %s\n- Commit: %s\n\nPlease review failed security jobs and remediate according to policy." \
+        "$CI_PROJECT_PATH" \
+        "$CI_COMMIT_REF_NAME" \
+        "$CI_PIPELINE_URL" \
+        "$CI_COMMIT_SHA")
 
       # Avoid duplicate open issues with the same title.
       encoded_title="$(printf '%s' "${issue_title}" | sed 's/ /%20/g')"
@@ -155,12 +159,23 @@ security:nightly-create-issue-on-failure:
         exit 0
       fi
 
-      curl -sS --request POST \
+      response=$(curl -sS --fail -w "%{http_code}" -o response.json \
+        --request POST \
         --header "${auth_header}" \
         --data-urlencode "title=${issue_title}" \
         --data-urlencode "description=${issue_body}" \
-        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/issues"
-      echo "Created nightly security failure issue."
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/issues")
+      if [ $? -ne 0 ]; then
+        echo "Error to create security failure issue."
+        cat response.json 2>/dev/null || true
+        exit 1
+      fi
+      if [ "$response" -ne 201 ]; then
+        echo "Unexpected HTTP status: $response"
+        cat response.json
+        exit 1
+      fi
+      echo "Security failure issue successfully created."
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: on_failure
