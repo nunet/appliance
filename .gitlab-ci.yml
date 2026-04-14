@@ -134,12 +134,12 @@ security:nightly-create-issue-on-failure:
 
       # Prefer a dedicated API token; fallback to CI_JOB_TOKEN when available.
       auth_header=""
-      if [ -n "${GITLAB_ISSUE_TOKEN:-}" ]; then
-        auth_header="PRIVATE-TOKEN: ${GITLAB_ISSUE_TOKEN}"
+      if [ -n "${GITLAB_API_TOKEN:-}" ]; then
+        auth_header="PRIVATE-TOKEN: ${GITLAB_API_TOKEN}"
       elif [ -n "${CI_JOB_TOKEN:-}" ]; then
         auth_header="JOB-TOKEN: ${CI_JOB_TOKEN}"
       else
-        echo "No API token available (GITLAB_ISSUE_TOKEN or CI_JOB_TOKEN)."
+        echo "No API token available (GITLAB_API_TOKEN or CI_JOB_TOKEN)."
         exit 0
       fi
 
