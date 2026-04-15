@@ -33,7 +33,7 @@ miniupnpc==2.3.3
 mnemonic==0.21
 oscrypto==1.3.0
 packaging==25.0
-pillow==12.1.1
+pillow==12.2.0
 pprintpp==0.4.0
 pycardano==0.11.1
 pycparser==3.0
