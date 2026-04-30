@@ -21,7 +21,7 @@ default:
     - docker
 
 variables:
-  PNPM_VERSION: "10.33.0"
+  PNPM_VERSION: "10.33.2"
   STRICT_PNPM_AUDIT: "0"
 
 cache:
