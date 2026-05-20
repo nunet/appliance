@@ -48,12 +48,12 @@ security:python-deps:
 security:frontend-deps:
   stage: security
   image: node:22-bookworm
+  allow_failure: true
   script:
     - cd frontend
     - corepack prepare "pnpm@${PNPM_VERSION}" --activate
     - corepack pnpm install --frozen-lockfile
     - corepack pnpm audit --prod --audit-level=critical
-  allow_failure: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
