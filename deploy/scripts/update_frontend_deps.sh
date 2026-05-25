@@ -21,6 +21,38 @@ PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
 AUDIT_LEVEL="${AUDIT_LEVEL:-high}"
 APPLY_FIXES=0
 
+prefer_supported_node_path() {
+  local current_node=""
+  local current_major=""
+
+  if command -v node >/dev/null 2>&1; then
+    current_node="$(command -v node)"
+    current_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+    if [[ "$current_major" =~ ^[0-9]+$ ]] && (( current_major >= 22 && current_major < 25 )); then
+      return 0
+    fi
+  fi
+
+  # Cursor terminals can prepend an embedded Node binary that may be too old.
+  # Prefer a compliant system Node when available.
+  if [[ -x "/usr/bin/node" ]]; then
+    local system_major=""
+    system_major="$(/usr/bin/node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+    if [[ "$system_major" =~ ^[0-9]+$ ]] && (( system_major >= 22 && system_major < 25 )); then
+      export PATH="/usr/bin:/bin:$PATH"
+      echo "Using system Node from /usr/bin/node (v$(/usr/bin/node -v | sed 's/^v//'))"
+      return 0
+    fi
+  fi
+
+  echo "No supported Node runtime found in PATH (requires >=22 <25)." >&2
+  if [[ -n "$current_node" ]]; then
+    echo "Current node: $current_node ($(node -v 2>/dev/null || echo unknown))" >&2
+  fi
+  echo "Install Node 22.x or ensure /usr/bin/node points to a compatible version." >&2
+  exit 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -66,6 +98,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+prefer_supported_node_path
 
 if [[ ! -d "$FRONTEND_DIR" ]]; then
   echo "Frontend directory not found: $FRONTEND_DIR" >&2
