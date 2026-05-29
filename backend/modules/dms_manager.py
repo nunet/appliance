@@ -1317,8 +1317,9 @@ class DMSManager:
             except Exception as exc:  # defensive: log request failures shouldn't abort log collection
                 logger.warning("Error requesting allocation logs: %s", exc)
 
-            stdout_path = alloc_path / "stdout.logs"
-            stderr_path = alloc_path / "stderr.logs"
+            # DMS writes stdout.log / stderr.log under LogsWrittenTo; prefer those names.
+            stdout_path = alloc_path / "stdout.log"
+            stderr_path = alloc_path / "stderr.log"
             allocation = {
                 "dir": str(alloc_path),
                 "stdout": _make_filelog(stdout_path, lines),

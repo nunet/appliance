@@ -500,6 +500,10 @@ def _extract_version(stdout: str) -> Optional[str]:
 
 def get_dms_status_info() -> Dict[str, Any]:
     """Return the current high-level DMS status information."""
+    cached = _read_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, ttl=_CACHE_TTL_DEFAULT)
+    if cached is not None:
+        return cached
+
     status: Dict[str, Any] = {
         "dms_status": "Unknown",
         "dms_version": "Unknown",
@@ -558,6 +562,7 @@ def get_dms_status_info() -> Dict[str, Any]:
     else:
         logger.debug("DMS peer info unavailable; service may not be running")
 
+    _write_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, status)
     return status
 
 def _bytes_to_gb(value: int, precision: int = 2) -> float:

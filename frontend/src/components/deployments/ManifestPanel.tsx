@@ -13,15 +13,12 @@ import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/CopyButton";
 import { LeftTruncatedText } from "@/components/ui/LeftTruncatedText";
-import { RefreshButton } from "@/components/ui/RefreshButton"; // 👈 import your reusable refresh
 import { Server, Network, Container, Globe, Box, ListTree } from "lucide-react";
 import { AllocationTabs } from "./AllocationsTab";
 
 type ManifestPanelProps = {
   manifest: any | null | undefined;
   isLoading?: boolean;
-  onRefresh?: () => void; // 👈 add a callback for refreshing
-  isRefreshing?: boolean; // 👈 track if refreshing
   _setAlloc: (alloc: string | null) => void;
 };
 
@@ -105,8 +102,6 @@ const Pill = ({
 function ManifestPanelImpl({
   manifest,
   isLoading,
-  onRefresh,
-  isRefreshing,
   _setAlloc,
 }: ManifestPanelProps) {
   const m = manifest?.manifest ?? {};
@@ -189,15 +184,6 @@ function ManifestPanelImpl({
           data-testid="deployment-manifest-panel"
         >
           No manifest available
-          {onRefresh && (
-            <div className="mt-4">
-              <RefreshButton
-                onClick={onRefresh}
-                isLoading={isRefreshing}
-                tooltip="Refresh manifest"
-              />
-            </div>
-          )}
         </Card>
       </div>
     );
@@ -209,7 +195,7 @@ function ManifestPanelImpl({
         className="relative bg-gradient-to-b from-primary/5 to-card dark:from-primary/10 shadow-sm border rounded-xl overflow-hidden"
         data-testid="deployment-manifest-panel"
       >
-        <CardHeader className="space-y-1 flex flex-row items-center justify-between">
+        <CardHeader className="space-y-1">
           <div>
             <CardDescription className="flex items-center gap-2 text-sm">
               <ListTree className="h-4 w-4" />
@@ -220,13 +206,6 @@ function ManifestPanelImpl({
               <span className="text-primary">{short(m?.id)}</span>
             </CardTitle>
           </div>
-          {onRefresh && (
-            <RefreshButton
-              onClick={onRefresh}
-              isLoading={isRefreshing}
-              tooltip="Refresh manifest"
-            />
-          )}
         </CardHeader>
 
         <CardContent className="space-y-8">

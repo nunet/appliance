@@ -19,6 +19,8 @@ __all__ = [
     "RunningListResponse",
     "ManifestTextResponse",
     "LogsTextResponse",
+    "DeploymentInfoStatusResponse",
+    "DeploymentInfoResponse",
     "DmsLogsResponse",
     "DeployRequest",
     "DeployResponse",
@@ -605,6 +607,9 @@ class DeploymentsWebResponse(BaseModel):
     status: str
     deployments: List[DeploymentWebItem]
     count: int
+    total: Optional[int] = None
+    has_more: Optional[bool] = None
+    next_offset: Optional[int] = None
 
 class RunningItem(BaseModel):
     id: str
@@ -632,6 +637,28 @@ class LogsTextResponse(BaseModel):
     dms: Optional[str] = None
     allocation: Optional["AllocationLogs"] = None
     dms_logs: Optional["DmsLogBundle"] = None
+
+class DeploymentInfoStatusResponse(BaseModel):
+    status: Literal["success", "error", "warning"]
+    deployment_status: str
+    message: str
+
+class DeploymentInfoResponse(BaseModel):
+    # Allow the backend to add optional info payloads (usage, logs, debug, etc.)
+    # without breaking existing API clients.
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    error: Optional[Any] = None
+    raw_status: Optional[Any] = None
+    status: DeploymentInfoStatusResponse
+    manifest: Dict[str, Any] = PydField(default_factory=dict)
+    allocations: List[str] = PydField(default_factory=list)
+    allocations_info: Dict[str, Any] = PydField(default_factory=dict)
+
+    # Optional consolidated payloads returned by /dms/node/deployment/info.
+    usage: Optional[Dict[str, Any]] = None
+    logs: Optional[Dict[str, Any]] = None
 
 class DeploymentFileResponse(BaseModel):
     status: str

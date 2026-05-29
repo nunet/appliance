@@ -57,6 +57,7 @@ frontend/dist/
 frontend/build/
 frontend/.vite/
 frontend/.cache/
+.vite/
 
 # Cypress (local run artifacts)
 frontend/cypress/screenshots/
@@ -244,5 +245,10 @@ cython_debug/
 # Local development
 local/
 dev/
+.devctl/
 deploy/admin_credentials.json
 .aider*
+
+# Cypress artifacts
+frontend/cypress/screenshots/
+frontend/cypress/videos/

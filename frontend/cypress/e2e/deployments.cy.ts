@@ -99,10 +99,10 @@ const waitForDeploymentsListReady = (
       const isLoading = text.includes("Loading deployments...");
 
       if (hasCards) {
-        return "ready";
+        return cy.wrap("ready", { log: false });
       }
       if (hasEmpty && !isLoading) {
-        return "empty";
+        return cy.wrap("empty", { log: false });
       }
 
       const elapsed = Date.now() - started;
@@ -110,7 +110,7 @@ const waitForDeploymentsListReady = (
         cy.logStep(
           `Deployments list still loading after ${Math.round(elapsed / 1000)}s; skipping assertions.`
         );
-        return "timeout";
+        return cy.wrap("timeout", { log: false });
       }
       cy.logStep(`Waiting for deployments list (${Math.round(elapsed / 1000)}s)...`);
       return cy.wait(intervalMs).then(() => poll());
@@ -314,9 +314,9 @@ describe("Deployments wizard + details", () => {
     cy.logStep("Opening deployments list");
     openDeploymentsList();
 
-    cy.intercept("GET", "**/ensemble/deployments/*/status*").as("deploymentStatus");
-    cy.intercept("GET", "**/ensemble/deployments/*/manifest/raw*").as("deploymentManifest");
-    cy.intercept("GET", "**/ensemble/deployments/*/allocations*").as("deploymentAllocations");
+    // Split /info waits by query string to avoid races with the initial details fetch.
+    cy.intercept("GET", "**/ensemble/deployments/*/info?usage=true").as("deploymentInfoUsage");
+    cy.intercept("GET", "**/ensemble/deployments/*/info?logs=true").as("deploymentInfoLogs");
 
     cy.logStep("Opening deployment details");
     cy.get("@deploymentId").then((deploymentId) => {
@@ -330,9 +330,16 @@ describe("Deployments wizard + details", () => {
     cy.location("hash", { timeout: 20000 }).should("include", "/deploy/");
 
     cy.logStep("Waiting for deployment details view to render");
+    cy.get('[data-testid="deployment-detail-error"]', { timeout: 2000 }).should("not.exist");
 
     cy.get('[data-testid="deployment-info-card"]', { timeout: DEPLOYMENT_DETAIL_WAIT_MS })
       .should("be.visible");
+
+    cy.wait("@deploymentInfoLogs", { timeout: DEPLOYMENT_DETAIL_WAIT_MS }).then((interception) => {
+      expect(interception.response?.statusCode, "initial deployment info status").to.equal(200);
+      const url = new URL(interception.request.url);
+      expect(url.searchParams.get("logs"), "initial info includes log paths").to.equal("true");
+    });
     cy.get('[data-testid="deployment-info-status"]', { timeout: DEPLOYMENT_DETAIL_WAIT_MS })
       .invoke("text")
       .should("not.be.empty");
@@ -361,6 +368,20 @@ describe("Deployments wizard + details", () => {
       .should("exist");
     cy.get('[data-testid="deployment-logs-dms"]', { timeout: DEPLOYMENT_DETAIL_WAIT_MS })
       .should("exist");
+
+    cy.logStep("Validating deployment allocations usage toggle");
+
+    // Enable usage stats (expects an extra /info call with usage=true).
+    cy.get('[data-testid="deployment-allocations-toggle-usage"]')
+      .should("be.visible")
+      .click({ force: true });
+    cy.wait("@deploymentInfoUsage", { timeout: DEPLOYMENT_DETAIL_WAIT_MS }).then((interception) => {
+      expect(interception.response?.statusCode, "usage info status").to.equal(200);
+      const url = new URL(interception.request.url);
+      expect(url.searchParams.get("usage"), "usage query param").to.equal("true");
+      const body = interception.response?.body as unknown;
+      expect(Boolean(body && typeof body === "object"), "usage info json").to.equal(true);
+    });
 
     cy.get("body").then(($body) => {
       const viewBtn = $body.find('[data-testid="deployment-view-file-button"]');

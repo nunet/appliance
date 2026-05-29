@@ -161,12 +161,36 @@ export default function NewDeployment() {
 
       const res = await deployFromTemplate(payload);
 
+      console.log("Deployment response:", res);
+
+      let data = res.message;
+
+      if (typeof res.message === "string") {
+        try {
+          data = JSON.parse(res.message);
+        } catch {
+          // it is not JSON; keep the original string
+        }
+      }
+
+      if (
+        res.status === "error" ||
+        (typeof data === "object" &&
+          data?.Status === "ERROR")
+      ) {
+        throw new Error(
+          (typeof data === "object" &&
+            data?.Error) ||
+            res.message ||
+            "Deployment failed"
+        );
+      }
+
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
 
-      console.log("Deployment response:", res);
       navigate("/deploy");
       toast.success("Deployment started successfully!");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Deployment failed:", err);
       toast.error("Deployment failed. Check console for details.");
     } finally {
