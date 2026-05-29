@@ -19,7 +19,7 @@ CYPRESS_IMAGE="${CYPRESS_IMAGE:-cypress/included:13.15.2}"
 SPECS_DEFAULT="cypress/e2e/join-org-mailhog.cy.ts,cypress/e2e/offboard-onboard.cy.ts,cypress/e2e/deployments.cy.ts,cypress/e2e/ensembles.cy.ts,cypress/e2e/org-leave.cy.ts"
 CYPRESS_SPECS="${CYPRESS_SPECS:-$SPECS_DEFAULT}"
 
-PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
+PNPM_VERSION="${PNPM_VERSION:-10.33.4}"
 
 DOCKER_NETWORK="${DOCKER_NETWORK:-}"
 DOCKER_ARGS=()

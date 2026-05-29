@@ -90,7 +90,7 @@ mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 # Ensure proper permissions
 chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 
-PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
+PNPM_VERSION="${PNPM_VERSION:-10.33.4}"
 STRICT_PNPM_AUDIT="${STRICT_PNPM_AUDIT:-1}"
 PNPM_CMD=(corepack pnpm)
 corepack prepare "pnpm@${PNPM_VERSION}" --activate
