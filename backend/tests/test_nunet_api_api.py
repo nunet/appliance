@@ -244,9 +244,6 @@ def stub_external_modules(tmp_path_factory):
         def get_deployments_for_web(self, *args, **kwargs):
             return {"status": "success", "deployments": [], "count": 0}
 
-        def view_running_ensembles(self):
-            return {"status": "success", "message": "", "items": []}
-
         def __getattr__(self, attr: str):
             def _(*_args, **_kwargs):
                 return {"status": "success", "message": f"{attr} executed"}

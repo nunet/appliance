@@ -1,11 +1,12 @@
 "use client";
 
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery, useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
-  getDeployments,
-  getDeploymentDetails,
+  getDeploymentInfo,
+  type DeploymentInfoResponse,
   getDeploymentLogs,
+  type DeploymentLogsResponse,
   requestDeploymentLogs,
   shutdownDeployment,
   getDeploymentFile,
@@ -23,6 +24,7 @@ import {
 import {
   Card,
   CardHeader,
+  CardContent,
   CardDescription,
   CardTitle,
   CardFooter,
@@ -31,7 +33,6 @@ import {
 import { Separator } from "../components/ui/separator";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
-import DeploymentDetailsSkeleton from "../components/deployments/DeploymentsSkeleton";
 import { CopyButton } from "../components/ui/CopyButton";
 import { LeftTruncatedText } from "../components/ui/LeftTruncatedText";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -56,14 +57,15 @@ import { DmsLogView, parseDmsLogEntries } from "../lib/dmsLogs";
 export default function DeploymentDetailsPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [isShuttingDown, setIsShuttingDown] = useState(false);
 
   const [_alloc, _setAlloc] = useState<string | null>(null);
+
+  // Toggle for the consolidated /info call (lifted so all cards share a single fetch).
+  const [includeUsage, setIncludeUsage] = useState(false);
 
   // ?? Shutdown handler
   const handleShutdown = async (deploymentId: string) => {
     try {
-      setIsShuttingDown(true);
       const res = await shutdownDeployment(deploymentId);
       toast.success(res.status, { description: res.message });
       return true;
@@ -73,67 +75,145 @@ export default function DeploymentDetailsPage() {
           error?.response?.data?.message || "An unexpected error occurred",
       });
       return false;
-    } finally {
-      setIsShuttingDown(false);
     }
   };
 
-  // ?? Fetch deployments (for lookup)
-  const { data: deploymentsData, isLoading: isLoadingDeployments } = useQuery({
-    queryKey: ["deployments"],
-    queryFn: getDeployments,
-    refetchOnMount: false,
+  // Single consolidated query that powers every card on the page. Log path
+  // metadata is always requested (logs=true) so DeploymentLogsCard can reuse
+  // paths without a second GET .../info.
+  const detailsQuery = useQuery<DeploymentInfoResponse>({
+    queryKey: ["deployment-info", id, includeUsage ? 1 : 0],
+    queryFn: () =>
+      getDeploymentInfo(id!, {
+        usage: includeUsage,
+        logs: true,
+      }),
+    enabled: Boolean(id),
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     staleTime: Infinity,
     gcTime: Infinity,
+    placeholderData: keepPreviousData,
   });
-  const deployment = deploymentsData?.deployments?.find((d) => d.id === id);
 
+  const details = detailsQuery.data;
+  const refetchDetails = detailsQuery.refetch;
+  const isFetchingDetails = detailsQuery.isFetching;
+  const isLoadingDetails = detailsQuery.isLoading;
 
-  if (!deployment && !isLoadingDeployments && id)
+  const deploymentSummary = useMemo(() => {
+    if (!id) return null;
+    if (!details) {
+      return {
+        id,
+        status: "unknown",
+        type: "",
+        timestamp: "",
+        ensemble_file: "",
+        ensemble_file_name: undefined as string | undefined,
+        ensemble_file_path: undefined as string | undefined,
+        ensemble_file_relative: undefined as string | undefined,
+      };
+    }
+    return {
+      id: details.id ?? id,
+      status: details.status?.deployment_status ?? "unknown",
+      type: "",
+      timestamp: "",
+      ensemble_file: "",
+      ensemble_file_name: undefined as string | undefined,
+      ensemble_file_path: undefined as string | undefined,
+      ensemble_file_relative: undefined as string | undefined,
+    };
+  }, [id, details]);
+
+  if (!id) {
+    return null;
+  }
+
+  if (detailsQuery.isError) {
+    const err = detailsQuery.error as { message?: string; response?: { data?: { message?: string; detail?: unknown } } };
+    const detail = err?.response?.data?.detail;
+    const detailStr =
+      typeof detail === "string"
+        ? detail
+        : detail && typeof detail === "object" && "message" in detail
+          ? String((detail as { message?: string }).message)
+          : undefined;
+    const message =
+      err?.response?.data?.message ||
+      detailStr ||
+      err?.message ||
+      "Unable to load deployment details.";
     return (
-      <div className="flex flex-col items-center justify-center mt-20 text-center">
-        <p className="text-lg font-medium mb-4">
-          Deployment with ID <span className="font-mono">{id}</span> not found.
-        </p>
-        <Button
-          variant="outline"
-          onClick={() => navigate("/deploy")}
-          className="flex items-center gap-2"
-        >
+      <div
+        className="flex flex-col items-center justify-center mt-20 text-center px-4"
+        data-testid="deployment-detail-error"
+      >
+        <p className="text-lg font-medium mb-2">Could not load deployment</p>
+        <p className="text-sm text-muted-foreground mb-4 max-w-lg break-words">{message}</p>
+        <Button variant="outline" onClick={() => navigate("/deploy")} className="flex items-center gap-2">
           <ArrowLeft className="h-4 w-4" /> Back to Deployments
         </Button>
       </div>
     );
+  }
+
+  if (!deploymentSummary) {
+    return null;
+  }
 
   return (
     <>
       {/* Deployment Info Card */}
-      {deployment && (
-        <DeploymentInfoCard
-          deployment={deployment}
+      <DeploymentInfoCard
+          deployment={deploymentSummary}
           handleShutdown={handleShutdown}
+          details={details}
+          refetch={refetchDetails}
+          isFetching={isFetchingDetails}
         />
-      )}
 
       {/* Deployment Progress + Allocations */}
       <div className="grid grid-cols-1 gap-4 px-4 lg:grid-cols-3 xl:grid-cols-3 lg:px-6 my-4">
-        <DeploymentProgressCard deploymentId={id!} />
-        <DeploymentAllocationsCard deploymentId={id!} />
+        <DeploymentProgressCard details={details} />
+        <DeploymentAllocationsCard
+          selectedAllocation={_alloc}
+          details={details}
+          isFetching={isFetchingDetails}
+          isLoading={isLoadingDetails}
+          includeUsage={includeUsage}
+          setIncludeUsage={setIncludeUsage}
+        />
       </div>
 
       {/* Manifest */}
-      <DeploymentManifestCard deploymentId={id!} _setAlloc={_setAlloc} />
+      <DeploymentManifestCard
+        _setAlloc={_setAlloc}
+        manifest={details?.manifest}
+        isLoading={isLoadingDetails}
+      />
 
       {/* Logs */}
-      <DeploymentLogsCard deploymentId={id!} alloc={_alloc} />
+      <DeploymentLogsCard
+        deploymentId={id!}
+        alloc={_alloc}
+        details={details}
+        isLoadingDetails={isLoadingDetails}
+      />
     </>
   );
 }
 
 
 // ?? Deployment Info
-function DeploymentInfoCard({ deployment, handleShutdown }: any) {
+function DeploymentInfoCard({
+  deployment,
+  handleShutdown,
+  details,
+  refetch,
+  isFetching,
+}: any) {
   const [isShuttingDown, setIsShuttingDown] = useState(false);
   const [isFileModalOpen, setIsFileModalOpen] = useState(false);
   const [fileLoading, setFileLoading] = useState(false);
@@ -142,20 +222,6 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
   const [fileError, setFileError] = useState<string | null>(null);
   const [fileCandidates, setFileCandidates] = useState<string[]>([]);
   const shutdownRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const queryClient = useQueryClient();
-
-  const {
-    data: details,
-    refetch,
-    isFetching,
-  } = useQuery({
-    queryKey: ["deployment-details", deployment.id],
-    queryFn: () => getDeploymentDetails(deployment.id),
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
 
   const pickString = (...candidates: Array<unknown>) => {
     for (const candidate of candidates) {
@@ -225,10 +291,10 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
       clearTimeout(shutdownRefreshTimeoutRef.current);
     }
 
+    // Refresh deployment info only; the deployments list refetches when the user
+    // opens Deployments or uses browser back (DeploymentsTable refetchOnMount).
     shutdownRefreshTimeoutRef.current = setTimeout(() => {
-      void refetch().finally(() => {
-        void queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      });
+      void refetch();
       shutdownRefreshTimeoutRef.current = null;
     }, 10_000);
   };
@@ -296,8 +362,8 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
         className="@container/card bg-gradient-to-t from-primary/5 to-card dark:bg-card shadow-xs border rounded-lg animate-[neonPulse_1.5s_infinite] text-wrap break-words w-full"
         data-testid="deployment-info-card"
       >
-        <CardHeader className="w-full flex flex-col gap-2">
-          <div className="flex items-center gap-2 flex-1 sm:flex-none min-w-0">
+        <CardHeader className="w-full flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
             <CardTitle className="font-semibold tabular-nums max-w-[250px] sm:max-w-full break-words min-w-0">
               <LeftTruncatedText
                 text={deployment.id}
@@ -306,6 +372,42 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
               />
             </CardTitle>
             <CopyButton text={deployment.id} className={undefined} />
+          </div>
+          <div className="flex shrink-0 flex-row items-center gap-2">
+            {details?.status?.deployment_status === "running" && (
+              <Button
+                onClick={async () => {
+                  setIsShuttingDown(true);
+                  try {
+                    const didShutdown = await handleShutdown(deployment.id);
+                    if (didShutdown) {
+                      scheduleStatusRefresh();
+                    }
+                  } finally {
+                    setIsShuttingDown(false);
+                  }
+                }}
+                className="bg-red-500 hover:bg-red-600 text-white flex flex-row gap-2"
+                disabled={isShuttingDown}
+              >
+                {isShuttingDown ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Shutting down...
+                  </>
+                ) : (
+                  "Shut Down Deployment"
+                )}
+              </Button>
+            )}
+            <RefreshButton
+              onClick={async () => {
+                await refetch();
+              }}
+              isLoading={!!isFetching}
+              tooltip="Refresh Deployment Info"
+              children="Refresh Info..."
+            />
           </div>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
@@ -355,44 +457,6 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
                 </>
               ) : null}
             </p>
-          </div>
-
-          <div className="mt-3 flex flex-col sm:flex-row sm:gap-2">
-            <RefreshButton
-              onClick={async () => {
-                await refetch();
-              }}
-              isLoading={!!isFetching}
-              tooltip="Refresh Deployment Info"
-              children="Refresh Info..."
-            />
-
-            {details?.status?.deployment_status === "running" && (
-              <Button
-                onClick={async () => {
-                  setIsShuttingDown(true);
-                  try {
-                    const didShutdown = await handleShutdown(deployment.id);
-                    if (didShutdown) {
-                      scheduleStatusRefresh();
-                    }
-                  } finally {
-                    setIsShuttingDown(false);
-                  }
-                }}
-                className="block bg-red-500 hover:bg-red-600 text-white mt-3 sm:mt-0 flex flex-row gap-2"
-                disabled={isShuttingDown}
-              >
-                {isShuttingDown ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Shutting down...
-                  </>
-                ) : (
-                  "Shut Down Deployment"
-                )}
-              </Button>
-            )}
           </div>
         </CardFooter>
       </Card>
@@ -447,26 +511,13 @@ function DeploymentInfoCard({ deployment, handleShutdown }: any) {
 
 
 // ?? Deployment Progress
-export function DeploymentProgressCard({
-  deploymentId,
-}: {
-  deploymentId: string;
-}) {
-  const {
-    data: details,
-    refetch,
-    isFetching,
-  } = useQuery({
-    queryKey: ["deployment-details", deploymentId],
-    queryFn: () => getDeploymentDetails(deploymentId),
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
+export function DeploymentProgressCard({ details }: { details: any }) {
+  const deploymentStatus = details?.status?.deployment_status ?? "unknown";
+  const deploymentStatusUpper = String(deploymentStatus).toUpperCase();
 
-  // Render skeleton while loading
-  if (!details || isFetching) {
+  // Render skeleton only on first load; background refetches keep previous data
+  // so toggling usage/logs in the allocations card doesn't blank this card.
+  if (!details) {
     return (
       <Card className="@container/card lg:col-span-1" data-testid="deployment-progress-card">
         <CardHeader>
@@ -490,28 +541,21 @@ export function DeploymentProgressCard({
         <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl flex flex-row gap-2 items-center">
           <span
             className={
-              details.status.deployment_status === "completed"
+              deploymentStatus === "completed"
                 ? "text-green-500"
-                : details.status.deployment_status === "running"
+                : deploymentStatus === "running"
                 ? "text-blue-500"
                 : "text-red-500"
             }
             data-testid="deployment-progress-status"
           >
-            {details.status.deployment_status.toUpperCase()}
+            {deploymentStatusUpper}
           </span>
-          <RefreshButton
-            onClick={async () => {
-              await refetch();
-            }}
-            isLoading={!!isFetching}
-            tooltip="Refresh Deployment Info"
-          />
         </CardTitle>
         <CardAction>
-          {details.status.deployment_status === "completed" ? (
+          {deploymentStatus === "completed" ? (
             <CheckCircle className="text-green-500" />
-          ) : details.status.deployment_status === "running" ? (
+          ) : deploymentStatus === "running" ? (
             <Repeat2Icon className="text-blue-500 animate-spin" />
           ) : (
             <XCircleIcon className="text-red-500" />
@@ -521,7 +565,7 @@ export function DeploymentProgressCard({
       <CardFooter className="flex-col items-start gap-1.5 text-sm">
         <div className="line-clamp-1 flex gap-2 font-medium">Report:</div>
         <div className="text-muted-foreground">
-          {details.status.message || "No report available."}
+          {details?.status?.message || "No report available."}
         </div>
       </CardFooter>
     </Card>
@@ -529,86 +573,239 @@ export function DeploymentProgressCard({
 }
 
 // ?? Deployment Allocations
-function DeploymentAllocationsCard({ deploymentId }: { deploymentId: string }) {
-  const {
-    data: details,
-    refetch,
-    isFetching,
-  } = useQuery({
-    queryKey: ["deployment-allocations", deploymentId],
-    queryFn: () =>
-      getDeploymentDetails(deploymentId).then((d) => d.allocations),
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
+function DeploymentAllocationsCard({
+  selectedAllocation,
+  details,
+  isFetching,
+  isLoading,
+  includeUsage,
+  setIncludeUsage,
+}: {
+  selectedAllocation?: string | null;
+  details: any;
+  isFetching: boolean;
+  isLoading: boolean;
+  includeUsage: boolean;
+  setIncludeUsage: (next: boolean) => void;
+}) {
+  const allocations = (details?.allocations ?? []) as string[];
+
+  const manifestAllocations = (details?.manifest?.manifest?.allocations ??
+    {}) as Record<string, any>;
+
+  const allocationInfo = useMemo(() => {
+    const base = (details?.allocations_info ?? {}) as Record<string, any>;
+    return { ...base };
+  }, [details?.allocations_info]);
+
+  const formatBytes = (value: unknown) => {
+    if (value === null || value === undefined) return "N/A";
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n)) return "N/A";
+    if (n === 0) return "0 B";
+    if (n < 0) return "N/A";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let idx = 0;
+    let v = n;
+    while (v >= 1024 && idx < units.length - 1) {
+      v /= 1024;
+      idx += 1;
+    }
+    const precision = idx === 0 ? 0 : idx <= 2 ? 1 : 2;
+    return `${v.toFixed(precision)} ${units[idx]}`;
+  };
+
+  const isUsageBusy = includeUsage && (isFetching || isLoading);
 
   return (
     <Card className="@container/card lg:col-span-2" data-testid="deployment-allocations-card">
-      <CardHeader>
-        <CardDescription className="flex items-center gap-2 justify-between w-full">
-          <span>Allocations</span>
-          <RefreshButton
-            onClick={async () => {
-              await refetch();
-            }}
-            isLoading={!!isFetching}
-            tooltip="Refresh Allocations"
-          />
-        </CardDescription>
-        <Separator className="my-2" />
+      <CardHeader className="border-b">
+        <CardDescription>Allocations</CardDescription>
+        <CardAction>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-help">Usage</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[280px] text-xs">
+                  Fetch resource usage stats from DMS. This can take a bit; 0 values usually mean DMS did not report
+                  metrics for that allocation.
+                </TooltipContent>
+              </Tooltip>
+              <Switch
+                checked={includeUsage}
+                onCheckedChange={setIncludeUsage}
+                data-testid="deployment-allocations-toggle-usage"
+              />
+              {isUsageBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : null}
+            </div>
+          </div>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
 
-        {details?.length > 0 ? (
-          <ul className="mt-2">
-            {details.map((allocation: any) => (
-              <li key={allocation.id} className="flex items-center gap-2">
-                <span className="text-sm text-muted-foreground">
-                  {allocation}
-                </span>
-              </li>
-            ))}
-          </ul>
+        {allocations.length > 0 ? (
+          <div className="space-y-3">
+            {allocations.map((name: string) => {
+              const staticAlloc = manifestAllocations?.[name] ?? {};
+              const runtime = allocationInfo?.[name] ?? {};
+              const statusText =
+                runtime?.status ??
+                staticAlloc?.status ??
+                "unknown";
+              const dnsName = runtime?.dns_name ?? staticAlloc?.dns_name ?? "N/A";
+              const ip = runtime?.ip ?? runtime?.private_address ?? staticAlloc?.priv_addr ?? "N/A";
+              const usage = includeUsage ? runtime?.resource_usage ?? null : null;
+              const allocationIdRaw = runtime?.allocation_id ?? staticAlloc?.id ?? null;
+              const allocationId = typeof allocationIdRaw === "string" ? allocationIdRaw : allocationIdRaw ? String(allocationIdRaw) : "";
+              const allocationIdDisplay = allocationId || "N/A";
+
+              return (
+                <div
+                  key={name}
+                  className={`rounded-lg border bg-background/50 p-3 space-y-2 ${
+                    selectedAllocation && name === selectedAllocation ? "ring-1 ring-primary/30" : ""
+                  }`}
+                  data-testid={`deployment-allocation-${name}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-mono text-xs break-all">{name}</div>
+                    <div className="text-xs text-muted-foreground">{String(statusText)}</div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+                    <div className="min-w-0">
+                      <span className="font-medium text-foreground/80">DNS:</span>{" "}
+                      <span className="break-all">{String(dnsName)}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-medium text-foreground/80">IP:</span>{" "}
+                      <span className="break-all">{String(ip)}</span>
+                    </div>
+                    <div className="min-w-0 flex items-center gap-2">
+                      <span className="font-medium text-foreground/80 shrink-0">Allocation ID:</span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="min-w-0 flex-1">
+                            <LeftTruncatedText
+                              text={allocationIdDisplay}
+                              title={allocationIdDisplay}
+                              className="w-full font-mono text-xs"
+                            />
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[min(80vw,720px)]">
+                          <div className="font-mono text-xs break-all">{allocationIdDisplay}</div>
+                        </TooltipContent>
+                      </Tooltip>
+                      {allocationId ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div>
+                              <CopyButton text={allocationId} className="h-6 w-6" />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent className="text-xs">Copy allocation id</TooltipContent>
+                        </Tooltip>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  {usage ? (
+                    <div className="grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+                      <div>
+                        <span className="font-medium text-foreground/80">CPU:</span>{" "}
+                        {Number.isFinite(Number(usage?.cpu_usage_percent))
+                          ? `${Number(usage?.cpu_usage_percent).toFixed(1)}%`
+                          : "N/A"}
+                      </div>
+                      <div>
+                        <span className="font-medium text-foreground/80">Memory:</span>{" "}
+                        {formatBytes(usage?.memory_used_bytes)} / {formatBytes(usage?.memory_limit_bytes)}
+                      </div>
+                      <div>
+                        <span className="font-medium text-foreground/80">Network:</span>{" "}
+                        RX {formatBytes(usage?.network_rx_bytes)} / TX {formatBytes(usage?.network_tx_bytes)}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <p className="text-muted-foreground text-center mt-2">
             No allocations found.
           </p>
         )}
-      </CardHeader>
+      </CardContent>
     </Card>
   );
 }
 
 // ?? Deployment Manifest
-function DeploymentManifestCard({ deploymentId, _setAlloc }: { deploymentId: string, _setAlloc: (alloc: string | null) => void }) {
-  const {
-    data: details,
-    refetch,
-    isFetching,
-    isLoading,
-  } = useQuery({
-    queryKey: ["deployment-manifest", deploymentId],
-    queryFn: () => getDeploymentDetails(deploymentId).then((d) => d.manifest),
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
-
+function DeploymentManifestCard({
+  _setAlloc,
+  manifest,
+  isLoading,
+}: {
+  _setAlloc: (alloc: string | null) => void;
+  manifest: any;
+  isLoading: boolean;
+}) {
   return (
     <ManifestPanel
-      manifest={details}
+      manifest={manifest}
       isLoading={isLoading}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching}
       _setAlloc={_setAlloc}
     />
   );
 }
 
 // ?? Deployment Logs
-function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, alloc: string | null }) {
-  const allocKey = alloc ?? "__default__";
+function DeploymentLogsCard({
+  deploymentId,
+  alloc,
+  details,
+  isLoadingDetails,
+}: {
+  deploymentId: string;
+  alloc: string | null;
+  details: any;
+  isLoadingDetails: boolean;
+}) {
+  const logQuery = useMemo(() => {
+    const allocationsList = (details?.allocations ?? []) as string[];
+    if (!details || allocationsList.length === 0) return null;
+
+    const csv = allocationsList.join(",");
+    let targetAlloc = alloc?.trim() || null;
+    if (!targetAlloc && allocationsList.length === 1) {
+      targetAlloc = allocationsList[0];
+    }
+    if (!targetAlloc) return null;
+
+    const runtime = (details.allocations_info as Record<string, any>)?.[targetAlloc];
+    const logs = runtime?.logs;
+    const stdoutPath = typeof logs?.stdout_path === "string" ? logs.stdout_path.trim() : "";
+    const stderrPath = typeof logs?.stderr_path === "string" ? logs.stderr_path.trim() : "";
+    if (!stdoutPath || !stderrPath) return null;
+
+    return {
+      allocationsCsv: csv,
+      stdoutPath,
+      stderrPath,
+      allocation: targetAlloc,
+    };
+  }, [details, alloc]);
+
+  const logQueryKey = logQuery
+    ? `${logQuery.allocation}|${logQuery.allocationsCsv}|${logQuery.stdoutPath}|${logQuery.stderrPath}`
+    : "__pending__";
+
   const [isRequesting, setIsRequesting] = useState(false);
   const dmsLevels = [
     {
@@ -692,40 +889,50 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
     data: baseLogsData,
     refetch: refetchBaseLogs,
     isFetching: isFetchingBaseLogs,
-  } = useQuery({
-    queryKey: ["deployment-logs-base", deploymentId, allocKey],
+  } = useQuery<DeploymentLogsResponse>({
+    queryKey: ["deployment-logs-base", deploymentId, logQueryKey],
     queryFn: () =>
-      getDeploymentLogs(deploymentId, alloc ?? null, null, false, 400, "compact", true),
+      getDeploymentLogs(deploymentId, {
+        allocation: logQuery!.allocation,
+        allocations: logQuery!.allocationsCsv,
+        stdoutPath: logQuery!.stdoutPath,
+        stderrPath: logQuery!.stderrPath,
+        refreshAlloc: false,
+        dmsLines: 400,
+        dmsView: "compact",
+        includeAlloc: true,
+      }),
+    enabled: Boolean(logQuery),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     staleTime: Infinity,
     gcTime: Infinity,
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const {
     data: dmsLogsData,
     refetch: refetchDmsLogs,
     isFetching: isFetchingDmsLogs,
-  } = useQuery({
-    queryKey: ["deployment-logs-dms", deploymentId, allocKey, dmsLevel, dmsLinesValue],
+  } = useQuery<DeploymentLogsResponse>({
+    queryKey: ["deployment-logs-dms", deploymentId, logQuery?.allocation ?? "_", dmsLevel, dmsLinesValue],
     queryFn: () =>
-      getDeploymentLogs(
-        deploymentId,
-        alloc ?? null,
+      getDeploymentLogs(deploymentId, {
+        allocation: logQuery?.allocation ?? null,
         dmsQuery,
-        false,
-        dmsLinesValue,
-        "raw",
-        false
-      ),
+        refreshAlloc: false,
+        dmsLines: dmsLinesValue,
+        dmsView: "raw",
+        includeAlloc: false,
+      }),
+    enabled: Boolean(deploymentId),
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchInterval: isDmsTailActive ? 15000 : false,
     refetchIntervalInBackground: true,
     staleTime: Infinity,
     gcTime: Infinity,
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   useEffect(() => {
@@ -737,11 +944,19 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
   const handleRefresh = async () => {
     setIsRequesting(true);
     try {
-      await requestDeploymentLogs(deploymentId, alloc ?? null, true);
-      await Promise.all([
-        refetchBaseLogs({ throwOnError: true }),
-        refetchDmsLogs({ throwOnError: true }),
-      ]);
+      if (logQuery) {
+        await requestDeploymentLogs(deploymentId, {
+          allocation: logQuery.allocation,
+          allocations: logQuery.allocationsCsv,
+          wait: true,
+        });
+        await Promise.all([
+          refetchBaseLogs({ throwOnError: true }),
+          refetchDmsLogs({ throwOnError: true }),
+        ]);
+      } else {
+        await refetchDmsLogs({ throwOnError: true });
+      }
     } catch (error) {
       throw error;
     } finally {
@@ -974,7 +1189,9 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
       >
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardDescription>Deployment Logs ({alloc ?? "auto"})</CardDescription>
+            <CardDescription>
+              Deployment Logs ({logQuery?.allocation ?? alloc ?? "auto"})
+            </CardDescription>
             <div className="flex gap-2">
               <RefreshButton
                 onClick={handleRefresh}
@@ -987,23 +1204,62 @@ function DeploymentLogsCard({ deploymentId, alloc }: { deploymentId: string, all
                 onClick={handleDownload}
                 className="flex items-center gap-1"
               >
-                <Download className="w-4 h-4" /> Download
+                <Download className="h-4 w-4" /> Download
               </Button>
             </div>
           </div>
           <Separator className="my-2" />
 
-          {logSections.map((section) => (
-            <LogSection
-              key={section.key}
-              sectionKey={section.key}
-              title={section.title}
-              log={section.log}
-              textClass={section.textClass}
-              placeholder={section.placeholder}
-              isLoading={isFetchingBaseLogs}
-            />
-          ))}
+          {!logQuery ? (
+            <p className="text-sm text-muted-foreground mb-4">
+              {isLoadingDetails && !details
+                ? "Loading deployment details…"
+                : ((details?.allocations ?? []) as string[]).length > 1
+                  ? "Select an allocation in the manifest panel to load stdout/stderr file logs."
+                  : "Log paths from deployment info are not available yet. Try refreshing the page."}
+            </p>
+          ) : null}
+
+          {logQuery ? (
+            logSections.map((section) => (
+              <LogSection
+                key={section.key}
+                sectionKey={section.key}
+                title={section.title}
+                log={section.log}
+                textClass={section.textClass}
+                placeholder={section.placeholder}
+                isLoading={isFetchingBaseLogs}
+              />
+            ))
+          ) : (
+            <>
+              <LogSection
+                sectionKey="stdout"
+                title="STDOUT"
+                textClass="text-emerald-300"
+                log=""
+                placeholder={
+                  isLoadingDetails && !details
+                    ? "Loading STDOUT logs..."
+                    : "Select an allocation in the manifest to load file logs."
+                }
+                isLoading={Boolean(isLoadingDetails && !details)}
+              />
+              <LogSection
+                sectionKey="stderr"
+                title="STDERR"
+                textClass="text-white"
+                log=""
+                placeholder={
+                  isLoadingDetails && !details
+                    ? "Loading STDERR logs..."
+                    : "Select an allocation in the manifest to load file logs."
+                }
+                isLoading={Boolean(isLoadingDetails && !details)}
+              />
+            </>
+          )}
 
           <div className="mt-4" data-testid="deployment-logs-dms">
             {renderDmsControls()}
