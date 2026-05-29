@@ -76,7 +76,7 @@ Use this script when testing against the integrated service on `https://localhos
 
 ## Getting Started
 
-1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.33.0` is available).
+1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.33.4` is available).
 2. **Bootstrap the dev environment** by running `./deploy/scripts/devctl.sh dev up` (this creates virtual envs, installs dependencies, and starts both backend and frontend).
 3. **Open the API** – once running, the backend exposes `http://127.0.0.1:8080` (default) and the frontend runs on `http://127.0.0.1:5173` (or whichever Vite port is configured).
 4. **Explore the documentation** linked above to understand module responsibilities and API endpoints.
