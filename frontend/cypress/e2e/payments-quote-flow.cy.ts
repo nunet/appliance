@@ -185,7 +185,7 @@ const visitPayments = (
     body: PAYMENTS_CONFIG,
   }).as("paymentsConfig");
 
-  cy.intercept("GET", "**/payments/list_payments", {
+  cy.intercept("GET", "**/payments/list_payments*", {
     statusCode: 200,
     body: listPayload,
   }).as("paymentsList");
@@ -207,6 +207,7 @@ const visitPayments = (
 
   cy.wait("@authStatus");
   cy.wait("@paymentsConfig");
+  cy.wait("@paymentsList");
   cy.wait("@paymentsList");
   cy.contains("h2", "Payments").should("be.visible");
 

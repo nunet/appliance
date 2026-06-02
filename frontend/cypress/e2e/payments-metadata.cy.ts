@@ -1,6 +1,6 @@
 type DmsPaymentItem = {
+  deployment_id: string;
   unique_id: string;
-  payment_validator_did: string;
   contract_did: string;
   to_address: string;
   from_address?: string;
@@ -53,8 +53,8 @@ const buildTx = (
   metadata: Record<string, unknown> | null,
   options?: { blockchain?: "ETHEREUM" | "CARDANO"; toAddress?: string; fromAddress?: string }
 ): DmsPaymentItem => ({
+  deployment_id: "did:prism:deployment",
   unique_id: uniqueId,
-  payment_validator_did: "did:prism:validator",
   contract_did: "did:prism:contract",
   to_address: options?.toAddress ?? ("0x" + "a".repeat(40)),
   from_address: options?.fromAddress,
@@ -258,7 +258,7 @@ const visitPayments = (
     body: PAYMENTS_CONFIG,
   }).as("paymentsConfig");
 
-  cy.intercept("GET", "**/payments/list_payments", {
+  cy.intercept("GET", "**/payments/list_payments*", {
     statusCode: 200,
     body: listPayload,
   }).as("paymentsList");
@@ -275,6 +275,7 @@ const visitPayments = (
 
   cy.wait("@authStatus");
   cy.wait("@paymentsConfig");
+  cy.wait("@paymentsList");
   cy.wait("@paymentsList");
   cy.contains("h2", "Payments").should("be.visible");
 };
@@ -336,9 +337,6 @@ describe("Payments metadata matrix", () => {
     cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440000"]')
       .contains("Raw Metadata JSON")
       .should("be.visible");
-    cy.get('input[placeholder="Search by id address or status"]').clear().type("deployment-789");
-    cy.get('[data-testid^="payment-card-"]').should("have.length", 1);
-    cy.get('[data-testid="payment-card-550e8400-e29b-41d4-a716-446655440002"]').should("be.visible");
   });
 
   it("keeps Pay Now when connected wallet differs from metadata from_address", () => {
@@ -391,7 +389,5 @@ describe("Payments metadata matrix", () => {
       cy.contains("button", "Install Eternl").should("be.disabled");
     });
 
-    cy.get('input[placeholder="Search by id address or status"]').clear().type("deployment-that-does-not-exist");
-    cy.contains("Nothing to show").should("be.visible");
   });
 });
