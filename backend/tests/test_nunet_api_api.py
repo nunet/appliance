@@ -160,7 +160,7 @@ def stub_external_modules(tmp_path_factory):
             result["message"] = json.dumps({"peers": []})
             return result
 
-        def list_transactions(self, blockchain: str | None = None) -> dict[str, Any]:
+        def list_transactions(self, blockchain: str | None = None, **kwargs: Any) -> dict[str, Any]:
             return {"status": "success", "transactions": []}
 
         def get_structured_logs(
@@ -395,6 +395,8 @@ def stub_external_modules(tmp_path_factory):
     mod_utils.trigger_dms_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
     mod_utils.get_appliance_updates = lambda *args, **kwargs: {"status": "success", "updates": []}
     mod_utils.trigger_appliance_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
+    mod_utils.trigger_plugin_sync = lambda *args, **kwargs: {"status": "success", "message": "ok"}
+    mod_utils.trigger_telemetry_plugin_uninstall = lambda *args, **kwargs: {"status": "success", "message": "ok"}
     mod_utils.get_environment_status = lambda *args, **kwargs: {
         "environment": "production",
         "updates": {
@@ -705,7 +707,7 @@ def test_payments_list_payments_normalizes_transactions(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -752,7 +754,7 @@ def test_payments_list_payments_handles_list_addresses(client):
     addr = "0x" + "e" * 40
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -785,7 +787,7 @@ def test_payments_list_payments_ignores_invalid_payloads(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -824,7 +826,7 @@ def test_payments_list_payments_supports_cardano(client):
     cardano_addr = "addr_test1qqm9ehanrh5rkukd0jwrl4j4zhnlzhkutwcukxqjdr3yfwydfmfydwq78revg8sx3wf3aj9gwn5kqyg0l2485zrj3mvsktcw4k"
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -851,6 +853,140 @@ def test_payments_list_payments_supports_cardano(client):
     assert body["total_count"] == 1
     assert body["items"][0]["blockchain"] == "CARDANO"
     assert body["items"][0]["to_address"] == cardano_addr
+
+
+def test_payments_list_payments_forwards_query_params_to_manager(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    captured: dict[str, Any] = {}
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "1",
+                        "status": "paid",
+                        "to_address": "0x" + "a" * 40,
+                        "amount": "1.0",
+                        "payment_validator_did": "did:validator:1",
+                        "contract_did": "did:contract:1",
+                        "tx_hash": "0x" + "b" * 64,
+                    }
+                ],
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={
+                "limit": 10,
+                "offset": 20,
+                "sort": "-created_at",
+                "status": "paid,unpaid",
+                "contract_did": "did:key:test",
+                "unique_id": "tx-001",
+                "deployment_id": "deployment",
+                "blockchain": "CARDANO",
+                "to_address": "addr_test1q...",
+                "from_address": "addr_test1z...",
+                "tx_hash": "hash-001",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    assert captured["limit"] == 10
+    assert captured["offset"] == 20
+    assert captured["sort"] == "-created_at"
+    assert captured["status"] == ["paid", "unpaid"]
+    assert captured["contract_did"] == "did:key:test"
+    assert captured["unique_id"] == "tx-001"
+    assert captured["deployment_id"] == "deployment"
+    assert captured["blockchain"] == "CARDANO"
+    assert captured["to_address"] == "addr_test1q..."
+    assert captured["from_address"] == "addr_test1z..."
+    assert captured["tx_hash"] == "hash-001"
+
+
+def test_payments_list_payments_omits_unspecified_optional_filters(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    captured: dict[str, Any] = {}
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None, **kwargs):
+            captured["blockchain"] = blockchain
+            captured.update(kwargs)
+            return {"status": "success", "transactions": []}
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={
+                "limit": 10,
+                "offset": 0,
+                "sort": "-created_at",
+                "contract_did": "did:key:test",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    assert captured["limit"] == 10
+    assert captured["offset"] == 0
+    assert captured["sort"] == "-created_at"
+    assert captured["contract_did"] == "did:key:test"
+    assert captured["blockchain"] is None
+    assert "unique_id" not in captured
+    assert "deployment_id" not in captured
+    assert "to_address" not in captured
+    assert "from_address" not in captured
+    assert "tx_hash" not in captured
+
+
+def test_payments_list_payments_uses_dms_total_for_total_count(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    class StubPaymentsManager:
+        def list_transactions(self, blockchain=None, **kwargs):
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "1",
+                        "status": "unpaid",
+                        "to_address": "0x" + "a" * 40,
+                        "amount": "1.0",
+                        "payment_validator_did": "did:validator:1",
+                        "contract_did": "did:contract:1",
+                        "tx_hash": "",
+                    }
+                ],
+                "total": 704,
+                "has_more": True,
+                "next_offset": 30,
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={"limit": 10, "offset": 20, "sort": "-created_at"},
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 704
+    assert len(body["items"]) == 1
 
 
 def test_organizations_status_includes_timeline(client, monkeypatch):

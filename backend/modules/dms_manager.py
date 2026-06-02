@@ -1239,11 +1239,61 @@ class DMSManager:
             payload.update(parsed)
         return payload
 
-    def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
+    def list_transactions(
+        self,
+        blockchain: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort: Optional[str] = None,
+        contract_did: Optional[str] = None,
+        status: Optional[Sequence[str]] = None,
+        unique_id: Optional[str] = None,
+        deployment_id: Optional[str] = None,
+        to_address: Optional[str] = None,
+        from_address: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+    ) -> Dict[str, Any]:
         base_cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/transactions/list",
         ]
+        if limit is not None:
+            base_cmd.extend(["--limit", str(limit)])
+        if offset is not None:
+            base_cmd.extend(["--offset", str(offset)])
+        sort_val = (sort or "").strip()
+        if sort_val:
+            base_cmd.extend(["--sort", sort_val])
+        blockchain_val = (blockchain or "").strip()
+        if blockchain_val:
+            base_cmd.extend(["--blockchain", blockchain_val.upper()])
+        contract_val = (contract_did or "").strip()
+        if contract_val:
+            base_cmd.extend(["--contract-did", contract_val])
+        unique_id_val = (unique_id or "").strip()
+        if unique_id_val:
+            base_cmd.extend(["--unique-id", unique_id_val])
+        deployment_id_val = (deployment_id or "").strip()
+        if deployment_id_val:
+            base_cmd.extend([
+                "--filter",
+                f"deployment_id={deployment_id_val}"
+            ])
+        if status:
+            for st in status:
+                part = str(st).strip()
+                if part:
+                    base_cmd.extend(["--status", part])
+        to_address_val = (to_address or "").strip()
+        if to_address_val:
+            base_cmd.extend(["--to-address", to_address_val])
+        from_address_val = (from_address or "").strip()
+        if from_address_val:
+            base_cmd.extend(["--from-address", from_address_val])
+        tx_hash_val = (tx_hash or "").strip()
+        if tx_hash_val:
+            base_cmd.extend(["--tx-hash", tx_hash_val])
         cp = run_dms_command_with_passphrase(
             base_cmd,
             capture_output=True,
@@ -1262,7 +1312,17 @@ class DMSManager:
             logger.error("Invalid JSON from transactions list command")
             return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
         transactions = data.get("transactions", [])
-        return {"status": "success", "transactions": transactions}
+        result: Dict[str, Any] = {"status": "success", "transactions": transactions}
+        total_raw = data.get("total")
+        if isinstance(total_raw, (int, float)):
+            result["total"] = int(total_raw)
+        has_more_raw = data.get("has_more")
+        if isinstance(has_more_raw, bool):
+            result["has_more"] = has_more_raw
+        next_offset_raw = data.get("next_offset")
+        if isinstance(next_offset_raw, (int, float)):
+            result["next_offset"] = int(next_offset_raw)
+        return result
 
     def get_structured_logs(
         self,

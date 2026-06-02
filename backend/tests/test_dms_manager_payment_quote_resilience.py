@@ -158,3 +158,45 @@ def test_cancel_payment_quote_treats_not_found_as_success_when_command_fails(mon
     assert len(calls) == 1
     assert "--dest" in calls[0]
     assert "did:key:z6MkDestExample" in calls[0]
+
+
+def test_list_transactions_uses_hyphenated_filter_cli_flags(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run_dms_command_with_passphrase(argv, **kwargs):
+        calls.append(list(argv))
+        return _cp(0, {"transactions": [], "pagination": {"total_count": 0}})
+
+    monkeypatch.setattr(
+        dms_manager_module,
+        "run_dms_command_with_passphrase",
+        fake_run_dms_command_with_passphrase,
+    )
+
+    mgr = dms_manager_module.DMSManager()
+    result = mgr.list_transactions(
+        blockchain="CARDANO",
+        limit=10,
+        offset=0,
+        sort="-created_at",
+        unique_id="uid-99",
+        deployment_id="fa0dea",
+        contract_did="did:key:zContract",
+        status=["paid"],
+        to_address="addr_to",
+        from_address="addr_from",
+        tx_hash="0xabc",
+    )
+
+    assert result["status"] == "success"
+    assert len(calls) == 1
+    argv = calls[0]
+    assert "--unique-id" in argv
+    assert argv[argv.index("--unique-id") + 1] == "uid-99"
+    assert "--filter deployment_id=" in argv
+    assert argv[argv.index("--filter deployment_id=") + 1] == "fa0dea"
+    assert "--tx-hash" in argv
+    assert argv[argv.index("--tx-hash") + 1] == "0xabc"
+    assert "--unique_id" not in argv
+    assert "--deployment_id" not in argv
+    assert "--tx_hash" not in argv

@@ -10,8 +10,8 @@ const PAYMENTS_LIST_REFRESH_MS = 60 * 60 * 1000; // 1 hour
 export function PaymentsBadge() {
   const navigate = useNavigate();
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["payments", "list"],
-    queryFn: getPaymentsList,
+    queryKey: ["payments", "summary"],
+    queryFn: () => getPaymentsList(),
     staleTime: PAYMENTS_LIST_REFRESH_MS,
     gcTime: PAYMENTS_LIST_REFRESH_MS,
     refetchInterval: PAYMENTS_LIST_REFRESH_MS,
