@@ -24,11 +24,10 @@ import { JoinForm } from "./JoinForm";
 import { OrgSelect } from "./OrgSelect";
 import { Stepper } from "./Stepper";
 import { StatusBanner } from "./StatusBanner";
-import RestartDmsButton from "./RestartDMSButton";
 import { RenewalModal } from "./RenewalModal";
 import { toast } from "sonner";
 
-const COMPLETE_STATUS_MESSAGE = "Onboarding complete! Restart DMS to apply the new configuration.";
+const COMPLETE_STATUS_MESSAGE = "Onboarding complete! You are now a member of the organization.";
 
 export function OnboardingFlow({
   status,
@@ -151,6 +150,7 @@ export function OnboardingFlow({
 
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [forceOrgSelect, setForceOrgSelect] = useState(false);
   const [contractDetailsOpen, setContractDetailsOpen] = useState(false);
   const [renewingOrgDid, setRenewingOrgDid] = useState<string | null>(null);
@@ -184,6 +184,19 @@ export function OnboardingFlow({
     }
     await qc.invalidateQueries({ queryKey: ["org-status"] });
     return response;
+  };
+
+  const handleCompleteDone = async () => {
+    setIsCompleting(true);
+    try {
+      await resetOnboarding();
+      toast.success("You are now joined to the organization.");
+    } catch (error) {
+      console.error("Failed to reset onboarding after completion", error);
+      toast.error("Failed to finish the join flow. Please try again.");
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
   const handleCancelConfirm = async () => {
@@ -582,12 +595,18 @@ export function OnboardingFlow({
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground">
             Onboarding is complete.
-            <RestartDmsButton
-              setStartOperation={setStartOperation}
-              qc={qc}
-              onAfterRestart={goToOrgSelect}
-            />
           </CardContent>
+          <CardFooter>
+            <Button
+              className="w-full"
+              onClick={handleCompleteDone}
+              disabled={isCompleting}
+              data-testid="onboarding-done-button"
+            >
+              {isCompleting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Done
+            </Button>
+          </CardFooter>
         </Card>
       )}
 

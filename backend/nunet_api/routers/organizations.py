@@ -466,8 +466,6 @@ def _get_onboarding_ui_state_and_message(onboarding_status: Optional[dict]) -> t
         return ('waiting_approval', 'Your request is being reviewed by the organization. Please wait for approval...')
     if step == "capabilities_applied":
         return ("capabilities_applied", "Applying organization capabilities...")
-    if step == "capabilities_onboarded":
-        return ("capabilities_onboarded", "Onboarding compute resources with organization capabilities...")
     if step == "telemetry_configured":
         return ("telemetry_configured", "Configuring telemetry...")
     if step == "mtls_certs_saved":
@@ -895,7 +893,7 @@ def submit_join(body: JoinSubmitRequest, mgr: OnboardingManager = Depends(_mgr))
     )
 
     try:
-        resource_snapshot = mgr.ensure_pre_onboarding()
+        resource_snapshot = mgr.collect_resource_snapshot(role_id=selected_roles[0])
     except Exception as exc:
         logger.exception("Failed to refresh compute onboarding before submitting join request")
         raise HTTPException(status_code=502, detail=f"Failed to capture compute resources: {exc}")
@@ -1461,10 +1459,7 @@ def poll_join(mgr: OnboardingManager = Depends(_mgr), force_check: bool = Query(
         try:
             ok = mgr.process_post_approval_payload(payload)
             if ok:
-                # Do NOT restart DMS automatically; FE has a button for that.
                 mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
-                # Note: Don't archive immediately - let frontend get final status first
-                # Archiving will happen when user clicks "Restart DMS" button
             else:
                 mgr.update_state(step="rejected", rejection_reason="post-approval processing failed")
         finally:
@@ -1595,7 +1590,7 @@ def get_pending_contract(mgr: OnboardingManager = Depends(_mgr)):
     }
 
 @router.post("/join/process", response_model=ProcessResponse)
-def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Body(True)):
+def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Body(False)):
     """
     Back-compat finalize endpoint. Idempotent.
     If already processed, returns success immediately.
@@ -1621,8 +1616,6 @@ def process_join(mgr: OnboardingManager = Depends(_mgr), restart_dms: bool = Bod
         mgr.restart_dms_service()
 
     mgr.update_state(step="complete", status="complete", completed=True, processed_ok=True)
-    # Note: Don't archive immediately - let frontend get final status first
-    # Archiving will happen when user clicks "Restart DMS" button
     return ProcessResponse(status="success", step="complete", message="Onboarding complete.", state=mgr.get_onboarding_status())
 
 

@@ -30,6 +30,19 @@ ROLE_LABELS: Dict[str, str] = {
 TOKENOMICS_CHAIN_ALLOWLIST = {"cardano", "ethereum"}
 
 
+def normalize_role_id(role_id: Optional[str]) -> Optional[str]:
+    """Normalize a role identifier for comparisons (lowercase, spaces to underscores)."""
+    if not role_id or not isinstance(role_id, str):
+        return None
+    normalized = role_id.strip().lower().replace(" ", "_")
+    return normalized or None
+
+
+def role_requires_compute_onboarding(role_id: Optional[str]) -> bool:
+    """Return True when the role requires DMS compute onboarding during org join."""
+    return normalize_role_id(role_id) == "compute_provider"
+
+
 def normalize_tokenomics(value: Any) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     """
     Normalise the ``tokenomics`` block. Returns a tuple of
