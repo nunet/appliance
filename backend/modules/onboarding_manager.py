@@ -21,7 +21,7 @@ import requests
 
 from .dms_manager import DMSManager
 from .dms_utils import get_dms_resource_info, run_dms_command_with_passphrase
-from .org_utils import load_known_organizations, extract_role_profiles, get_tokens_for_org
+from .org_utils import load_known_organizations, extract_role_profiles, get_tokens_for_org, role_requires_compute_onboarding
 from .path_constants import (
     APPLIANCE_DIR,
     DMS_CAP_FILE,
@@ -575,6 +575,16 @@ class OnboardingManager:
         """
         return self._ensure_pre_onboarding()
 
+    def collect_resource_snapshot(self, role_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Return a DMS resource snapshot for join submission.
+        Runs compute onboarding only when the selected role requires it.
+        """
+        selected_role = role_id or self.get_selected_role_id()
+        if role_requires_compute_onboarding(selected_role):
+            return self._ensure_pre_onboarding()
+        return get_dms_resource_info()
+
     def _log_resource_snapshot(self, info: Dict[str, Any]) -> None:
         if not isinstance(info, dict):
             return
@@ -628,7 +638,7 @@ class OnboardingManager:
         except Exception:
             info = {}
         if not info:
-            info = self._ensure_pre_onboarding()
+            info = self.collect_resource_snapshot()
 
         onboarding_status_raw = info.get("onboarding_status")
         onboarded = self._is_onboarded_status(onboarding_status_raw)
@@ -1352,11 +1362,6 @@ class OnboardingManager:
             except Exception as exc:
                 self.append_log("mtls_certs_saved", f"Error enabling Caddy proxy service: {exc}")
             self.copy_capability_tokens_to_dms_user()
-
-            result = self.dms_manager.onboard_compute()
-            if result.get("status") != "success":
-                raise RuntimeError(result.get("message", "Compute onboarding failed"))
-            self.append_log("capabilities_onboarded", "Compute onboarding completed after approval.")
 
             self.update_state(processing=False, processed_ok=True)
             return True

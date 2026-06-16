@@ -1010,6 +1010,8 @@ def test_organizations_status_includes_timeline(client, monkeypatch):
 
 
 def _build_recording_onboarding_manager():
+    from backend.modules.org_utils import role_requires_compute_onboarding
+
     class RecordingOnboardingManager:
         _ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
 
@@ -1042,6 +1044,8 @@ def _build_recording_onboarding_manager():
                 }
             )
             self.last_payload = None
+            self.collect_resource_snapshot_calls: list[str | None] = []
+            self.compute_onboarding_used = False
 
         def update_state(self, **kwargs):
             old_step = self.state.get("step")
@@ -1059,7 +1063,19 @@ def _build_recording_onboarding_manager():
             return dict(self.state)
 
         def ensure_pre_onboarding(self):
+            self.compute_onboarding_used = True
             return dict(self._resource_snapshot)
+
+        def collect_resource_snapshot(self, role_id=None):
+            self.collect_resource_snapshot_calls.append(role_id)
+            if role_requires_compute_onboarding(role_id):
+                self.compute_onboarding_used = True
+                return dict(self._resource_snapshot)
+            return {
+                "onboarding_status": "NOT ONBOARDED",
+                "onboarded_resources": "None",
+                "dms_resources": {},
+            }
 
         def api_submit_join(self, payload, resource_info=None):
             self.last_payload = payload
@@ -1299,6 +1315,57 @@ def test_join_submit_normalizes_orchestrator_role_for_remote_payload(client, mon
     assert response.status_code == 200
     assert recording_mgr.last_payload["roles"] == ["orchestrator"]
     assert recording_mgr.state["form_data"]["roles"] == ["Orchestrator"]
+    assert recording_mgr.collect_resource_snapshot_calls == ["Orchestrator"]
+    assert recording_mgr.compute_onboarding_used is False
+
+
+def test_join_submit_compute_provider_uses_compute_onboarding(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-compute-onboard"
+    org_entry = {
+        "name": "Compute Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(org_router, "get_tokenomics_config", lambda _entry: {"enabled": False, "chain": None})
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 200
+    assert recording_mgr.collect_resource_snapshot_calls == ["compute_provider"]
+    assert recording_mgr.compute_onboarding_used is True
 
 
 def test_join_submit_surfaces_remote_validation_error(client, monkeypatch):
