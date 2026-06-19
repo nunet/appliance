@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { organizationsApi } from "../../api/organizations";
+import { restartDms } from "../../api/api";
 import { toast } from "sonner";
 import { AlertCircle, CheckCircle2, Circle, Loader2 } from "lucide-react";
 import type { StatusResponse } from "./OnboardFlow";
 
-type RenewalPhase = "idle" | "submitting" | "waiting" | "processing" | "complete" | "error";
+type RenewalPhase = "idle" | "submitting" | "waiting" | "processing" | "restarting" | "complete" | "error";
 
 type RenewalModalProps = {
   open: boolean;
@@ -25,6 +26,7 @@ const STEP_SEQUENCE: StepDescriptor[] = [
   { id: "submitting", label: "Submitting renewal request" },
   { id: "waiting", label: "Awaiting organization response" },
   { id: "processing", label: "Applying new capabilities" },
+  { id: "restarting", label: "Restarting DMS service" },
   { id: "complete", label: "Renewal complete" },
 ];
 
@@ -51,8 +53,8 @@ export function RenewalModal({ open, orgDid, orgName, qc, onClose }: RenewalModa
   const [error, setError] = useState<string | null>(null);
   const [statusSnapshot, setStatusSnapshot] = useState<StatusResponse | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [dmsRestarted, setDmsRestarted] = useState(false);
   const [refreshingKnown, setRefreshingKnown] = useState(false);
-  const completionHandledRef = useRef(false);
 
   // Reset modal state whenever it is closed or the target org changes.
   useEffect(() => {
@@ -61,16 +63,16 @@ export function RenewalModal({ open, orgDid, orgName, qc, onClose }: RenewalModa
       setError(null);
       setStatusSnapshot(null);
       setSubmitted(false);
+      setDmsRestarted(false);
       setRefreshingKnown(false);
-      completionHandledRef.current = false;
       return;
     }
     setPhase("submitting");
     setError(null);
     setStatusSnapshot(null);
     setSubmitted(false);
+    setDmsRestarted(false);
     setRefreshingKnown(false);
-    completionHandledRef.current = false;
   }, [open, orgDid]);
 
   // Kick off the renewal once the modal opens.
@@ -174,45 +176,57 @@ export function RenewalModal({ open, orgDid, orgName, qc, onClose }: RenewalModa
     }
 
     if (
-      (["complete"].includes(step) || apiStatus === "approved" || apiStatus === "ready") &&
-      phase !== "complete"
+      ["complete"].includes(step) ||
+      apiStatus === "approved" ||
+      apiStatus === "ready"
     ) {
-      setPhase("complete");
+      if (!dmsRestarted && phase !== "complete") {
+        setPhase("restarting");
+      }
     }
-  }, [statusSnapshot, phase]);
+  }, [statusSnapshot, phase, dmsRestarted]);
 
-  // Refresh organization data once renewal completes.
+  // Restart DMS once processing is complete.
   useEffect(() => {
-    if (!open || phase !== "complete" || error || completionHandledRef.current) {
+    if (!open || phase !== "restarting" || dmsRestarted || error) {
       return;
     }
-    completionHandledRef.current = true;
     let cancelled = false;
-    const finalize = async () => {
-      toast.success("Renewal completed successfully.");
+    const restart = async () => {
       try {
-        setRefreshingKnown(true);
-        const refreshed = await organizationsApi.refreshKnownOrgs();
-        if (!cancelled && refreshed?.known) {
-          qc.setQueryData(["orgs-known"], refreshed.known);
+        await restartDms();
+        if (cancelled) {
+          return;
         }
-      } catch (refreshErr) {
-        console.warn("Failed to refresh known organizations after renewal", refreshErr);
-      } finally {
-        if (!cancelled) {
+        setDmsRestarted(true);
+        setPhase("complete");
+        toast.success("Renewal completed and DMS restart initiated.");
+        try {
+          setRefreshingKnown(true);
+          const refreshed = await organizationsApi.refreshKnownOrgs();
+          if (refreshed?.known) {
+            qc.setQueryData(["orgs-known"], refreshed.known);
+          }
+        } catch (refreshErr) {
+          console.warn("Failed to refresh known organizations after renewal", refreshErr);
+        } finally {
           setRefreshingKnown(false);
         }
-      }
-      if (!cancelled) {
         await qc.invalidateQueries({ queryKey: ["org-status"] });
         await qc.invalidateQueries({ queryKey: ["orgs-known"] });
+      } catch (err) {
+        console.error("Failed to restart DMS automatically", err);
+        if (!cancelled) {
+          setError("Failed to restart DMS automatically. Please restart manually.");
+          setPhase("error");
+        }
       }
     };
-    finalize();
+    restart();
     return () => {
       cancelled = true;
     };
-  }, [open, phase, error, qc]);
+  }, [open, phase, dmsRestarted, error, qc]);
 
   const normalizedPhase: StepDescriptor["id"] =
     phase === "idle" || phase === "error" ? "submitting" : (phase as StepDescriptor["id"]);

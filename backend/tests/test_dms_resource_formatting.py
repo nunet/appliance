@@ -1,7 +1,7 @@
 from backend.modules.dms_utils import _fmt_resources
 
 
-def test_fmt_resources_cpu_ram_disk_ignores_gpu_list():
+def test_fmt_resources_cpu_ram_disk_with_gpu_list():
     """_fmt_resources only formats CPU/RAM/Disk; GPU details live elsewhere."""
     payload = {
         "Resources": {
@@ -24,7 +24,7 @@ def test_fmt_resources_cpu_ram_disk_ignores_gpu_list():
     assert "Cores: 10.5" in formatted
     assert "RAM: 13.0 GB" in formatted
     assert "Disk: 40.78 GB" in formatted
-    assert "GPU" not in formatted
+    assert "GPU" in formatted
 
 
 def test_fmt_resources_without_gpu_keeps_existing_shape():
