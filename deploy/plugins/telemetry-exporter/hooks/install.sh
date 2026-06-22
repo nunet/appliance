@@ -12,9 +12,11 @@ STATE_DIR="/var/lib/nunet-appliance/plugins/telemetry-exporter"
 LOG_DIR="/var/log/nunet-appliance/plugins/telemetry-exporter"
 
 mkdir -p "${STATE_DIR}" "${LOG_DIR}"
+chmod 755 "${STATE_DIR}" "${LOG_DIR}"
 
 if [ ! -f "${CONFIG_PATH}" ]; then
   mkdir -p "$(dirname "${CONFIG_PATH}")"
+  chmod 755 "$(dirname "${CONFIG_PATH}")"
   cp "${DEFAULT_CONFIG}" "${CONFIG_PATH}"
 fi
 
@@ -43,21 +45,26 @@ TELEMETRY_TOKEN="$(read_config telemetry_token)"
 
 echo "Installing telemetry-exporter plugin (Alloy package + unit drop-in)..."
 echo "Gateway: ${GATEWAY_URL}" > "${STATE_DIR}/last-install.txt"
+chmod 644 "${STATE_DIR}/last-install.txt"
 
 {
   if command -v apt-get >/dev/null 2>&1; then
     mkdir -p /etc/apt/keyrings
+    chmod 755 /etc/apt/keyrings
     if [ ! -f /etc/apt/keyrings/grafana.asc ]; then
       wget -q -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
       chmod 644 /etc/apt/keyrings/grafana.asc
     fi
     echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" > /etc/apt/sources.list.d/grafana.list
+    chmod 644 /etc/apt/sources.list.d/grafana.list
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y alloy
   fi
 
   mkdir -p /var/lib/nunet-appliance/alloy
+  chmod 755 /var/lib/nunet-appliance/alloy
   mkdir -p /etc/systemd/system/alloy.service.d
+  chmod 755 /etc/systemd/system/alloy.service.d
   cat > /etc/systemd/system/alloy.service.d/nunet-appliance.conf <<'DROPIN'
 [Service]
 Environment=CONFIG_FILE=/var/lib/nunet-appliance/alloy/config.alloy
@@ -68,7 +75,11 @@ DROPIN
   systemctl enable alloy.service 2>/dev/null || true
   usermod -aG systemd-journal,adm alloy 2>/dev/null || true
 } >> "${LOG_DIR}/install.log" 2>&1
+chmod 644 /etc/systemd/system/alloy.service.d/nunet-appliance.conf
+chmod 644 "${LOG_DIR}/install.log"
 
 date -u +"%Y-%m-%dT%H:%M:%SZ" > "${STATE_DIR}/installed-at.txt"
+chmod 644 "${STATE_DIR}/installed-at.txt"
 echo "Token set: $([ -n "${TELEMETRY_TOKEN}" ] && echo true || echo false)" >> "${STATE_DIR}/last-install.txt"
+chmod 644 "${STATE_DIR}/last-install.txt"
 echo "ok"
