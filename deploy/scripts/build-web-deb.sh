@@ -126,6 +126,8 @@ if [ -d "$ROOT/deploy/plugins" ]; then
   mkdir -p "$PKGDIR/usr/lib/nunet-appliance-web/plugins"
   cp -a "$ROOT/deploy/plugins/." "$PKGDIR/usr/lib/nunet-appliance-web/plugins/"
   if [ -d "$PKGDIR/usr/lib/nunet-appliance-web/plugins" ]; then
+    find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type d -exec chmod 0755 {} \;
+    find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -exec chmod 0644 {} \;
     find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -name "*.sh" -exec chmod 0755 {} \;
   fi
 fi
@@ -328,6 +330,7 @@ EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/lib/nunet-appliance-web/plugin-manager.sh sync
 User=root
 EOF
+chmod 644 "$PKGDIR/lib/systemd/system/nunet-appliance-plugin-sync.service"
 
 # systemd unit for telemetry plugin uninstall (on-demand trigger from API)
 cat > "$PKGDIR/lib/systemd/system/nunet-appliance-plugin-remove-telemetry.service" <<EOF
@@ -342,6 +345,7 @@ EnvironmentFile=-/etc/nunet-appliance-web/app.env
 ExecStart=/usr/lib/nunet-appliance-web/plugin-manager.sh run telemetry-exporter remove
 User=root
 EOF
+chmod 644 "$PKGDIR/lib/systemd/system/nunet-appliance-plugin-remove-telemetry.service"
 
 # DEBIAN metadata
 cat > "$PKGDIR/DEBIAN/control" <<EOF
