@@ -1,8 +1,10 @@
 stages:
   - version
   - security
+  - test
   - build
   - deploy
+  - e2e_test
 
 version:
   stage: .pre
@@ -21,15 +23,26 @@ default:
     - docker
 
 variables:
-  PNPM_VERSION: "10.33.4"
+  PNPM_VERSION: "10.34.4"
   STRICT_PNPM_AUDIT: "0"
+  GIT_DEPTH: "0"
 
-cache:
-  key:
-    files:
-      - frontend/pnpm-lock.yaml
-  paths:
-    - frontend/node_modules/
+.frontend_pnpm_cache:
+  cache:
+    key:
+      files:
+        - frontend/pnpm-lock.yaml
+    paths:
+      - frontend/node_modules/
+
+.frontend_pnpm_cache_pull:
+  cache:
+    key:
+      files:
+        - frontend/pnpm-lock.yaml
+    paths:
+      - frontend/node_modules/
+    policy: pull
 
 security:python-deps:
   stage: security
@@ -46,6 +59,7 @@ security:python-deps:
     - when: never
 
 security:frontend-deps:
+  extends: .frontend_pnpm_cache
   stage: security
   image: node:22-bookworm
   allow_failure: true
@@ -61,6 +75,7 @@ security:frontend-deps:
     - when: never
 
 security:frontend-high-report:
+  extends: .frontend_pnpm_cache
   stage: security
   image: node:22-bookworm
   allow_failure: true
@@ -87,6 +102,7 @@ security:strict:python:
       when: on_success
 
 security:strict:frontend:
+  extends: .frontend_pnpm_cache
   stage: security
   image: node:22-bookworm
   script:
@@ -116,10 +132,13 @@ security:pnpm-drift-check:
       fi
       echo "PNPM version is current within major ${pinned_major}"
   rules:
-    - if: $CI_PIPELINE_SOURCE =~ /^(push|merge_request_event|web|schedule)$/
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 security:nightly-create-issue-on-failure:
-  stage: build
+  stage: security
   image: curlimages/curl:8.12.1
   allow_failure: true
   variables:
@@ -180,33 +199,81 @@ security:nightly-create-issue-on-failure:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: on_failure
 
-.build-deb:
-  stage: build
-  image: ubuntu:24.04
-  before_script:
-    - apt-get update && apt-get install -y sudo git
-  script:
-    - bash deploy/scripts/build.sh
-  artifacts:
-    untracked: false
-    when: on_success
-    access: all
-    expire_in: "30 days"
-    paths:
-      - dist/
+.appliance-test-rules:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
     - if: $CI_PIPELINE_SOURCE == "web"
+    - when: never
 
-
-build:x86:
+pytest:unit:
   extends:
-    - .build-deb
+    - .appliance-test-rules
+  stage: test
+  image: python:3.12.3-bookworm
+  coverage: '/TOTAL.*?([0-9]+\.[0-9]+%)/'
+  before_script:
+    - python3 -m venv .venv
+    - .venv/bin/pip install -q -U pip wheel
+    - .venv/bin/pip install -q -r backend/nunet_api/requirements.txt -r backend/requirements-test.txt
+  script:
+    - |
+      bash deploy/scripts/run-pytest.sh -q \
+        --junitxml=artifacts/unit/report.xml \
+        --cov=backend \
+        --cov-report=term \
+        --cov-report=xml:artifacts/unit/coverage.xml
+  artifacts:
+    when: always
+    expire_in: 15 days
+    reports:
+      junit: artifacts/unit/report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: artifacts/unit/coverage.xml
+    paths:
+      - artifacts/unit/
 
-build:arm64:
+build-frontend:
   extends:
-    - .build-deb
+    - .appliance-test-rules
+    - .frontend_pnpm_cache
+  stage: build
+  image: node:22-bookworm
+  script:
+    - cd frontend
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - corepack pnpm install --frozen-lockfile
+    - corepack pnpm run build
+  artifacts:
+    expire_in: 1 day
+    paths:
+      - frontend/dist/
+
+.build-packages:
+  extends: .appliance-test-rules
+  stage: build
+  image: ubuntu:24.04
+  cache: []
+  needs:
+    - job: build-frontend
+      artifacts: true
+  before_script:
+    - apt-get update && apt-get install -y sudo git
+  script:
+    - export CI_SKIP_FRONTEND_BUILD=1
+    - bash deploy/scripts/build.sh
+  artifacts:
+    when: on_success
+    expire_in: 30 days
+    paths:
+      - dist/
+
+build-packages:x86:
+  extends: .build-packages
+
+build-packages:arm64:
+  extends: .build-packages
   tags:
     - saas-linux-small-arm64
 
@@ -215,12 +282,11 @@ deploy-packages:
   image: bash:alpine3.21
   variables:
     PERMALINK_BUILD_CHANNELS: "main:latest release:stable"
-  dependencies:
-    - build:x86
-    - build:arm64
   needs:
-    - build:x86
-    - build:arm64
+    - job: build-packages:x86
+      artifacts: true
+    - job: build-packages:arm64
+      artifacts: true
   before_script:
     - apk add curl
   script:
@@ -272,12 +338,11 @@ update-permalinks:
     PERMALINK_DEPLOY_USER: gitlab-runner
     PERMALINK_DEPLOY_FOLDER: /opt/public
     PERMALINK_BUILD_CHANNELS: "main:latest release:stable"
-  dependencies:
-    - build:x86
-    - build:arm64
   needs:
-    - build:x86
-    - build:arm64
+    - job: build-packages:x86
+      artifacts: true
+    - job: build-packages:arm64
+      artifacts: true
   before_script:
     - apk add rsync openssh
   script:
@@ -325,3 +390,121 @@ update-permalinks:
   rules:
     - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
       when: on_success
+
+
+.appliance-host:
+  tags:
+    - appliance-dev-on
+
+appliance:prepare:
+  extends:
+    - .appliance-host
+    - .appliance-test-rules
+  stage: deploy
+  resource_group: appliance-ci
+  allow_failure: true
+  needs:
+    - job: build-frontend
+      artifacts: true
+  variables:
+    APPLIANCE_BASE_URL: "https://localhost:8443"
+  script:
+    - bash deploy/scripts/ci-appliance-prepare.sh
+
+pytest:integration+contract:
+  extends: .appliance-test-rules
+  stage: e2e_test
+  image: python:3.12.3-bookworm
+  resource_group: appliance-ci
+  allow_failure: true
+  needs:
+    - job: appliance:prepare
+      artifacts: false
+  before_script:
+    - test -n "$APPLIANCE_ADMIN_PASSWORD" || { echo "APPLIANCE_ADMIN_PASSWORD is not defined"; exit 1; }
+    - curl -kSf "${APPLIANCE_BASE_URL:-https://localhost:8443}/health"
+    - python3 -m venv .venv
+    - .venv/bin/pip install -q -U pip wheel
+    - .venv/bin/pip install -q -r backend/nunet_api/requirements.txt -r backend/requirements-test.txt
+  script:
+    - |
+      ./deploy/scripts/run-pytest.sh -q \
+        -m "integration or contract" \
+        --junitxml=artifacts/integration/report.xml \
+        --cov=backend \
+        --cov-report=xml:artifacts/integration/coverage.xml
+  artifacts:
+    when: always
+    expire_in: 15 days
+    reports:
+      junit: artifacts/integration/report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: artifacts/integration/coverage.xml
+    paths:
+      - artifacts/integration/
+
+playwright:e2e:
+  extends:
+    - .appliance-test-rules
+    - .frontend_pnpm_cache_pull
+  stage: e2e_test
+  image: mcr.microsoft.com/playwright:v1.60.0-jammy
+  resource_group: appliance-ci
+  allow_failure: true
+  needs:
+    - job: appliance:prepare
+      artifacts: false
+  before_script:
+    - test -n "$APPLIANCE_ADMIN_PASSWORD" || { echo "APPLIANCE_ADMIN_PASSWORD is not defined"; exit 1; }
+    - curl -kSf "${APPLIANCE_BASE_URL:-https://localhost:8443}/health"
+  script:
+    - bash deploy/scripts/run-playwright-ci.sh
+  artifacts:
+    when: always
+    expire_in: 15 days
+    paths:
+      - frontend/playwright-report/
+      - frontend/test-results/
+
+appliance:dev-off:
+  extends:
+    - .appliance-host
+    - .appliance-test-rules
+  stage: e2e_test
+  resource_group: appliance-ci
+  needs:
+    - job: appliance:prepare
+      optional: true
+      artifacts: false
+    - job: pytest:integration+contract
+      optional: true
+      artifacts: false
+    - job: playwright:e2e
+      optional: true
+      artifacts: false
+  when: always
+  script:
+    - ./deploy/scripts/nunet-web-mode.sh dev-off || true
+
+#Uncomment to deploy the appliance on staging/production.
+#appliance:package-smoke:
+#  extends:
+#    - .appliance-host
+#    - .appliance-test-rules
+#  stage: e2e_test
+#  resource_group: appliance-ci
+#  allow_failure: true
+#  needs:
+#    - job: build-packages:x86
+#      artifacts: true
+#    - job: appliance:dev-off
+#      optional: true
+#      artifacts: false
+#  variables:
+#    APPLIANCE_BASE_URL: "https://localhost:8443"
+#  script:
+#    - bash deploy/scripts/ci-appliance-deploy.sh
+#  rules:
+#    - if: $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/ && $CI_PIPELINE_SOURCE == "push"
+#      when: on_success

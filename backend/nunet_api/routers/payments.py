@@ -392,7 +392,7 @@ def list_payments(
             tx_hash=tx_hash.strip() if tx_hash and tx_hash.strip() else None,
         )
     else:
-        out = mgr.list_transactions(blockchain=None)
+        out = mgr.list_transactions()
 
     if out.get("status") == "error":
         raise HTTPException(status_code=502, detail=out.get("message", "DMS list transactions failed"))

@@ -25,34 +25,66 @@ If you are familiar with the legacy menu / Flask stack, note that almost all of 
 
 ---
 
-## `deploy/scripts/devctl.sh` Overview
+## Development: `nunet-web-mode.sh` vs `devctl.sh`
 
-`devctl` is the primary helper script used during development and packaging. Run `./deploy/scripts/devctl.sh` with no arguments (or `help`) to print the current command list—it matches what is implemented in `deploy/scripts/devctl.sh` (for example `dev up` / `dev down`, `prod up` / `prod down`, `build`, `install`, `rollback`, `status`, `logs`, `ps`, `doctor`).
+Two scripts serve different roles. **Integration tests, contract tests, and Playwright E2E** use the **integrated** stack only (`https://localhost:8443` with **DEV ON**), not a separate Vite + API split.
 
-Internally, `dev up` ensures a Python venv (default `$ROOT/.venv`), installs `backend/nunet_api/requirements.txt`, installs frontend deps with pnpm, and starts the backend and Vite dev servers.
+| Script | Role | Typical commands |
+|--------|------|------------------|
+| [`nunet-web-mode.sh`](deploy/scripts/nunet-web-mode.sh) | Switch the **real** `nunet-appliance-web` systemd unit to repo-backed code (`backend/`, `.venv`, `frontend/dist`) | `dev-on`, `rebuild`, `status`, `dev-off` |
+| [`devctl.sh`](deploy/scripts/devctl.sh) | **Packaging/ops** and local bootstrap **without starting servers** | `setup`, `build`, `install`, `prod up`, `status`, `doctor` |
 
-**Backend tests** are not run by `devctl`. From the **repository root**, use **`deploy/scripts/run-pytest.sh`**: it activates **`$ROOT/.venv`** (same default as `devctl` / `nunet-web-mode`), sets **`PYTHONPATH`** for `backend.*` and `modules.*`, installs **`pytest`** and **`httpx`** into that venv if missing, then runs pytest.
-
-```bash
-./deploy/scripts/run-pytest.sh
-./deploy/scripts/run-pytest.sh -q --tb=short
-./deploy/scripts/run-pytest.sh backend/tests/test_environment_profile.py -v
-```
-
-See `frontend/README.md` for Cypress E2E. The `.cursor/rules/testing.mdc` rule summarizes both.
-
-### `deploy/scripts/nunet-web-mode.sh` Overview
-
-Use this script when testing against the integrated service on `https://localhost:8443`:
+### `nunet-web-mode.sh` (canonical for live app + integration/E2E)
 
 ```bash
-./deploy/scripts/nunet-web-mode.sh dev-on    # repo backend+frontend via systemd drop-in
-./deploy/scripts/nunet-web-mode.sh rebuild   # refresh venv + frontend build, restart service
-./deploy/scripts/nunet-web-mode.sh status    # show active service/unit wiring
-./deploy/scripts/nunet-web-mode.sh dev-off   # return to packaged systemd defaults
+./deploy/scripts/nunet-web-mode.sh dev-on    # venv + frontend build + systemd override
+./deploy/scripts/nunet-web-mode.sh rebuild   # refresh venv/dist and restart
+./deploy/scripts/nunet-web-mode.sh status    # ExecStart, drop-in, environment
+./deploy/scripts/nunet-web-mode.sh dev-off   # packaged unit defaults
 ```
 
-`dev-on` writes a systemd drop-in override so the service uses repo paths (`backend/`, `.venv`, `frontend/dist`) instead of packaged paths. `dev-off` removes that override.
+`dev-on` writes `/etc/systemd/system/nunet-appliance-web.service.d/override.conf` so gunicorn runs from the repo venv and serves `frontend/dist` on port **8443** (same origin for SPA and API).
+
+### `devctl.sh` (venv bootstrap + DEB workflow)
+
+```bash
+./deploy/scripts/devctl.sh setup       # .venv + pip (+ optional pnpm); no HTTP servers
+./deploy/scripts/devctl.sh test-deps   # optional OS libs for Playwright (sudo)
+./deploy/scripts/devctl.sh build 1.2.3
+./deploy/scripts/devctl.sh install
+```
+
+For unit pytest only, `devctl setup` is enough. For Vite HMR alone: `cd frontend && pnpm run dev` (not used for integration/E2E).
+
+
+## Testing (DEV ON pyramid)
+
+All integration-style tests target the **integrated web service** via **`APPLIANCE_BASE_URL`** (default `https://localhost:8443`) with **`nunet-web-mode.sh dev-on`** on the appliance host. Copy **`.env.test.example`** → **`.env.test`** and set **`APPLIANCE_ADMIN_PASSWORD`** (and **`APPLIANCE_BASE_URL`** when tests run from another machine or a container).
+
+| Tier | Command | What it covers |
+|------|---------|----------------|
+| **pytest unit** (default) | `./deploy/scripts/run-pytest.sh` | Fast tests with module stubs |
+| **pytest integration** | `./deploy/scripts/run-pytest.sh -m integration` | Live API routers (`backend/tests/integration/`) |
+| **pytest contract** | `./deploy/scripts/run-pytest.sh -m contract` | OpenAPI / Schemathesis (safe HTTP verbs) |
+| **Playwright (CI parity)** | `./deploy/scripts/run-playwright-ci.sh` | Browser journeys in Docker (`frontend/playwright/`) |
+| **Playwright (native)** | `cd frontend && pnpm e2e` | Same specs on the host after `playwright install` |
+
+```bash
+./deploy/scripts/run-pytest.sh -q
+
+# Bring up DEV ON (from repo root)
+./deploy/scripts/nunet-web-mode.sh dev-on
+./deploy/scripts/nunet-web-mode.sh rebuild
+
+set -a && source .env.test && set +a
+./deploy/scripts/run-pytest.sh -m integration
+./deploy/scripts/run-pytest.sh -m contract
+./deploy/scripts/run-playwright-ci.sh
+```
+
+CI: see **`docs/ci-appliance-runner.md`** (appliance host for DEV ON/OFF; integration and Playwright in containers).
+
+Details: **`.cursor/rules/testing.mdc`** and **`frontend/README.md`** (Playwright quick start).
 
 ---
 
@@ -61,25 +93,27 @@ Use this script when testing against the integrated service on `https://localhos
 ```
 .
 ├── backend/
-│   ├── modules/           # Shared helper modules (documented in modules/README.md)
-│   └── nunet_api/         # FastAPI application (documented in nunet_api/README.md)
+│   ├── modules/                 # Shared helper modules (documented in modules/README.md)
+│   └── nunet_api/               # FastAPI application (documented in nunet_api/README.md)
 ├── deploy/
 │   └── scripts/
-│       ├── devctl.sh           # Development CLI helper
-│       ├── nunet-web-mode.sh   # dev-on/off + rebuild/status for real web service
-│       └── run-pytest.sh       # Backend pytest (venv + PYTHONPATH + optional deps)
-├── frontend/              # React/Vite SPA
-└── README.md              # This document
+│       ├── devctl.sh            # Development CLI helper
+│       ├── nunet-web-mode.sh    # dev-on/off + rebuild/status for real web service
+│       ├── run-pytest.sh        # Backend pytest (venv + PYTHONPATH + optional deps)
+│       └── run-playwright-ci.sh # Playwright E2E (Docker / CI parity)
+├── frontend/                    # React/Vite SPA
+└── README.md                    # This document
 ```
 
 ---
 
 ## Getting Started
 
-1. **Clone the repo** and make sure you have Python 3.10+ and Node.js 22.x installed (with Corepack so `pnpm@10.33.4` is available).
-2. **Bootstrap the dev environment** by running `./deploy/scripts/devctl.sh dev up` (this creates virtual envs, installs dependencies, and starts both backend and frontend).
-3. **Open the API** – once running, the backend exposes `http://127.0.0.1:8080` (default) and the frontend runs on `http://127.0.0.1:5173` (or whichever Vite port is configured).
-4. **Explore the documentation** linked above to understand module responsibilities and API endpoints.
+1. **Clone the repo** on an appliance (or equivalent VM) with Python 3.10+ and Node.js 22.x (Corepack for `pnpm`).
+2. **Bootstrap tooling** (no servers): `./deploy/scripts/devctl.sh setup`
+3. **Run the integrated web app**: `./deploy/scripts/nunet-web-mode.sh dev-on && ./deploy/scripts/nunet-web-mode.sh rebuild` — open **`https://localhost:8443`**
+4. **Unit tests** (isolated, no DEV ON): `./deploy/scripts/run-pytest.sh`
+5. See linked READMEs for API modules and frontend structure.
 
 ## VirtualBox Log Sharing
 
@@ -101,8 +135,8 @@ File `nunet-dms.log` will appear in the *user's choice* folder.
 
 ## Logs
 
-- Dev (`devctl dev up`): backend/frontend logs live under `.devctl/run/backend.log` and `.devctl/run/frontend.log` in the repo.
-- Prod (deb install): backend logs via `journalctl -u nunet-appliance-web -f`; DMS logs at `/home/ubuntu/nunet/appliance/logs/nunet-dms.log`.
+- Integrated web (DEV ON or packaged): `journalctl -u nunet-appliance-web -f` or `./deploy/scripts/devctl.sh logs`
+- DMS: `/home/ubuntu/nunet/appliance/logs/nunet-dms.log`
 
 ---
 
@@ -119,7 +153,7 @@ File `nunet-dms.log` will appear in the *user's choice* folder.
 * Keep `backend/modules` in sync with the API – only helpers needed by the routers should live there.
 * Update the backend and frontend READMEs whenever you add or remove functionality.
 * Prefer introducing new functionality via the FastAPI routers rather than reviving legacy menu scripts.
-* Run `./deploy/scripts/run-pytest.sh` from the repo root (and any relevant Cypress specs) before opening a merge request. For integrated-service testing, switch to repo-backed mode with **`./deploy/scripts/nunet-web-mode.sh dev-on`**, then run **`./deploy/scripts/nunet-web-mode.sh rebuild`** after frontend changes so the running bundle matches the repo.
+* Run `./deploy/scripts/run-pytest.sh` and relevant Playwright specs (`frontend/`, `pnpm e2e`) before opening a merge request. Use **`./deploy/scripts/nunet-web-mode.sh dev-on`** + **`rebuild`** so the live service matches the repo.
 
 Happy hacking! 🚀
 

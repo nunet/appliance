@@ -26,11 +26,11 @@ In practice, **treat the appliance as the sandbox**: edit, commit, and test **on
 - **`rebuild`**: rebuild frontend (and refresh venv) then restart service.
 - **`status`**: show service unit paths, `ExecStart`, and environment.
 
-This is the preferred path when validating behavior through the real `nunet-appliance-web` service on `https://localhost:8443`.
+This is the **only** path for integration pytest, contract tests, and Playwright E2E.
 
-For a lighter loop (uvicorn + Vite without switching the system unit), **`deploy/scripts/devctl.sh dev up`** is still available—prefer **`nunet-web-mode`** when validating behavior **through the real `nunet-appliance-web` service**.
+**`devctl.sh`** handles packaging (`build`, `install`), **`setup`** (`.venv` + pip for unit pytest, no servers), and **`prod up`/`down`**.
 
-Monorepo layout here: **FastAPI** (`backend/nunet_api/`), **Python helpers** (`backend/modules/`), **React/Vite SPA** (`frontend/`), **deploy/dev** (`deploy/scripts/devctl.sh`). **Product**: local control plane for a NuNet node—API + dashboard; production serves API and static SPA from the **installed** stack unless **dev-on** is active.
+Monorepo layout here: **FastAPI** (`backend/nunet_api/`), **Python helpers** (`backend/modules/`), **React/Vite SPA** (`frontend/`), **deploy** (`deploy/scripts/devctl.sh`, `nunet-web-mode.sh`). **Product**: local control plane for a NuNet node—API + dashboard; production serves API and static SPA from the **installed** stack unless **dev-on** is active.
 
 ## Organizations and capabilities
 

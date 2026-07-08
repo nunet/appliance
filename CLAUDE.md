@@ -4,30 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NuNet Appliance is a full-stack web application for managing a distributed computing node. It consists of a FastAPI backend, a React/TypeScript frontend, and Debian package build tooling. The primary CLI for development is `devctl.sh`.
+NuNet Appliance is a full-stack web application for managing a distributed computing node. It consists of a FastAPI backend, a React/TypeScript frontend, and Debian package build tooling.
+
+**Integrated development** (canonical): `./deploy/scripts/nunet-web-mode.sh` (`dev-on`, `rebuild`, `dev-off`) — real `nunet-appliance-web` on `https://localhost:8443`.
+
+**Packaging / local bootstrap**: `./deploy/scripts/devctl.sh` (`setup`, `build`, `install`, `prod up`, …) — does not start split dev servers.
 
 ## Common Commands
 
-Common `deploy/scripts/devctl.sh` commands:
-
 ```bash
-./deploy/scripts/devctl.sh dev up       # Start backend + frontend (HMR)
-./deploy/scripts/devctl.sh dev down     # Stop development processes
-./deploy/scripts/devctl.sh build 1.2.3  # Build DEB packages for a version
-./deploy/scripts/devctl.sh status       # Check service status
-./deploy/scripts/devctl.sh logs         # View logs
-./deploy/scripts/devctl.sh doctor       # Diagnose environment
+./deploy/scripts/nunet-web-mode.sh dev-on    # repo venv + frontend/dist via systemd
+./deploy/scripts/nunet-web-mode.sh rebuild
+./deploy/scripts/devctl.sh setup             # .venv + deps only (unit pytest)
+./deploy/scripts/devctl.sh build 1.2.3
+./deploy/scripts/devctl.sh status
 ```
 
-`devctl` does **not** include a test subcommand; use pytest (below) and Cypress per `frontend/README.md`.
-
-### Backend (standalone)
-```bash
-cd backend/nunet_api
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn nunet_api.main:app --host 127.0.0.1 --port 8080 --reload
-```
+`devctl` does **not** include a test subcommand; use pytest and Playwright per root `README.md` and `frontend/README.md`. **`dev up` / `dev down` are removed** (formerly split Vite + API).
 
 Backend tests (pytest), from **repository root** (uses `.venv`, `PYTHONPATH`, installs `pytest`/`httpx` if needed):
 ```bash
@@ -43,13 +36,13 @@ pnpm install
 pnpm run dev    # Vite dev server on http://localhost:5173
 pnpm run build  # Production bundle to frontend/dist
 pnpm run lint   # ESLint
-pnpm cy:open    # Cypress interactive mode
-pnpm cy:run     # Run E2E tests headlessly
+pnpm e2e        # Playwright headless (DEV ON, https://localhost:8443)
+pnpm e2e:ui     # Playwright UI mode
 ```
 
 ### Default Ports
-- Backend API: `8080`
-- Frontend dev server: `5173`
+- Integrated web (DEV ON / production): `8443` (HTTPS)
+- Optional Vite-only UI: `5173` (`cd frontend && pnpm run dev` — not used for integration/E2E)
 
 ## Architecture
 
