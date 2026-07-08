@@ -44,7 +44,16 @@ variables:
       - frontend/node_modules/
     policy: pull
 
+.appliance-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - when: never
+
 security:python-deps:
+  extends:
+    - .appliance-rules
   stage: security
   image: python:3.12.3-bookworm
   script:
@@ -52,14 +61,11 @@ security:python-deps:
     - python -m pip install pip-audit
     - python -m pip_audit -r backend/nunet_api/requirements.txt --strict
   allow_failure: true
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - when: never
 
 security:frontend-deps:
-  extends: .frontend_pnpm_cache
+  extends:
+    - .frontend_pnpm_cache
+    - .appliance-rules
   stage: security
   image: node:22-bookworm
   allow_failure: true
@@ -68,14 +74,11 @@ security:frontend-deps:
     - corepack prepare "pnpm@${PNPM_VERSION}" --activate
     - corepack pnpm install --frozen-lockfile
     - corepack pnpm audit --prod --audit-level=critical
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - when: never
 
 security:frontend-high-report:
-  extends: .frontend_pnpm_cache
+  extends: 
+    - .frontend_pnpm_cache
+    - .appliance-rules
   stage: security
   image: node:22-bookworm
   allow_failure: true
@@ -84,11 +87,6 @@ security:frontend-high-report:
     - corepack prepare "pnpm@${PNPM_VERSION}" --activate
     - corepack pnpm install --frozen-lockfile
     - corepack pnpm audit --prod --audit-level=high
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - when: never
 
 security:strict:python:
   stage: security
@@ -133,7 +131,7 @@ security:pnpm-drift-check:
       echo "PNPM version is current within major ${pinned_major}"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_REF_NAME =~ /^(release|release\/.+|release-.+|main)$/
     - if: $CI_PIPELINE_SOURCE == "web"
     - if: $CI_PIPELINE_SOURCE == "schedule"
 
@@ -199,16 +197,10 @@ security:nightly-create-issue-on-failure:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: on_failure
 
-.appliance-test-rules:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS == null
-    - if: $CI_PIPELINE_SOURCE == "web"
-    - when: never
 
 pytest:unit:
   extends:
-    - .appliance-test-rules
+    - .appliance-rules
   stage: test
   image: python:3.12.3-bookworm
   coverage: '/TOTAL.*?([0-9]+\.[0-9]+%)/'
@@ -236,7 +228,7 @@ pytest:unit:
 
 build-frontend:
   extends:
-    - .appliance-test-rules
+    - .appliance-rules
     - .frontend_pnpm_cache
   stage: build
   image: node:22-bookworm
@@ -251,7 +243,7 @@ build-frontend:
       - frontend/dist/
 
 .build-packages:
-  extends: .appliance-test-rules
+  extends: .appliance-rules
   stage: build
   image: ubuntu:24.04
   cache: []
@@ -399,7 +391,7 @@ update-permalinks:
 appliance:prepare:
   extends:
     - .appliance-host
-    - .appliance-test-rules
+    - .appliance-rules
   stage: deploy
   resource_group: appliance-ci
   allow_failure: true
@@ -412,7 +404,7 @@ appliance:prepare:
     - bash deploy/scripts/ci-appliance-prepare.sh
 
 pytest:integration+contract:
-  extends: .appliance-test-rules
+  extends: .appliance-rules
   stage: e2e_test
   image: python:3.12.3-bookworm
   resource_group: appliance-ci
@@ -446,7 +438,7 @@ pytest:integration+contract:
 
 playwright:e2e:
   extends:
-    - .appliance-test-rules
+    - .appliance-rules
     - .frontend_pnpm_cache_pull
   stage: e2e_test
   image: mcr.microsoft.com/playwright:v1.60.0-jammy
@@ -470,7 +462,7 @@ playwright:e2e:
 appliance:dev-off:
   extends:
     - .appliance-host
-    - .appliance-test-rules
+    - .appliance-rules
   stage: e2e_test
   resource_group: appliance-ci
   needs:
@@ -491,7 +483,7 @@ appliance:dev-off:
 #appliance:package-smoke:
 #  extends:
 #    - .appliance-host
-#    - .appliance-test-rules
+#    - .appliance-rules
 #  stage: e2e_test
 #  resource_group: appliance-ci
 #  allow_failure: true
