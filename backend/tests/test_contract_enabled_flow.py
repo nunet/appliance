@@ -25,7 +25,7 @@ from typing import Dict, Any
 def mock_onboarding_manager():
     """Create a mock OnboardingManager for testing."""
     from backend.modules.onboarding_manager import OnboardingManager
-    
+
     with patch.object(OnboardingManager, '_load_state') as mock_load:
         mock_load.return_value = OnboardingManager._baseline_state()
         mgr = OnboardingManager(use_mock_api=True)

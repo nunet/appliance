@@ -59,10 +59,11 @@ frontend/.vite/
 frontend/.cache/
 .vite/
 
-# Cypress (local run artifacts)
-frontend/cypress/screenshots/
-frontend/cypress/videos/
+# Frontend local run test artifacts
+frontend/playwright/.auth/
+frontend/playwright-report/
 frontend/.env.e2e
+frontend/test-results/
 
 # IDE and editor files
 .vscode/
@@ -161,6 +162,7 @@ Dockerfile.cross-build
 .env.development.local
 .env.test.local
 .env.production.local
+.env.test
 frontend/.env.e2e
 
 # PEX cache
@@ -194,6 +196,7 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+artifacts/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -248,7 +251,3 @@ dev/
 .devctl/
 deploy/admin_credentials.json
 .aider*
-
-# Cypress artifacts
-frontend/cypress/screenshots/
-frontend/cypress/videos/

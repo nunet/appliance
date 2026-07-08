@@ -193,8 +193,8 @@ def test_list_transactions_uses_hyphenated_filter_cli_flags(monkeypatch):
     argv = calls[0]
     assert "--unique-id" in argv
     assert argv[argv.index("--unique-id") + 1] == "uid-99"
-    assert "--filter deployment_id=" in argv
-    assert argv[argv.index("--filter deployment_id=") + 1] == "fa0dea"
+    assert "--filter" in argv
+    assert argv[argv.index("--filter") + 1] == "deployment_id=fa0dea"
     assert "--tx-hash" in argv
     assert argv[argv.index("--tx-hash") + 1] == "0xabc"
     assert "--unique_id" not in argv

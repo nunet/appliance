@@ -39,7 +39,7 @@ Run this process on your feature/update branch:
    - prefer exact versions for direct dependencies
 2. Regenerate lockfile intentionally
    - `cd frontend`
-   - `corepack prepare pnpm@10.33.4 --activate`
+   - `corepack prepare pnpm@10.34.1 --activate`
    - `corepack pnpm install`
 3. Validate locally
    - `corepack pnpm audit --prod --audit-level=high`
@@ -114,7 +114,7 @@ Fix:
 
 ## Guardrails in This Repo
 
-- Pinned package manager version via Corepack (`pnpm@10.33.4`)
+- Pinned package manager version via Corepack (`pnpm@10.34.1`)
 - `minimumReleaseAge=1440` to avoid very fresh package publishes
 - frozen lockfile installs in build and CI
 - production audit gate in CI and build script

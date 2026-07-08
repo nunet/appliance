@@ -7,13 +7,25 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 APPLIANCE_ROOT="${APPLIANCE_ROOT:-$ROOT}"
 export APPLIANCE_ROOT
 
-# Self-setup: Ensure devctl alias exists and points to absolute path
+# Defaults (overridable via .env at repo root)
+SERVICE_USER="${SERVICE_USER:-ubuntu}"
+WEB_PORT="${WEB_PORT:-8443}"
+VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
+DEV_RUN_DIR="${DEV_RUN_DIR:-$ROOT/.devctl/run}"
+
+# State for install/rollback
+STATE_DIR="${STATE_DIR:-/var/lib/nunet-appliance/devctl}"
+STATE_FILE="$STATE_DIR/web_install_state"
+PKG_NAME_WEBSVC="nunet-appliance-web"
+SYSTEMD_WEBSVC="nunet-appliance-web.service"
+PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
+WEB_MODE_SCRIPT="$ROOT/deploy/scripts/nunet-web-mode.sh"
+
 setup_alias() {
   local alias_target="$ROOT/deploy/scripts/devctl.sh"
   local alias_line="alias devctl=\"$alias_target\""
   local bashrc="$HOME/.bashrc"
 
-  # Ensure ~/.bashrc contains an alias pointing at this script
   if ! grep -q "^alias devctl=" "$bashrc" 2>/dev/null; then
     echo "Setting up devctl alias..."
     echo "$alias_line" >> "$bashrc"
@@ -27,61 +39,65 @@ setup_alias() {
   fi
 }
 
-# Run alias setup on first use
-setup_alias
-
-# Defaults (overridable via .env dev/prod)
-SERVICE_USER="${SERVICE_USER:-ubuntu}"
-BACKEND_PORT="${BACKEND_PORT:-8080}"
-FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT}}"
-VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
-TMUX_SESSION="nunet-dev"
-DEVCTL_USE_TMUX="${DEVCTL_USE_TMUX:-0}"
-DEV_RUN_DIR="${DEV_RUN_DIR:-$ROOT/.devctl/run}"
-DEV_BACKEND_PIDFILE="$DEV_RUN_DIR/backend.pid"
-DEV_FRONTEND_PIDFILE="$DEV_RUN_DIR/frontend.pid"
-DEV_BACKEND_LOG="$DEV_RUN_DIR/backend.log"
-DEV_FRONTEND_LOG="$DEV_RUN_DIR/frontend.log"
-
-# State for install/rollback
-STATE_DIR="${STATE_DIR:-/var/lib/nunet-appliance/devctl}"
-STATE_FILE="$STATE_DIR/web_install_state"
-PKG_NAME_WEBSVC="nunet-appliance-web"
-SYSTEMD_WEBSVC="nunet-appliance-web.service"
-PNPM_VERSION="${PNPM_VERSION:-10.33.4}"
-
 show_help() {
   cat <<EOF
 NuNet Appliance Dev Controller
 
 Usage:
-  $(basename "$0") dev up              Start dev mode (frontend HMR + backend reload)
-  $(basename "$0") dev down            Stop dev mode processes
-  $(basename "$0") prod up             Start packaged web service via systemd
-  $(basename "$0") prod down           Stop packaged web service
-  $(basename "$0") build [version]     Build packages (defaults to 1.0.0)
-  $(basename "$0") install             Install latest built web package from dist/
-  $(basename "$0") rollback            Revert to previous installed web package
-  $(basename "$0") status              Show services, dev processes, and ports
-  $(basename "$0") logs                Tail packaged service logs
-  $(basename "$0") ps                  Show listeners on dev ports
-  $(basename "$0") doctor              Check deps and port availability
-  $(basename "$0") -h|--help|help      Show this help
+  $(basename "$0") setup              Create .venv, install API (+ optional frontend) deps; no servers
+  $(basename "$0") test-deps        Install OS packages for Playwright (optional, needs sudo)
+  $(basename "$0") prod up          Start packaged web service via systemd
+  $(basename "$0") prod down        Stop packaged web service
+  $(basename "$0") build [version]    Build .deb packages (defaults to 1.0.0)
+  $(basename "$0") install            Install latest built web package from dist/
+  $(basename "$0") rollback           Revert to previous installed web package
+  $(basename "$0") status             Show systemd web service and port $WEB_PORT
+  $(basename "$0") logs               Tail packaged service logs
+  $(basename "$0") -h|--help|help     Show this help
+
+Integrated development (repo-backed web on https://localhost:$WEB_PORT):
+  $WEB_MODE_SCRIPT dev-on
+  $WEB_MODE_SCRIPT rebuild
+  $WEB_MODE_SCRIPT status
+  $WEB_MODE_SCRIPT dev-off
+
+Unit tests (no live service required):
+  ./deploy/scripts/run-pytest.sh
 
 Environment (overridable via .env at repo root):
-  SERVICE_USER     Default ubuntu
-  BACKEND_PORT     Default 8080
-  FRONTEND_PORT    Default 5173
-  CORS_ORIGINS     Default http://localhost:5173
-  VENV_DIR         Default deploy/.dev-venv under repo
-  DEVCTL_USE_TMUX  Default 0 (set to 1 to use legacy tmux dev up)
+  VENV_DIR                   Default \$ROOT/.venv
+  WEB_PORT                   Default 8443 (integrated web service)
+  DEVCTL_SKIP_FRONTEND       Set to 1 to skip pnpm install during setup
+  DEVCTL_INSTALL_PLAYWRIGHT  Set to 1 to run playwright install chromium during setup
+
+Deprecated (removed):
+  dev up / dev down     Use nunet-web-mode.sh dev-on and devctl setup instead
 
 Examples:
+  $(basename "$0") setup
   $(basename "$0") build 1.2.3
   $(basename "$0") install && $(basename "$0") prod up
-  $(basename "$0") dev up   # set DEVCTL_USE_TMUX=1 if you prefer tmux windows
 EOF
+}
+
+deprecate_dev_commands() {
+  cat <<EOF >&2
+ERROR: 'dev up' and 'dev down' were removed.
+
+For integrated development (SPA + API on https://localhost:$WEB_PORT):
+  $WEB_MODE_SCRIPT dev-on
+  $WEB_MODE_SCRIPT rebuild
+
+For local venv / frontend deps only (unit pytest, no servers):
+  $(basename "$0") setup
+
+For optional Playwright OS libraries:
+  $(basename "$0") test-deps
+
+For Vite HMR only (not used for integration/E2E):
+  cd frontend && corepack pnpm run dev
+EOF
+  exit 1
 }
 
 load_env() {
@@ -103,9 +119,7 @@ ensure_state_dir() {
 apply_default_env() {
   APPLIANCE_ROOT="${APPLIANCE_ROOT:-$ROOT}"
   export APPLIANCE_ROOT
-  BACKEND_PORT="${BACKEND_PORT:-8080}"
-  FRONTEND_PORT="${FRONTEND_PORT:-5173}"
-  CORS_ORIGINS="${CORS_ORIGINS:-http://localhost:${FRONTEND_PORT}}"
+  WEB_PORT="${WEB_PORT:-8443}"
   VENV_DIR="${VENV_DIR:-$ROOT/.venv}"
   export NUNET_DATA_DIR="${NUNET_DATA_DIR:-/home/ubuntu/nunet}"
   export ENSEMBLES_DIR="${ENSEMBLES_DIR:-/home/ubuntu/ensembles}"
@@ -120,10 +134,11 @@ install_browser_deps() {
   local marker="$DEV_RUN_DIR/.browser_deps_installed"
   mkdir -p "$DEV_RUN_DIR"
   if [ -f "$marker" ]; then
+    echo "Browser OS deps already installed (marker: $marker)"
     return 0
   fi
 
-  echo "Installing browser runtime dependencies (Chrome/Chromium/Electron/Xvfb)..."
+  echo "Installing browser runtime dependencies for Playwright..."
   sudo apt-get update
   sudo apt-get install -y \
     xvfb \
@@ -137,6 +152,7 @@ install_browser_deps() {
     fonts-liberation ca-certificates
 
   touch "$marker"
+  echo "Browser OS deps installed."
 }
 
 current_installed_version() {
@@ -148,76 +164,60 @@ latest_built_deb_path() {
 }
 
 extract_version_from_deb() {
-  # deb filename format: name_version_arch.deb
   local deb="$1"
   local base
   base="$(basename -- "$deb")"
-  # strip prefix
   base="${base#${PKG_NAME_WEBSVC}_}"
-  # remove arch suffix
-  echo "${base%_*}" | sed 's/\.deb$//' # returns version
+  echo "${base%_*}" | sed 's/\.deb$//'
+}
+
+dropin_override_path() {
+  local dropin="/etc/systemd/system/${SYSTEMD_WEBSVC}.d/override.conf"
+  if [ -f "$dropin" ]; then
+    echo "$dropin"
+  fi
+}
+
+port_info() {
+  local port="$1"
+  local line
+  line=$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p {print $0; exit}')
+  if [ -z "$line" ]; then
+    echo "port $port: (free)"
+    return 0
+  fi
+  local proc
+  proc=$(echo "$line" | sed -n 's/.*users:(\(.*\)).*/\1/p')
+  local tag=""
+  if echo "$proc" | grep -q "$ROOT/.venv"; then tag="[repo-venv]"; fi
+  if echo "$proc" | grep -q "/usr/lib/nunet-appliance-web"; then tag="[packaged]"; fi
+  echo "port $port: $proc $tag"
 }
 
 status() {
-  # Helper: who owns a port and is it likely DEV or PROD
-  port_info() {
-    local port="$1"
-    local line
-    line=$(ss -ltnp 2>/dev/null | awk -v p=":$port" '$4 ~ p {print $0; exit}')
-    if [ -z "$line" ]; then
-      echo "port $port: (free)"
-      return 0
-    fi
-    # Extract process command
-    local proc
-    proc=$(echo "$line" | sed -n 's/.*users:(\(.*\)).*/\1/p')
-    # Tag as DEV or PROD based on command path hints
-    local tag=""
-    if echo "$proc" | grep -q "$ROOT/frontend"; then tag="[DEV:frontend]"; fi
-    if echo "$proc" | grep -q "$ROOT/backend"; then tag="[DEV:backend]"; fi
-    if echo "$proc" | grep -q "/usr/lib/nunet-appliance-web"; then tag="[PROD:web]"; fi
-    echo "port $port: $proc $tag"
-  }
-
-  local svc_state svc_pid tmux_state cur_ver
-  svc_state=$(systemctl is-active "$SYSTEMD_WEBSVC" || true)
+  local svc_state svc_pid cur_ver override
+  svc_state=$(systemctl is-active "$SYSTEMD_WEBSVC" 2>/dev/null || true)
   svc_pid=$(systemctl show -p MainPID --value "$SYSTEMD_WEBSVC" 2>/dev/null || echo "0")
-  tmux_state="inactive"
-  if [ "$DEVCTL_USE_TMUX" = "1" ] && command -v tmux >/dev/null 2>&1; then
-    tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux_state="active" || tmux_state="inactive"
-  fi
   cur_ver=$(current_installed_version)
+  override=$(dropin_override_path || true)
 
-  echo "=== PROD (systemd) ==="
-  echo "service: $SYSTEMD_WEBSVC -> $svc_state${svc_pid:+ (pid:$svc_pid)}"
-  echo "installed: ${cur_ver:-none}"
-  echo
-  echo "=== DEV ==="
-  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
-    echo "session: $TMUX_SESSION -> $tmux_state"
-    if [ "$tmux_state" = "active" ]; then
-      tmux list-windows -t "$TMUX_SESSION" 2>/dev/null | sed 's/^/  window: /'
-    fi
+  echo "=== Web service (systemd) ==="
+  echo "service: $SYSTEMD_WEBSVC -> ${svc_state:-unknown}${svc_pid:+ (pid:$svc_pid)}"
+  echo "installed package: ${cur_ver:-none}"
+  if [ -n "$override" ]; then
+    echo "dev-on override: $override (repo-backed ExecStart)"
+    echo "Tip: $WEB_MODE_SCRIPT status"
   else
-    if [ -f "$DEV_BACKEND_PIDFILE" ]; then
-      echo "backend pid: $(cat "$DEV_BACKEND_PIDFILE") (log: $DEV_BACKEND_LOG)"
-    else
-      echo "backend pid: <none>"
-    fi
-    if [ -f "$DEV_FRONTEND_PIDFILE" ]; then
-      echo "frontend pid: $(cat "$DEV_FRONTEND_PIDFILE") (log: $DEV_FRONTEND_LOG)"
-    else
-      echo "frontend pid: <none>"
-    fi
+    echo "dev-on override: none (packaged unit defaults)"
   fi
   echo
-  echo "=== Ports ==="
-  port_info "$BACKEND_PORT"
-  port_info "$FRONTEND_PORT"
+  echo "=== Integrated web port ==="
+  port_info "$WEB_PORT"
+  echo
+  echo "venv: ${VENV_DIR} $([ -x "$VENV_DIR/bin/python" ] && echo '(present)' || echo '(missing — run: devctl setup)')"
 }
 
 prod_up() {
-  dev_down || true
   sudo systemctl enable "$SYSTEMD_WEBSVC" >/dev/null 2>&1 || true
   sudo systemctl restart "$SYSTEMD_WEBSVC"
   echo "prod up: $SYSTEMD_WEBSVC started"
@@ -228,93 +228,47 @@ prod_down() {
   echo "prod down: $SYSTEMD_WEBSVC stopped"
 }
 
-dev_setup() {
+setup() {
+  setup_alias
   need python3
   need corepack
 
-  install_browser_deps
-
-  # Check Node.js version and install if needed
   if ! command -v node >/dev/null 2>&1 || ! node --version | grep -qE "v(22|24)"; then
-    echo "Installing Node.js 22+ for frontend development..."
+    echo "Installing Node.js 22+ for frontend tooling..."
     curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
     sudo apt-get install -y nodejs
   fi
 
   corepack prepare "pnpm@${PNPM_VERSION}" --activate
-  corepack pnpm --version >/dev/null 2>&1 || { echo "pnpm unavailable via corepack"; exit 1; }
+  corepack pnpm --version >/dev/null 2>&1 || { echo "pnpm unavailable via corepack" >&2; exit 1; }
 
-  # Ensure frontend deps (including Cypress binary) are installed before starting dev services.
-  # This avoids manual installs on fresh machines.
-  (
-    cd "$ROOT/frontend"
-    corepack pnpm install --frozen-lockfile
-    # Pre-download Cypress; if offline, continue without failing the setup.
-    corepack pnpm exec cypress install || echo "Skipping Cypress binary download (offline or already installed)"
-  )
+  if [ "${DEVCTL_SKIP_FRONTEND:-0}" != "1" ]; then
+    echo "==> Installing frontend dependencies"
+    (
+      cd "$ROOT/frontend"
+      corepack pnpm install --frozen-lockfile
+      if [ "${DEVCTL_INSTALL_PLAYWRIGHT:-0}" = "1" ]; then
+        corepack pnpm exec playwright install chromium \
+          || echo "Skipping Playwright browser download (offline or already installed)"
+      fi
+    )
+  else
+    echo "Skipping frontend install (DEVCTL_SKIP_FRONTEND=1)"
+  fi
 
+  echo "==> Creating Python venv at $VENV_DIR"
   python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR"
   # shellcheck disable=SC1090
   . "$VENV_DIR/bin/activate"
   pip install -U pip wheel
   pip install -r "$ROOT/backend/nunet_api/requirements.txt"
-}
-
-start_dev_processes() {
-  mkdir -p "$DEV_RUN_DIR"
-  bash "$ROOT/deploy/scripts/dev_frontend.sh" >"$DEV_FRONTEND_LOG" 2>&1 &
-  echo $! > "$DEV_FRONTEND_PIDFILE"
-  bash "$ROOT/deploy/scripts/dev_backend.sh" >"$DEV_BACKEND_LOG" 2>&1 &
-  echo $! > "$DEV_BACKEND_PIDFILE"
-  echo "dev up: started frontend (pid $(cat "$DEV_FRONTEND_PIDFILE")) and backend (pid $(cat "$DEV_BACKEND_PIDFILE"))"
-  echo "logs: $DEV_FRONTEND_LOG, $DEV_BACKEND_LOG"
-}
-
-stop_pidfile() {
-  local pidfile="$1"
-  if [ -f "$pidfile" ]; then
-    local pid
-    pid=$(cat "$pidfile" 2>/dev/null || true)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-    rm -f "$pidfile"
+  if [ -f "$ROOT/backend/requirements-test.txt" ]; then
+    pip install -r "$ROOT/backend/requirements-test.txt"
   fi
-}
 
-dev_up_tmux() {
-  tmux has-session -t "$TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$TMUX_SESSION" || true
-  tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT/frontend" "bash --norc -c 'PORT=$FRONTEND_PORT corepack pnpm install --frozen-lockfile && PORT=$FRONTEND_PORT corepack pnpm run dev'"
-  tmux new-window -t "$TMUX_SESSION" -n backend -c "$ROOT/backend" \
-    "bash --norc -c \"export CORS_ORIGINS='$CORS_ORIGINS'; exec gunicorn -k uvicorn.workers.UvicornWorker nunet_api.main:app --bind 0.0.0.0:$BACKEND_PORT --reload --workers 1\""
-  echo "dev up: tmux session '$TMUX_SESSION' started (windows: frontend, backend)"
-  echo "Attach with: tmux attach -t $TMUX_SESSION"
-}
-
-dev_up() {
-  prod_down || true
-  dev_setup
-  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
-    dev_up_tmux
-  else
-    start_dev_processes
-  fi
-}
-
-dev_down() {
-  if [ "$DEVCTL_USE_TMUX" = "1" ]; then
-    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
-  fi
-  stop_pidfile "$DEV_BACKEND_PIDFILE"
-  stop_pidfile "$DEV_FRONTEND_PIDFILE"
-  pkill -f "gunicorn .*--bind 0.0.0.0:$BACKEND_PORT" 2>/dev/null || true
-  pkill -f "uvicorn .*--port $BACKEND_PORT" 2>/dev/null || true
-  pkill -f "pnpm run dev" 2>/dev/null || true
-  pkill -f "vite" 2>/dev/null || true
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${FRONTEND_PORT}/tcp" 2>/dev/null || true
-  fi
-  echo "dev down: stopped dev processes"
+  echo "setup: complete (no servers started)"
+  echo "  Unit tests:  ./deploy/scripts/run-pytest.sh"
+  echo "  DEV ON:      $WEB_MODE_SCRIPT dev-on && $WEB_MODE_SCRIPT rebuild"
 }
 
 build() {
@@ -341,10 +295,8 @@ install_latest() {
     return 0
   fi
 
-  # Save rollback info
   if [ -n "$cur_ver" ]; then
     echo "previous_version=$cur_ver" | sudo tee "$STATE_FILE" >/dev/null
-    # Try to locate a matching deb in dist for rollback convenience
     prev_deb="$(ls -1 "$ROOT/dist/${PKG_NAME_WEBSVC}_${cur_ver}_"*.deb 2>/dev/null | head -n1 || true)"
     [ -n "$prev_deb" ] && echo "previous_deb=$prev_deb" | sudo tee -a "$STATE_FILE" >/dev/null
   else
@@ -388,21 +340,24 @@ logs() {
   journalctl -u "$SYSTEMD_WEBSVC" -f -n 100 --no-pager
 }
 
-doctor() {
-  echo "Checking dependencies and ports..."
-  for x in python3 corepack ss systemctl dpkg-query; do need "$x"; done
-  if [ "$DEVCTL_USE_TMUX" = "1" ]; then need tmux; fi
-  ss -ltn | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" && echo "Warning: dev ports busy" || true
-  echo "OK"
-}
-
 case "${1:-}" in
   ""|-h|--help|help)
     show_help ;;
+  setup)
+    load_env; apply_default_env; setup ;;
+  test-deps)
+    load_env; apply_default_env; install_browser_deps ;;
   dev)
-    load_env; apply_default_env; case "${2:-}" in up) dev_up ;; down) dev_down ;; *) echo "Usage: $0 dev [up|down]"; exit 1 ;; esac ;;
+    load_env; apply_default_env
+    case "${2:-}" in
+      up|down) deprecate_dev_commands ;;
+      *) echo "Usage: deprecated — see: $(basename "$0") help"; deprecate_dev_commands ;;
+    esac
+    ;;
   prod)
-    load_env; apply_default_env; case "${2:-}" in up) prod_up ;; down) prod_down ;; *) echo "Usage: $0 prod [up|down]"; exit 1 ;; esac ;;
+    load_env; apply_default_env
+    case "${2:-}" in up) prod_up ;; down) prod_down ;; *) echo "Usage: $0 prod [up|down]"; exit 1 ;; esac
+    ;;
   build)
     load_env; apply_default_env; build "${2:-1.0.0}" ;;
   install)
@@ -413,10 +368,6 @@ case "${1:-}" in
     load_env; apply_default_env; status ;;
   logs)
     load_env; apply_default_env; logs ;;
-  ps)
-    load_env; apply_default_env; ss -ltnp | grep -E ":($BACKEND_PORT|$FRONTEND_PORT)\\b" || true ;;
-  doctor)
-    load_env; apply_default_env; doctor ;;
   *)
     show_help ; exit 1 ;;
 esac
