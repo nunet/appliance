@@ -25,8 +25,8 @@ fi
 
 # Parse commits since last tag for version bump
 MAJOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^BREAKING CHANGE\|MAJOR VERSION" || true)
-MINOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^feat:" || true)
-PATCH=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^fix:" || true)
+MINOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(feat:\|feature:\)" || true)
+PATCH=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(fix:\|patch:\)" || true)
 
 echo "Last version: $LAST_VERSION"
 echo "Commits since last tag: $(git log --oneline $LAST_TAG..HEAD | wc -l)"

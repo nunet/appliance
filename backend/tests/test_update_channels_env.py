@@ -30,16 +30,19 @@ def test_production_prefers_stable_and_falls_back_for_appliance(monkeypatch):
 
     monkeypatch.setattr(utils, "detect_deb_arch", lambda: "amd64")
     monkeypatch.setattr(utils, "get_appliance_version", lambda: "0.8.0")
-    monkeypatch.setattr(utils, "_fetch_registry_version", lambda kind: "")
+    monkeypatch.setattr(
+        utils,
+        "_fetch_registry_version",
+        lambda kind: "0.9.0" if kind == "appliance" else "",
+    )
 
     calls: list[str] = []
 
     def fake_deb_version(url: str, cache_key: str) -> str:
         calls.append(cache_key)
+        # Production has no fallback channel: only the stable .deb URL is a candidate.
         if "nunet-appliance-web-amd64-stable.deb" in url:
             return ""
-        if "nunet-appliance-web-amd64-latest.deb" in url:
-            return "0.9.0"
         if "nunet-dms-amd64-stable.deb" in url:
             return "1.0.0"
         if "nunet-dms-amd64-latest.deb" in url:
@@ -53,7 +56,7 @@ def test_production_prefers_stable_and_falls_back_for_appliance(monkeypatch):
 
     assert appliance_update["environment"] == "production"
     assert appliance_update["channel"] == "stable"
-    assert appliance_update["resolved_channel"] == "latest"
+    assert appliance_update["resolved_channel"] == "stable"
     assert appliance_update["latest"] == "0.9.0"
     assert appliance_update["available"] is True
 
@@ -63,7 +66,7 @@ def test_production_prefers_stable_and_falls_back_for_appliance(monkeypatch):
     assert dms_update["latest"] == "1.0.0"
 
     assert "appliance:amd64:stable" in calls
-    assert "appliance:amd64:latest" in calls
+    assert "appliance:amd64:latest" not in calls
 
 
 def test_staging_uses_latest_channel_for_updates(monkeypatch):

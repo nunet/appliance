@@ -1,0 +1,17 @@
+---
+description: FastAPI app structure, routers, auth, and extending the API
+globs: appliance/backend/nunet_api/**/*.py
+alwaysApply: false
+---
+
+# FastAPI (`nunet_api`)
+
+- **Entry**: `main.py` — middleware (CORS, gzip), router mounts, SPA static mount (`SPAStaticFiles`), `/health`. Contracts router mounted at `/api/contracts` and `/contracts`.
+- **Protection**: Use `dependencies=protected` (see `main.py`) unless the endpoint must be public (auth, health, setup/login as documented).
+- **Extending**:
+  1. Put OS/DMS/shell logic in `backend/modules/`, not inline in routers.
+  2. Add or extend a router under `routers/`.
+  3. Shared request/response shapes → `schemas.py`.
+  4. Add tests under `backend/tests/`.
+- **Responses**: Prefer consistent JSON shapes (`status` / `message` where established); use `HTTPException` for API errors.
+- **Imports**: Routers import helpers from `modules.*` only—not the reverse of heavy router imports into modules.

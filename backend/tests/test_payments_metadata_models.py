@@ -12,7 +12,7 @@ CARDANO_ADDRESS = (
 def _tx(unique_id: str, to_address: str, amount: str, metadata, *, metadata_key: str = "metadata"):
     payload = {
         "unique_id": unique_id,
-        "payment_validator_did": "did:prism:validator",
+        "deployment_id": "deployment",
         "contract_did": "did:prism:contract",
         "to_address": to_address,
         "amount": amount,
@@ -172,7 +172,7 @@ def test_list_payments_returns_metadata_for_all_payment_models():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -200,7 +200,7 @@ def test_list_payments_keeps_transaction_when_metadata_is_missing():
     txs = [
         {
             "unique_id": "550e8400-e29b-41d4-a716-446655440006",
-            "payment_validator_did": "did:prism:validator",
+            "deployment_id": "deployment",
             "contract_did": "did:prism:contract",
             "to_address": "0x" + "7" * 40,
             "amount": "11.000000",
@@ -210,7 +210,7 @@ def test_list_payments_keeps_transaction_when_metadata_is_missing():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -239,7 +239,7 @@ def test_list_payments_coerces_invalid_metadata_to_none():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -260,7 +260,7 @@ def test_list_payments_ignores_invalid_transaction_even_when_metadata_present():
     txs = [
         {
             "unique_id": "550e8400-e29b-41d4-a716-446655440008",
-            "payment_validator_did": "did:prism:validator",
+            "deployment_id": "deployment",
             "contract_did": "did:prism:contract",
             "to_address": "",
             "amount": "13.000000",
@@ -271,7 +271,7 @@ def test_list_payments_ignores_invalid_transaction_even_when_metadata_present():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -292,7 +292,7 @@ def test_list_payments_extracts_to_and_from_addresses():
     txs = [
         {
             "unique_id": "550e8400-e29b-41d4-a716-446655440010",
-            "payment_validator_did": "did:prism:validator",
+            "deployment_id": "deployment",
             "contract_did": "did:prism:contract",
             "to_address": [
                 {
@@ -309,7 +309,7 @@ def test_list_payments_extracts_to_and_from_addresses():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -359,7 +359,7 @@ def test_list_payments_accepts_16_decimal_amounts_and_rejects_17():
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -387,7 +387,7 @@ def test_list_payments_accepts_16_decimal_amounts_and_rejects_17():
 def test_norm_tx_keys_includes_conversion_fields():
     raw = {
         "unique_id": "550e8400-e29b-41d4-a716-446655441111",
-        "payment_validator_did": "did:prism:validator",
+        "deployment_id": "deployment",
         "contract_did": "did:prism:contract",
         "to_address": "0x" + "1" * 40,
         "amount": "10.00",
@@ -396,19 +396,21 @@ def test_norm_tx_keys_includes_conversion_fields():
         "OriginalAmount": "10.00",
         "PricingCurrency": "USDT",
         "RequiresConversion": "true",
+        "createdAt": "2026-05-07T10:15:00Z",
     }
 
     normalized = payments_router._norm_tx_keys(raw)
     assert normalized["original_amount"] == "10.00"
     assert normalized["pricing_currency"] == "USDT"
     assert normalized["requires_conversion"] is True
+    assert normalized["created_at"] == "2026-05-07T10:15:00Z"
 
 
 def test_list_payments_returns_conversion_fields():
     txs = [
         {
             "unique_id": "550e8400-e29b-41d4-a716-446655441112",
-            "payment_validator_did": "did:prism:validator",
+            "deployment_id": "deployment",
             "contract_did": "did:prism:contract",
             "to_address": "0x" + "2" * 40,
             "amount": "10.00",
@@ -417,11 +419,12 @@ def test_list_payments_returns_conversion_fields():
             "original_amount": "10.00",
             "pricing_currency": "USDT",
             "requires_conversion": True,
+            "created_at": "2026-05-07T10:15:00Z",
         }
     ]
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, blockchain=None, **kwargs):
             return {"status": "success", "transactions": txs}
 
     app = FastAPI()
@@ -438,3 +441,4 @@ def test_list_payments_returns_conversion_fields():
     assert item["original_amount"] == "10.00"
     assert item["pricing_currency"] == "USDT"
     assert item["requires_conversion"] is True
+    assert item["created_at"] == "2026-05-07T10:15:00Z"

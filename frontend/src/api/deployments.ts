@@ -36,6 +36,22 @@ export interface DeploymentLogsResponse {
   dms_logs?: DmsLogBundleResponse | null;
 }
 
+export interface DeploymentInfoStatus {
+  status: string;
+  deployment_status: string;
+  message: string;
+}
+
+export interface DeploymentInfoResponse {
+  id: string;
+  error?: string | null;
+  raw_status?: string | null;
+  status: DeploymentInfoStatus;
+  manifest: any;
+  allocations: string[];
+  allocations_info: Record<string, any>;
+}
+
 // deployments
 export interface GetDeploymentsParams {
   status?: string | string[];
@@ -44,10 +60,20 @@ export interface GetDeploymentsParams {
   offset?: number;
   sort?: string;
   filter?: string;
-  status_ordered?: boolean;
 }
 
-export async function getDeployments(params: GetDeploymentsParams = {}) {
+export interface GetDeploymentsResponse {
+  status: string;
+  deployments: any[];
+  count: number;
+  total?: number;
+  has_more?: boolean;
+  next_offset?: number;
+}
+
+export async function getDeployments(
+  params: GetDeploymentsParams = {}
+): Promise<GetDeploymentsResponse> {
   const query: Record<string, string | number> = {};
   if (params.status !== undefined) {
     query.status = Array.isArray(params.status)
@@ -59,20 +85,7 @@ export async function getDeployments(params: GetDeploymentsParams = {}) {
   if (params.offset !== undefined) query.offset = params.offset;
   if (params.sort) query.sort = params.sort;
   if (params.filter) query.filter = params.filter;
-  if (params.status_ordered) query.status_ordered = "true";
   const res = await api.get(`/ensemble/deployments`, { params: query });
-  return res.data;
-}
-
-export async function getDeploymentStatus(id) {
-  const res = await api.get(`/ensemble/deployments/${id}/status`);
-  return res.data;
-}
-
-export async function getDeploymentManifest(id) {
-  const res = await api.get(
-    `/ensemble/deployments/${id}/manifest/raw`
-  );
   return res.data;
 }
 
@@ -81,22 +94,47 @@ export async function getDeploymentFile(id) {
   return res.data;
 }
 
+export interface GetDeploymentLogsOptions {
+  allocation?: string | null;
+  dmsQuery?: string | null;
+  refreshAlloc?: boolean | null;
+  dmsLines?: number | null;
+  dmsView?: string | null;
+  includeAlloc?: boolean | null;
+  /** Comma-separated names from GET /ensemble/deployments/{id}/info?logs=true (required when include_alloc is true) */
+  allocations?: string | null;
+  stdoutPath?: string | null;
+  stderrPath?: string | null;
+}
+
 export async function getDeploymentLogs(
-  id,
-  allocation: string | null = null,
-  dmsQuery: string | null = null,
-  refreshAlloc: boolean | null = null,
-  dmsLines: number | null = null,
-  dmsView: string | null = null,
-  includeAlloc: boolean | null = null
+  id: string,
+  options: GetDeploymentLogsOptions = {}
 ): Promise<DeploymentLogsResponse> {
+  const {
+    allocation = null,
+    dmsQuery = null,
+    refreshAlloc = null,
+    dmsLines = null,
+    dmsView = null,
+    includeAlloc = true,
+    allocations = null,
+    stdoutPath = null,
+    stderrPath = null,
+  } = options;
+
   const params: Record<string, string> = {};
   if (allocation) params.allocation = allocation;
   if (dmsQuery) params.dms_query = dmsQuery;
   if (refreshAlloc !== null) params.refresh_alloc = refreshAlloc ? "true" : "false";
-  if (dmsLines) params.dms_lines = `${dmsLines}`;
+  if (dmsLines !== null) params.dms_lines = `${dmsLines}`;
   if (dmsView) params.dms_view = dmsView;
   if (includeAlloc === false) params.include_alloc = "false";
+  if (includeAlloc !== false) {
+    if (allocations) params.allocations = allocations;
+    if (stdoutPath) params.stdout_path = stdoutPath;
+    if (stderrPath) params.stderr_path = stderrPath;
+  }
   const res = await api.get(`/ensemble/deployments/${id}/logs`, {
     params,
   });
@@ -104,11 +142,16 @@ export async function getDeploymentLogs(
 }
 
 export async function requestDeploymentLogs(
-  id,
-  allocation: string | null = null,
-  wait: boolean = false
+  id: string,
+  options: {
+    allocation?: string | null;
+    /** Comma-separated names from GET /ensemble/deployments/{id}/info?logs=true */
+    allocations: string;
+    wait?: boolean;
+  }
 ) {
-  const params: Record<string, string> = {};
+  const { allocation = null, allocations, wait = false } = options;
+  const params: Record<string, string> = { allocations };
   if (allocation) params.allocation = allocation;
   if (wait) params.wait = "true";
   const res = await api.post(`/ensemble/deployments/${id}/logs/request`, null, {
@@ -117,11 +160,34 @@ export async function requestDeploymentLogs(
   return res.data;
 }
 
-export async function getDeploymentAllocations(id) {
-  const res = await api.get(
-    `/ensemble/deployments/${id}/allocations`
-  );
-  return res.data;
+export async function getDeploymentInfo(
+  id: string,
+  opts: {
+    usage?: boolean;
+    logs?: boolean;
+    allocations?: string[];
+  } = {}
+): Promise<DeploymentInfoResponse> {
+  const params = new URLSearchParams();
+  if (opts.usage) params.set("usage", "true");
+  if (opts.logs) params.set("logs", "true");
+  (opts.allocations ?? []).forEach((name) => {
+    const trimmed = String(name ?? "").trim();
+    if (trimmed.length > 0) {
+      params.append("allocations", trimmed);
+    }
+  });
+
+  const qs = params.toString();
+  const url = qs
+    ? `/ensemble/deployments/${id}/info?${qs}`
+    : `/ensemble/deployments/${id}/info`;
+  const res = await api.get(url);
+  const data = res.data as any;
+  if (!data || typeof data !== "object" || typeof data.id !== "string" || !data.status) {
+    throw new Error("Invalid deployment info response from backend");
+  }
+  return data;
 }
 
 // shutdown
@@ -177,16 +243,6 @@ export async function getTemplateNodesCount(template_path: string): Promise<Temp
 export async function downloadExamples(payload) {
   const res = await api.post(`/ensemble/examples/download`, payload);
   return res.data;
-}
-
-// 🔹 Fetch everything in parallel
-export async function getDeploymentDetails(id: string) {
-  const [status, manifest, allocations] = await Promise.all([
-    getDeploymentStatus(id),
-    getDeploymentManifest(id),
-    getDeploymentAllocations(id),
-  ]);
-  return { status, manifest, allocations };
 }
 
 export interface TemplatesResponse {

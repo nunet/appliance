@@ -24,11 +24,15 @@ def test_get_dms_resource_info_enriches_gpu_make_and_model(monkeypatch):
                 "ram": {"size": 34359738368},
                 "disk": {"size": 549755813888},
                 "gpus": [
-                    {
-                        "index": 0,
-                        "uuid": "GPU-0",
-                        "vram": 25769803776,
-                    }
+                  {
+                    "index": 0,
+                    "vendor": "NVIDIA",
+                    "pci_address": "0000:02:00.0",
+                    "model": "NVIDIA GeForce RTX 3060",
+                    "vram": 11596411699,
+                    "cores": 3584,
+                    "uuid": "GPU-cwfud78b-e05a-j7j3-77k2-f1d9a13a7j77",
+                  }
                 ],
             }
         },
@@ -38,10 +42,11 @@ def test_get_dms_resource_info_enriches_gpu_make_and_model(monkeypatch):
                 "gpus": [
                     {
                         "index": 0,
-                        "uuid": "GPU-0",
                         "vendor": "NVIDIA",
                         "model": "GeForce RTX 4090",
                         "vram": 25769803776,
+                        "cores": 4577,
+                        "uuid": "GPU-cwfud78b-e05a-j7j3-77k2-f1d9a13a7j77",
                     }
                 ]
             },
@@ -55,7 +60,7 @@ def test_get_dms_resource_info_enriches_gpu_make_and_model(monkeypatch):
     assert len(gpus) == 1
     assert gpus[0]["make"] == "NVIDIA"
     assert gpus[0]["vendor"] == "NVIDIA"
-    assert gpus[0]["model"] == "GeForce RTX 4090"
+    assert gpus[0]["model"] == "NVIDIA GeForce RTX 3060"
 
 
 def test_get_dms_resource_info_uses_hardware_spec_gpu_when_resource_gpu_missing(monkeypatch):

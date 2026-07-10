@@ -39,8 +39,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { isMobile, setOpenMobile } = useSidebar();
   const { logout } = useAuth();
   const paymentsQ = useQuery({
-    queryKey: ["payments", "list"],
-    queryFn: getPaymentsList,
+    queryKey: ["payments", "summary"],
+    queryFn: () => getPaymentsList(),
     staleTime: PAYMENTS_LIST_REFRESH_MS,
     gcTime: PAYMENTS_LIST_REFRESH_MS,
     refetchInterval: false,

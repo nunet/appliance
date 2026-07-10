@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 NuNet Boot Splash Screen
 Combines QR code generation, beautiful display, and server information

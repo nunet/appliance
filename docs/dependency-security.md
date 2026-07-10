@@ -10,7 +10,7 @@ For the operational runbook used by developers, see [`docs/dependency-update-pro
 - Use frozen installs for normal workflows:
   - CI: `pnpm install --frozen-lockfile`
   - Build scripts: `pnpm install --frozen-lockfile`
-- Pin package manager version with Corepack (`pnpm@10.33.0`).
+- Pin package manager version with Corepack (`pnpm@10.34.1`).
 
 ## CI Security Gates
 
@@ -35,7 +35,7 @@ Use this workflow when intentionally updating dependencies:
 1. Create a dedicated update branch.
 2. Update dependency specifiers in `frontend/package.json` as needed.
 3. Regenerate lockfile:
-   - `corepack prepare pnpm@10.33.0 --activate`
+   - `corepack prepare pnpm@10.34.1 --activate`
    - `corepack pnpm install`
 4. Verify:
    - `corepack pnpm audit --prod --audit-level=high`
@@ -45,6 +45,7 @@ Use this workflow when intentionally updating dependencies:
 Do not regenerate lockfiles in deployment hotfixes unless the dependency change is intentional and reviewed.
 
 For Python dependency automation, use `deploy/scripts/update_python_deps.sh` (audit-only or `--apply-fixes` mode).
+For frontend dependency triage/remediation with release-age guardrails, use `deploy/scripts/update_frontend_deps.sh`.
 
 ## Emergency Response Pattern
 

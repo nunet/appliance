@@ -500,6 +500,10 @@ def _extract_version(stdout: str) -> Optional[str]:
 
 def get_dms_status_info() -> Dict[str, Any]:
     """Return the current high-level DMS status information."""
+    cached = _read_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, ttl=_CACHE_TTL_DEFAULT)
+    if cached is not None:
+        return cached
+
     status: Dict[str, Any] = {
         "dms_status": "Unknown",
         "dms_version": "Unknown",
@@ -558,6 +562,7 @@ def get_dms_status_info() -> Dict[str, Any]:
     else:
         logger.debug("DMS peer info unavailable; service may not be running")
 
+    _write_cache(_DMS_STATUS_CACHE, _DMS_STATUS_LOCK, status)
     return status
 
 def _bytes_to_gb(value: int, precision: int = 2) -> float:
@@ -572,6 +577,53 @@ def _fmt_resources(resources_json: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             return 0
 
+    def _safe_float(val: Any) -> float:
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _clean_text(val: Any, fallback: str = "Unknown") -> str:
+        text = str(val or "").replace(",", " ").strip()
+        if not text:
+            return fallback
+        return " ".join(text.split())
+
+    def _extract_gpu_entries(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        for key in ("gpus", "gpu"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return [entry for entry in value if isinstance(entry, dict)]
+            if isinstance(value, dict):
+                cards = value.get("cards")
+                if isinstance(cards, list):
+                    return [entry for entry in cards if isinstance(entry, dict)]
+        return []
+
+    def _extract_gpu_count(data: Dict[str, Any], gpu_entries: List[Dict[str, Any]]) -> Optional[float]:
+        if gpu_entries:
+            return float(len(gpu_entries))
+
+        # DMS can report GPU in different shapes:
+        # - "gpu_count": N
+        # - "gpus": {"count": N}
+        # - "gpu": {"count": N}
+        direct_count = data.get("gpu_count")
+        if direct_count is not None:
+            return _safe_float(direct_count)
+
+        for key in ("gpus", "gpu"):
+            value = data.get(key)
+            if isinstance(value, dict):
+                for count_key in ("count", "size", "cards_count"):
+                    count_val = value.get(count_key)
+                    if count_val is not None:
+                        return _safe_float(count_val)
+            elif value is not None and not isinstance(value, list):
+                return _safe_float(value)
+
+        return None
+
     cores = resources.get("cpu", {}).get("cores")
     ram_bytes = _safe_int(resources.get("ram", {}).get("size"))
     disk_bytes = _safe_int(resources.get("disk", {}).get("size"))
@@ -579,8 +631,45 @@ def _fmt_resources(resources_json: Dict[str, Any]) -> str:
     cores_display = cores if cores not in (None, "") else "N/A"
     ram_gb = _bytes_to_gb(ram_bytes)
     disk_gb = _bytes_to_gb(disk_bytes)
+    gpu_entries = _extract_gpu_entries(resources)
+    gpu_count = _extract_gpu_count(resources, gpu_entries)
 
-    return f"Cores: {cores_display}, RAM: {ram_gb} GB, Disk: {disk_gb} GB"
+    parts = [
+        f"Cores: {cores_display}",
+        f"RAM: {ram_gb} GB",
+        f"Disk: {disk_gb} GB",
+    ]
+    if gpu_count is not None:
+        if gpu_count.is_integer():
+            gpu_display = str(int(gpu_count))
+        else:
+            gpu_display = str(gpu_count)
+        parts.append(f"GPU Count: {gpu_display}")
+
+    for idx, gpu in enumerate(gpu_entries):
+        raw_gpu_index = gpu.get("index")
+        if isinstance(raw_gpu_index, int):
+            gpu_index = raw_gpu_index
+        elif isinstance(raw_gpu_index, str) and raw_gpu_index.isdigit():
+            gpu_index = int(raw_gpu_index)
+        else:
+            gpu_index = idx
+
+        model = _clean_text(gpu.get("model"), fallback="")
+        vendor = _clean_text(gpu.get("vendor"), fallback="")
+        if model:
+            descriptor = model
+        elif vendor:
+            descriptor = vendor
+        else:
+            descriptor = "Unknown GPU"
+
+        vram_bytes = _safe_int(gpu.get("vram"))
+        if vram_bytes > 0:
+            descriptor = f"{descriptor} ({_bytes_to_gb(vram_bytes)} GB VRAM)"
+        parts.append(f"GPU {gpu_index}: {descriptor}")
+
+    return ", ".join(parts)
 
 def _extract_resource_snapshot(payload: Any) -> Dict[str, Any]:
     """

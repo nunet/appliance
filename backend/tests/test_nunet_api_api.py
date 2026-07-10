@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import types
 from typing import Any
@@ -9,6 +10,9 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from backend.nunet_api import security as security_module
+
+# Password used when auto-configuring TestClient for protected routes (see ``client`` fixture).
+_TEST_CLIENT_PASSWORD = "TestFixturePwd9!"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -49,6 +53,12 @@ def stub_external_modules(tmp_path_factory):
     mod_path_constants.DEFAULT_CONTRACT_JSON_TEMPLATE = default_contract_template
     mod_path_constants.DEFAULT_ENSEMBLE_JSON_TEMPLATE = default_ensemble_template
     mod_path_constants.ROLE_METADATA_FILE = stubs_root / "role_metadata.json"
+    fs_root = stubs_root / "filesystem_root"
+    fs_root.mkdir(parents=True, exist_ok=True)
+    contracts_stub = stubs_root / "contracts"
+    contracts_stub.mkdir(parents=True, exist_ok=True)
+    mod_path_constants.FILESYSTEM_ROOT = fs_root
+    mod_path_constants.FILESYSTEM_ALLOWED_ROOTS = [fs_root, ensembles_dir, contracts_stub]
 
     def _command_result(message: str = "ok") -> dict[str, Any]:
         return {
@@ -150,7 +160,7 @@ def stub_external_modules(tmp_path_factory):
             result["message"] = json.dumps({"peers": []})
             return result
 
-        def list_transactions(self, blockchain: str | None = None) -> dict[str, Any]:
+        def list_transactions(self, **kwargs: Any) -> dict[str, Any]:
             return {"status": "success", "transactions": []}
 
         def get_structured_logs(
@@ -212,6 +222,24 @@ def stub_external_modules(tmp_path_factory):
 
     mod_dms_manager.DMSManager = DummyDMSManager
 
+    def _make_filelog(path, lines: int) -> dict[str, Any]:
+        return {
+            "path": str(path),
+            "exists": False,
+            "readable": False,
+            "size_bytes": None,
+            "mtime_iso": None,
+            "tail_lines": lines,
+            "content": None,
+            "error": "file not found",
+        }
+
+    def _request_allocation_logs(deployment_id: str, allocation_name: str) -> tuple[bool, str | None]:
+        return True, None
+
+    mod_dms_manager._make_filelog = _make_filelog
+    mod_dms_manager._request_allocation_logs = _request_allocation_logs
+
     mod_dms_utils = add_submodule("dms_utils")
     mod_dms_utils.get_cached_dms_peer_raw = lambda *args, **kwargs: ""
     mod_dms_utils.get_cached_dms_resource_info = lambda *args, **kwargs: {}
@@ -234,9 +262,6 @@ def stub_external_modules(tmp_path_factory):
         def get_deployments_for_web(self, *args, **kwargs):
             return {"status": "success", "deployments": [], "count": 0}
 
-        def view_running_ensembles(self):
-            return {"status": "success", "message": "", "items": []}
-
         def __getattr__(self, attr: str):
             def _(*_args, **_kwargs):
                 return {"status": "success", "message": f"{attr} executed"}
@@ -258,6 +283,16 @@ def stub_external_modules(tmp_path_factory):
     class DummyOnboardingManager:
         STATE_PATH = onboarding_dir / "onboarding_state.json"
         LOG_PATH = onboarding_dir / "onboarding.log"
+        _ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
+
+        @staticmethod
+        def _is_onboarded_status(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                cleaned = DummyOnboardingManager._ANSI_RE.sub("", value).strip().upper()
+                return cleaned == "ONBOARDED"
+            return False
 
         def __init__(self, *args, **kwargs):
             self.state = {"step": "init", "logs": []}
@@ -378,6 +413,8 @@ def stub_external_modules(tmp_path_factory):
     mod_utils.trigger_dms_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
     mod_utils.get_appliance_updates = lambda *args, **kwargs: {"status": "success", "updates": []}
     mod_utils.trigger_appliance_update = lambda *args, **kwargs: {"status": "success", "message": "ok"}
+    mod_utils.trigger_plugin_sync = lambda *args, **kwargs: {"status": "success", "message": "ok"}
+    mod_utils.trigger_telemetry_plugin_uninstall = lambda *args, **kwargs: {"status": "success", "message": "ok"}
     mod_utils.get_environment_status = lambda *args, **kwargs: {
         "environment": "production",
         "updates": {
@@ -442,6 +479,7 @@ def app(monkeypatch, tmp_path, stub_external_modules):
     static_dir.mkdir(parents=True, exist_ok=True)
     (static_dir / "index.html").write_text("ok", encoding="utf-8")
     monkeypatch.setenv("NUNET_STATIC_DIR", str(static_dir))
+    monkeypatch.setenv("HOME", str(tmp_path))
 
     creds_path = tmp_path / "creds.json"
     monkeypatch.setenv(security_module.CREDENTIALS_ENV_KEY, str(creds_path))
@@ -456,9 +494,44 @@ def app(monkeypatch, tmp_path, stub_external_modules):
 
 
 @pytest.fixture
-def client(app):
+def raw_client(app):
+    """TestClient without admin password or bearer token (for auth-flow tests)."""
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture
+def client(app):
+    """TestClient with admin password set and ``Authorization: Bearer`` for protected routes."""
+    with TestClient(app) as test_client:
+        try:
+            status = test_client.get("/auth/status")
+            assert status.status_code == 200
+            body = status.json()
+            if not body.get("password_set"):
+                setup_token = security_module.ensure_setup_token()
+                assert setup_token, "ensure_setup_token should create a setup token for first boot"
+                setup_resp = test_client.post(
+                    f"/auth/setup?setup_token={setup_token}",
+                    json={"password": _TEST_CLIENT_PASSWORD},
+                )
+                assert setup_resp.status_code == 200, setup_resp.text
+                token = setup_resp.json()["access_token"]
+            else:
+                login_resp = test_client.post("/auth/token", json={"password": _TEST_CLIENT_PASSWORD})
+                assert login_resp.status_code == 200, login_resp.text
+                token = login_resp.json()["access_token"]
+            test_client.headers.update({"Authorization": f"Bearer {token}"})
+            yield test_client
+        finally:
+            security_module.clear_credentials()
+            security_module.clear_setup_token()
+
+
+@pytest.fixture
+def authed_client(client):
+    """Alias for ``client`` (both have password + bearer token)."""
+    return client
 
 
 def _collect_api_routes(fastapi_app) -> list[APIRoute]:
@@ -469,38 +542,45 @@ def _collect_api_routes(fastapi_app) -> list[APIRoute]:
     ]
 
 
-def test_health_endpoint(client):
-    response = client.get("/health")
+def test_health_endpoint(raw_client):
+    response = raw_client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"ok": True}
 
 
-def test_auth_setup_and_token_flow(client):
+def test_auth_setup_and_token_flow(raw_client):
     try:
-        status_response = client.get("/auth/status")
+        status_response = raw_client.get("/auth/status")
         assert status_response.status_code == 200
-        assert status_response.json()["password_set"] is False
+        status_data = status_response.json()
+        assert status_data["password_set"] is False
+        setup_token = security_module.ensure_setup_token()
+        assert setup_token, "ensure_setup_token should create a setup token for first boot"
 
-        expected_conflict = client.post("/auth/token", json={"password": "wrong"})
+        expected_conflict = raw_client.post("/auth/token", json={"password": "wrong"})
         assert expected_conflict.status_code == 409
 
         setup_payload = {"password": "StrongPass9"}
-        setup_response = client.post("/auth/setup", json=setup_payload)
+        setup_response = raw_client.post(
+            f"/auth/setup?setup_token={setup_token}",
+            json=setup_payload,
+        )
         assert setup_response.status_code == 200
         setup_data = setup_response.json()
         assert setup_data.get("access_token")
         assert setup_data.get("token_type") == "bearer"
 
-        bad_login = client.post("/auth/token", json={"password": "not_the_password"})
+        bad_login = raw_client.post("/auth/token", json={"password": "not_the_password"})
         assert bad_login.status_code == 401
 
-        good_login = client.post("/auth/token", json=setup_payload)
+        good_login = raw_client.post("/auth/token", json=setup_payload)
         assert good_login.status_code == 200
         token_data = good_login.json()
         assert token_data.get("access_token")
         assert token_data.get("token_type") == "bearer"
     finally:
         security_module.clear_credentials()
+        security_module.clear_setup_token()
 
 
 def test_registered_routes_cover_expected_prefixes(app):
@@ -511,7 +591,19 @@ def test_registered_routes_cover_expected_prefixes(app):
         for route in routes
         if route.path.startswith("/") and route.path not in {"/", "/health"}
     }
-    expected = {"auth", "dms", "sys", "ensemble", "organizations", "payments"}
+    expected = {
+        "auth",
+        "dms",
+        "sys",
+        "ensemble",
+        "organizations",
+        "payments",
+        "filesystem",
+        "contracts",
+        "api",
+        "upnp",
+        "appliance",
+    }
     assert expected.issubset(prefixes)
 
 
@@ -527,7 +619,11 @@ def test_dms_status_returns_normalized_snapshot(client, monkeypatch):
         "dms_peer_id": "peer-123",
         "dms_is_relayed": True,
     }
-    monkeypatch.setattr(dms_router, "get_cached_dms_status_info", lambda: status_payload)
+    monkeypatch.setattr(
+        dms_router,
+        "get_cached_dms_status_info",
+        lambda *args, **kwargs: status_payload,
+    )
 
     response = client.get("/dms/status")
     assert response.status_code == 200
@@ -576,7 +672,11 @@ def test_dms_peers_connected_uses_cached_payload(client, monkeypatch):
             }
         ]
     }
-    monkeypatch.setattr(dms_router, "get_cached_dms_peer_raw", lambda: json.dumps(peers_payload))
+    monkeypatch.setattr(
+        dms_router,
+        "get_cached_dms_peer_raw",
+        lambda *args, **kwargs: json.dumps(peers_payload),
+    )
 
     response = client.get("/dms/peers/connected")
     assert response.status_code == 200
@@ -597,14 +697,15 @@ def test_sysinfo_ssh_status_parses_authorized_keys(client, monkeypatch):
     assert response.json() == {"running": True, "authorized_keys": 5}
 
 
-def test_sysinfo_environment_endpoint_returns_environment_status(authed_client):
-    response = authed_client.get("/sys/environment")
+def test_sysinfo_environment_endpoint_returns_environment_status(client):
+    response = client.get("/sys/environment")
     assert response.status_code == 200
     body = response.json()
     assert body["environment"] == "production"
     assert body["updates"]["appliance"]["channel"] == "stable"
-    assert body["updates"]["appliance"]["resolved_channel"] == "latest"
-    assert body["updates"]["appliance"]["fell_back"] is True
+    # Resolver may keep stable or fall back to latest depending on package URL probes.
+    assert body["updates"]["appliance"]["resolved_channel"] in ("stable", "latest")
+    assert isinstance(body["updates"]["appliance"]["fell_back"], bool)
     assert body["ethereum"]["network_name"] == "Ethereum Mainnet"
 
 
@@ -627,7 +728,7 @@ def test_payments_list_payments_normalizes_transactions(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -674,7 +775,7 @@ def test_payments_list_payments_handles_list_addresses(client):
     addr = "0x" + "e" * 40
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -707,7 +808,7 @@ def test_payments_list_payments_ignores_invalid_payloads(client):
     from backend.nunet_api.routers import payments as payments_router
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -746,7 +847,7 @@ def test_payments_list_payments_supports_cardano(client):
     cardano_addr = "addr_test1qqm9ehanrh5rkukd0jwrl4j4zhnlzhkutwcukxqjdr3yfwydfmfydwq78revg8sx3wf3aj9gwn5kqyg0l2485zrj3mvsktcw4k"
 
     class StubPaymentsManager:
-        def list_transactions(self, blockchain=None):
+        def list_transactions(self, **kwargs):
             return {
                 "status": "success",
                 "transactions": [
@@ -775,6 +876,139 @@ def test_payments_list_payments_supports_cardano(client):
     assert body["items"][0]["to_address"] == cardano_addr
 
 
+def test_payments_list_payments_forwards_query_params_to_manager(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    captured: dict[str, Any] = {}
+
+    class StubPaymentsManager:
+        def list_transactions(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "1",
+                        "status": "paid",
+                        "to_address": "0x" + "a" * 40,
+                        "amount": "1.0",
+                        "deployment_id": "deployment:1",
+                        "contract_did": "did:contract:1",
+                        "tx_hash": "0x" + "b" * 64,
+                    }
+                ],
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={
+                "limit": 10,
+                "offset": 20,
+                "sort": "-created_at",
+                "status": "paid,unpaid",
+                "contract_did": "did:key:test",
+                "unique_id": "tx-001",
+                "deployment_id": "deployment",
+                "blockchain": "CARDANO",
+                "to_address": "addr_test1q...",
+                "from_address": "addr_test1z...",
+                "tx_hash": "hash-001",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    assert captured["limit"] == 10
+    assert captured["offset"] == 20
+    assert captured["sort"] == "-created_at"
+    assert captured["status"] == ["paid", "unpaid"]
+    assert captured["contract_did"] == "did:key:test"
+    assert captured["unique_id"] == "tx-001"
+    assert captured["deployment_id"] == "deployment"
+    assert captured["blockchain"] == "CARDANO"
+    assert captured["to_address"] == "addr_test1q..."
+    assert captured["from_address"] == "addr_test1z..."
+    assert captured["tx_hash"] == "hash-001"
+
+
+def test_payments_list_payments_omits_unspecified_optional_filters(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    captured: dict[str, Any] = {}
+
+    class StubPaymentsManager:
+        def list_transactions(self, **kwargs):
+            captured.update(kwargs)
+            return {"status": "success", "transactions": []}
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={
+                "limit": 10,
+                "offset": 0,
+                "sort": "-created_at",
+                "contract_did": "did:key:test",
+            },
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    assert captured["limit"] == 10
+    assert captured["offset"] == 0
+    assert captured["sort"] == "-created_at"
+    assert captured["contract_did"] == "did:key:test"
+    assert captured["blockchain"] is None
+    assert captured["unique_id"] is None
+    assert captured["deployment_id"] is None
+    assert captured["to_address"] is None
+    assert captured["from_address"] is None
+    assert captured["tx_hash"] is None
+
+
+def test_payments_list_payments_uses_dms_total_for_total_count(client):
+    from backend.nunet_api.routers import payments as payments_router
+
+    class StubPaymentsManager:
+        def list_transactions(self, **kwargs):
+            return {
+                "status": "success",
+                "transactions": [
+                    {
+                        "unique_id": "1",
+                        "status": "unpaid",
+                        "to_address": "0x" + "a" * 40,
+                        "amount": "1.0",
+                        "payment_validator_did": "did:validator:1",
+                        "contract_did": "did:contract:1",
+                        "tx_hash": "",
+                    }
+                ],
+                "total": 704,
+                "has_more": True,
+                "next_offset": 30,
+            }
+
+    client.app.dependency_overrides[payments_router.get_mgr] = lambda: StubPaymentsManager()
+    try:
+        response = client.get(
+            "/payments/list_payments",
+            params={"limit": 10, "offset": 20, "sort": "-created_at"},
+        )
+    finally:
+        client.app.dependency_overrides.pop(payments_router.get_mgr, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 704
+    assert len(body["items"]) == 1
+
+
 def test_organizations_status_includes_timeline(client, monkeypatch):
     from backend.nunet_api.routers import organizations as org_router
 
@@ -796,7 +1030,20 @@ def test_organizations_status_includes_timeline(client, monkeypatch):
 
 
 def _build_recording_onboarding_manager():
+    from backend.modules.org_utils import role_requires_compute_onboarding
+
     class RecordingOnboardingManager:
+        _ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
+
+        @staticmethod
+        def _is_onboarded_status(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                cleaned = RecordingOnboardingManager._ANSI_RE.sub("", value).strip().upper()
+                return cleaned == "ONBOARDED"
+            return False
+
         def __init__(self):
             self.state = {"step": "init", "logs": []}
             self.step_history: list[str] = []
@@ -817,6 +1064,8 @@ def _build_recording_onboarding_manager():
                 }
             )
             self.last_payload = None
+            self.collect_resource_snapshot_calls: list[str | None] = []
+            self.compute_onboarding_used = False
 
         def update_state(self, **kwargs):
             old_step = self.state.get("step")
@@ -834,7 +1083,19 @@ def _build_recording_onboarding_manager():
             return dict(self.state)
 
         def ensure_pre_onboarding(self):
+            self.compute_onboarding_used = True
             return dict(self._resource_snapshot)
+
+        def collect_resource_snapshot(self, role_id=None):
+            self.collect_resource_snapshot_calls.append(role_id)
+            if role_requires_compute_onboarding(role_id):
+                self.compute_onboarding_used = True
+                return dict(self._resource_snapshot)
+            return {
+                "onboarding_status": "NOT ONBOARDED",
+                "onboarded_resources": "None",
+                "dms_resources": {},
+            }
 
         def api_submit_join(self, payload, resource_info=None):
             self.last_payload = payload
@@ -863,12 +1124,16 @@ def test_join_submit_with_org_did_does_not_revert_to_select_org(client, monkeypa
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "Cores: 2, RAM: 4 GB, Disk: 50 GB",
+            "dms_resources": {"cpu": {"cores": 2}},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -930,12 +1195,16 @@ def test_join_submit_requires_explicit_blockchain_when_multiple_supported(client
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -978,12 +1247,16 @@ def test_join_submit_forwards_selected_blockchain_and_wallet_chain(client, monke
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -1032,12 +1305,16 @@ def test_join_submit_normalizes_orchestrator_role_for_remote_payload(client, mon
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -1058,6 +1335,57 @@ def test_join_submit_normalizes_orchestrator_role_for_remote_payload(client, mon
     assert response.status_code == 200
     assert recording_mgr.last_payload["roles"] == ["orchestrator"]
     assert recording_mgr.state["form_data"]["roles"] == ["Orchestrator"]
+    assert recording_mgr.collect_resource_snapshot_calls == ["Orchestrator"]
+    assert recording_mgr.compute_onboarding_used is False
+
+
+def test_join_submit_compute_provider_uses_compute_onboarding(client, monkeypatch):
+    from backend.nunet_api.routers import organizations as org_router
+
+    org_did = "did:key:test-compute-onboard"
+    org_entry = {
+        "name": "Compute Org",
+        "roles": ["compute_provider"],
+        "join_fields": [],
+    }
+
+    recording_mgr = _build_recording_onboarding_manager()
+    monkeypatch.setattr(org_router, "_onboarding", recording_mgr)
+    monkeypatch.setattr(org_router, "_ensure_state_file", lambda mgr: None)
+    monkeypatch.setattr(org_router, "load_known_organizations", lambda: {org_did: org_entry})
+    monkeypatch.setattr(org_router, "normalize_org_roles", lambda _entry: (["compute_provider"], []))
+    monkeypatch.setattr(org_router, "extract_role_profiles", lambda _entry: {"compute_provider": {}})
+    monkeypatch.setattr(org_router, "get_tokenomics_config", lambda _entry: {"enabled": False, "chain": None})
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_status_info",
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+    )
+    monkeypatch.setattr(
+        org_router,
+        "get_cached_dms_resource_info",
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
+    )
+    monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_org_tokenomics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(org_router.role_metadata, "record_last_request_id", lambda *args, **kwargs: None)
+
+    payload = {
+        "org_did": org_did,
+        "name": "Alice Example",
+        "email": "alice@example.com",
+        "roles": ["compute_provider"],
+        "why_join": "compute_provider",
+    }
+    response = client.post("/organizations/join/submit", json=payload)
+    assert response.status_code == 200
+    assert recording_mgr.collect_resource_snapshot_calls == ["compute_provider"]
+    assert recording_mgr.compute_onboarding_used is True
 
 
 def test_join_submit_surfaces_remote_validation_error(client, monkeypatch):
@@ -1092,12 +1420,16 @@ def test_join_submit_surfaces_remote_validation_error(client, monkeypatch):
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)
@@ -1143,12 +1475,16 @@ def test_join_submit_rejects_wallet_chain_mismatch_with_selected_blockchain(clie
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_status_info",
-        lambda: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
+        lambda *args, **kwargs: {"dms_did": "did:dms:test", "dms_peer_id": "peer-test"},
     )
     monkeypatch.setattr(
         org_router,
         "get_cached_dms_resource_info",
-        lambda: {"onboarding_status": "ONBOARDED", "onboarded_resources": "{}", "dms_resources": {}},
+        lambda *args, **kwargs: {
+            "onboarding_status": "ONBOARDED",
+            "onboarded_resources": "{}",
+            "dms_resources": {},
+        },
     )
     monkeypatch.setattr(org_router.role_metadata, "record_role_selection", lambda *args, **kwargs: None)
     monkeypatch.setattr(org_router.role_metadata, "record_join_payload", lambda *args, **kwargs: None)

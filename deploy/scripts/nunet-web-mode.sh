@@ -13,7 +13,8 @@
 #   VENV_DIR       Default: $REPO_ROOT/.venv
 #   PORT           Passed to gunicorn via deploy/gunicorn_conf.py (default: 8443)
 #   WORKERS        Gunicorn workers (default: 1)
-#   PNPM_VERSION   Default: 10.33.0
+#   PNPM_VERSION                  Default: 10.34.4
+#   DEV_MODE_SKIP_FRONTEND_BUILD  Set to 1 to use existing frontend/dist (CI artifact)
 
 set -euo pipefail
 
@@ -40,7 +41,7 @@ fi
 
 PORT="${PORT:-8443}"
 WORKERS="${WORKERS:-1}"
-PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
+PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
 
 # Try common unit names (historical typo vs packaged name).
 SERVICE_CANDIDATES=(
@@ -83,8 +84,10 @@ require_repo() {
 
 ensure_prereqs() {
   command -v python3 >/dev/null || { echo "ERROR: python3 not found" >&2; exit 1; }
-  command -v corepack >/dev/null || { echo "ERROR: corepack not found" >&2; exit 1; }
   command -v systemctl >/dev/null || { echo "ERROR: systemctl not found" >&2; exit 1; }
+  if [[ "${DEV_MODE_SKIP_FRONTEND_BUILD:-}" != "1" ]]; then
+    command -v corepack >/dev/null || { echo "ERROR: corepack not found" >&2; exit 1; }
+  fi
 }
 
 setup_venv() {
@@ -96,6 +99,14 @@ setup_venv() {
 }
 
 build_frontend() {
+  if [[ "${DEV_MODE_SKIP_FRONTEND_BUILD:-}" == "1" && -f "$FRONTEND_DIST/index.html" ]]; then
+    echo "==> Skipping frontend build (DEV_MODE_SKIP_FRONTEND_BUILD=1)"
+    return 0
+  fi
+  if [[ "${DEV_MODE_SKIP_FRONTEND_BUILD:-}" == "1" ]]; then
+    echo "ERROR: DEV_MODE_SKIP_FRONTEND_BUILD=1 but $FRONTEND_DIST/index.html is missing" >&2
+    exit 1
+  fi
   echo "==> Building frontend"
   (
     cd "$FRONTEND_DIR"

@@ -9,6 +9,11 @@ export interface CommandResult {
   message?: string;
 }
 
+/** API returns HTTP 200 with `status: "error"` in the body for failed nunet/system commands. */
+export function isCommandResultOk(res: CommandResult | undefined): boolean {
+  return res?.status === "success" || res?.status === "warning";
+}
+
 export interface InstallStatus {
   status: string;
   version: string;
@@ -526,6 +531,7 @@ export interface DmsPaymentItem {
   original_amount?: string;
   pricing_currency?: string;
   requires_conversion?: boolean;
+  created_at?: string;
   status: "paid" | "unpaid";
   tx_hash: string; // can be empty string when unpaid
   blockchain?: string;
@@ -545,6 +551,20 @@ export interface DmsPaymentsListResponse {
   items: DmsPaymentItem[];
   ignored_count: number;
   ignored?: DmsIgnoredPayment[];
+}
+
+export interface GetPaymentsListParams {
+  limit?: number;
+  offset?: number;
+  sort?: string;
+  status?: string | string[];
+  contractDid?: string;
+  uniqueId?: string;
+  deploymentId?: string;
+  blockchain?: string;
+  toAddress?: string;
+  fromAddress?: string;
+  txHash?: string;
 }
 
 // Report payload we POST to DMS via backend after MetaMask sends
@@ -625,8 +645,38 @@ export const getPaymentsConfig = () =>
   api.get<PaymentsConfig>("/payments/config").then((res) => res.data);
 
 // New list endpoint (replaces old /payments/pending)
-export const getPaymentsList = () =>
-  api.get<DmsPaymentsListResponse>("/payments/list_payments").then((res) => res.data);
+export function getPaymentsList(params?: GetPaymentsListParams) {
+  const query: Record<string, string | number> = {};
+  if (params?.limit !== undefined) query.limit = params.limit;
+  if (params?.offset !== undefined) query.offset = params.offset;
+  if (params?.sort) query.sort = params.sort;
+  if (params?.status !== undefined) {
+    query.status = Array.isArray(params.status)
+      ? params.status.join(",")
+      : params.status;
+  }
+  const contractDid = params?.contractDid?.trim();
+  if (contractDid) query.contract_did = contractDid;
+  const uniqueId = params?.uniqueId?.trim();
+  if (uniqueId) query.unique_id = uniqueId;
+  const deploymentId = params?.deploymentId?.trim();
+  if (deploymentId) query.deployment_id = deploymentId;
+  const blockchain = params?.blockchain?.trim();
+  if (blockchain) query.blockchain = blockchain;
+  const toAddress = params?.toAddress?.trim();
+  if (toAddress) query.to_address = toAddress;
+  const fromAddress = params?.fromAddress?.trim();
+  if (fromAddress) query.from_address = fromAddress;
+  const txHash = params?.txHash?.trim();
+  if (txHash) query.tx_hash = txHash;
+  const hasParams = Object.keys(query).length > 0;
+  return api
+    .get<DmsPaymentsListResponse>(
+      "/payments/list_payments",
+      hasParams ? { params: query } : undefined
+    )
+    .then((res) => res.data);
+}
 
 // Report endpoint (replaces old /payments/report)
 export const reportToDms = (payload: PaymentReport) =>

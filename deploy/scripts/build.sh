@@ -23,24 +23,34 @@ ARCH="$(dpkg --print-architecture)"
 
 echo "Building NuNet Appliance packages ${PKGVERSION} for ${ARCH}"
 
+apt_cmd() {
+    if [ "${CI_NO_SUDO:-}" = "1" ]; then
+        apt-get "$@"
+    else
+        sudo apt-get "$@"
+    fi
+}
+
 # Install system dependencies
-echo "Installing system dependencies..."
-sudo apt-get update
-sudo apt-get install -y \
-    build-essential \
-    cargo \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
-    wget \
-    curl \
-    gnupg \
-    ca-certificates \
-    dpkg-dev \
-    fakeroot \
-    debhelper \
-    devscripts
+if [ "${CI_SKIP_APT_INSTALL:-}" != "1" ]; then
+    echo "Installing system dependencies..."
+    apt_cmd update
+    apt_cmd install -y \
+        build-essential \
+        cargo \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        wget \
+        curl \
+        gnupg \
+        ca-certificates \
+        dpkg-dev \
+        fakeroot \
+        debhelper \
+        devscripts
+fi
 
 # Install Node.js 22+ (NodeSource preferred, tarball fallback)
 install_node() {
@@ -50,8 +60,12 @@ install_node() {
     fi
 
     echo "Installing Node.js 22+ from NodeSource..."
-    if curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
-       sudo apt-get install -y nodejs; then
+    local sudo_e=()
+    if [ "${CI_NO_SUDO:-}" != "1" ]; then
+        sudo_e=(sudo -E)
+    fi
+    if curl -fsSL https://deb.nodesource.com/setup_22.x | "${sudo_e[@]}" bash - && \
+       apt_cmd install -y nodejs; then
         echo "Node.js installed via NodeSource"
         return 0
     fi
@@ -78,37 +92,44 @@ install_node() {
     local tarball="node-v${fallback_version}-${node_arch}.tar.xz"
     local url="https://nodejs.org/dist/v${fallback_version}/${tarball}"
     curl -fsSLO "$url"
-    sudo tar -C /usr/local --strip-components=1 -xJf "$tarball"
+    tar -C /usr/local --strip-components=1 -xJf "$tarball"
     rm -f "$tarball"
     echo "Node.js ${fallback_version} installed from tarball"
 }
-
-install_node
 
 # Create build directories
 mkdir -p "$ROOT/dist" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 # Ensure proper permissions
 chmod 755 "$ROOT/dist" "$ROOT/release" "$ROOT/release/wheels" "$ROOT/release/frontend-dist"
 
-PNPM_VERSION="${PNPM_VERSION:-10.33.0}"
-STRICT_PNPM_AUDIT="${STRICT_PNPM_AUDIT:-1}"
-PNPM_CMD=(corepack pnpm)
-corepack prepare "pnpm@${PNPM_VERSION}" --activate
+if [ "${CI_SKIP_FRONTEND_BUILD:-}" = "1" ] && [ -f "$ROOT/frontend/dist/index.html" ]; then
+    echo "Skipping frontend build (CI_SKIP_FRONTEND_BUILD=1)"
+elif [ "${CI_SKIP_FRONTEND_BUILD:-}" = "1" ]; then
+    echo "ERROR: CI_SKIP_FRONTEND_BUILD=1 but frontend/dist/index.html is missing" >&2
+    exit 1
+else
+    install_node
 
-# Build frontend
-echo "Building frontend..."
-( cd "$ROOT/frontend" && \
-    "${PNPM_CMD[@]}" install --frozen-lockfile && \
-    if [ "$STRICT_PNPM_AUDIT" = "1" ]; then \
-      "${PNPM_CMD[@]}" audit --prod --audit-level=high; \
-    else \
-      ("${PNPM_CMD[@]}" audit --prod --audit-level=high || true); \
-    fi && \
-    if "${PNPM_CMD[@]}" ls @swc/core --depth -1 >/dev/null 2>&1; then \
-      echo "Rebuilding @swc/core from source for host CPU..." && \
-      npm_config_build_from_source=true "${PNPM_CMD[@]}" rebuild @swc/core; \
-    fi && \
-    "${PNPM_CMD[@]}" run build )
+    PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
+    STRICT_PNPM_AUDIT="${STRICT_PNPM_AUDIT:-1}"
+    PNPM_CMD=(corepack pnpm)
+    corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
+    # Build frontend
+    echo "Building frontend..."
+    ( cd "$ROOT/frontend" && \
+        "${PNPM_CMD[@]}" install --frozen-lockfile && \
+        if [ "$STRICT_PNPM_AUDIT" = "1" ]; then \
+          "${PNPM_CMD[@]}" audit --prod --audit-level=high; \
+        else \
+          ("${PNPM_CMD[@]}" audit --prod --audit-level=high || true); \
+        fi && \
+        if "${PNPM_CMD[@]}" ls @swc/core --depth -1 >/dev/null 2>&1; then \
+          echo "Rebuilding @swc/core from source for host CPU..." && \
+          npm_config_build_from_source=true "${PNPM_CMD[@]}" rebuild @swc/core; \
+        fi && \
+        "${PNPM_CMD[@]}" run build )
+fi
 
 # Build backend
 echo "Building backend for ${ARCH}..."

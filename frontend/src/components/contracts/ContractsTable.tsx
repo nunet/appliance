@@ -179,6 +179,26 @@ export function ContractsTable({
 
               const showBadge = showListSource && typeof rowSource === "string" && rowSource.trim().length > 0;
 
+              // Prepare display for contract state
+              const contractStateLabel = contract.current_state ?? "--";
+              const renderStateBadge = (state: string) => {
+                const tone =
+                  state === "ACCEPTED"
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-100"
+                    : "bg-muted text-foreground/80";
+                return (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "uppercase tracking-wide text-[9px] px-2 py-0",
+                      tone
+                    )}
+                  >
+                    {state}
+                  </Badge>
+                );
+              };
+
               return (
                 <div
                   key={contract.contract_did}
@@ -187,29 +207,37 @@ export function ContractsTable({
                     onSelect ? "hover:border-primary/60" : ""
                   )}
                 >
-                  {showBadge ? <div className="absolute right-3 top-3">{renderSourceBadge(rowSource as string)}</div> : null}
-                    <div className="flex flex-col gap-3">
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Contract DID:
-                        </span>
-                        <DidDisplay value={contract.contract_did} />
-                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Requester DID:
-                        </span>
-                        <DidDisplay value={requestorDid} muted />
-                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Provider DID:
-                        </span>
-                        <DidDisplay value={providerDid} muted />
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Duration:
-                        </span>
-                        <span className="text-xs text-foreground/80">{durationLabel}</span>
-                      </div>
+                  {showBadge ? (
+                    <div className="absolute right-3 top-3">
+                      {renderSourceBadge(rowSource as string)}
                     </div>
+                  ) : null}
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                        Contract DID:
+                      </span>
+                      <DidDisplay value={contract.contract_did} />
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                        Requester DID:
+                      </span>
+                      <DidDisplay value={requestorDid} muted />
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                        Provider DID:
+                      </span>
+                      <DidDisplay value={providerDid} muted />
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                        Status:
+                      </span>
+                      {renderStateBadge(contractStateLabel)}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                        Duration:
+                      </span>
+                      <span className="text-xs text-foreground/80">{durationLabel}</span>
+                    </div>
+                  </div>
                   <div className="mt-2 flex flex-wrap gap-2 md:justify-end">
                     {onApprove && canApproveRow ? (
                       <Button

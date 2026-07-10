@@ -1,4 +1,4 @@
-﻿import { create } from "zustand";
+import { create } from "zustand";
 import type { Cip30Api } from "@/lib/cardano";
 
 export type WalletType = "ethereum" | "cardano";

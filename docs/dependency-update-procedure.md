@@ -39,7 +39,7 @@ Run this process on your feature/update branch:
    - prefer exact versions for direct dependencies
 2. Regenerate lockfile intentionally
    - `cd frontend`
-   - `corepack prepare pnpm@10.33.0 --activate`
+   - `corepack prepare pnpm@10.34.1 --activate`
    - `corepack pnpm install`
 3. Validate locally
    - `corepack pnpm audit --prod --audit-level=high`
@@ -60,6 +60,22 @@ Use `deploy/scripts/update_python_deps.sh` to automate Python dependency auditin
    - `deploy/scripts/update_python_deps.sh --apply-fixes`
 
 The script updates only direct `name==version` entries in `backend/nunet_api/requirements.txt`, then runs install + strict `pip-audit` validation.
+
+### Frontend update helper script
+
+Use `deploy/scripts/update_frontend_deps.sh` to automate frontend vulnerability triage and safe remediation recommendations:
+
+1. Audit + recommendations only:
+   - `deploy/scripts/update_frontend_deps.sh`
+2. Apply safe fixes (pnpm overrides) gated by minimum release age:
+   - `deploy/scripts/update_frontend_deps.sh --apply-fixes --min-release-age-days 7`
+
+Notes:
+
+- The script reads `pnpm audit --json` output and extracts remediation candidates from `fixAvailable`.
+- It checks npm publish age for each fix version and only auto-applies versions meeting the configured age threshold.
+- Auto-fixes are written to `frontend/package.json` under `pnpm.overrides`, then validated with install + strict audit.
+- If no age-compliant fix is available, the script reports the issue and makes no changes.
 
 ## Pull/Merge Request Checklist
 
@@ -98,7 +114,7 @@ Fix:
 
 ## Guardrails in This Repo
 
-- Pinned package manager version via Corepack (`pnpm@10.33.0`)
+- Pinned package manager version via Corepack (`pnpm@10.34.1`)
 - `minimumReleaseAge=1440` to avoid very fresh package publishes
 - frozen lockfile installs in build and CI
 - production audit gate in CI and build script

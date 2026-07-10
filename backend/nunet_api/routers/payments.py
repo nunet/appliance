@@ -1,6 +1,6 @@
 # nunet_api/routers/payments.py
 from typing import List, Dict, Any, Tuple, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pycardano.exception import TransactionFailedException
 from decimal import Decimal, InvalidOperation
 import json
@@ -217,16 +217,35 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         if "RequiresConversion" in d
         else d.get("requiresConversion")
     )
+    created_at_raw = d.get("created_at")
+    if created_at_raw is None:
+        created_at_raw = d.get("CreatedAt")
+    if created_at_raw is None:
+        created_at_raw = d.get("createdAt")
+
+    unique_id = (
+        d.get("unique_id")
+        or d.get("UniqueID")
+        or d.get("uniqueId")
+        or ""
+    )
 
     return {
-        "unique_id": d.get("unique_id") or d.get("UniqueID") or d.get("uniqueId") or "",
+        "unique_id": unique_id,
         "payment_validator_did": d.get("payment_validator_did") or d.get("PaymentValidatorDID") or "",
         "contract_did": d.get("contract_did") or d.get("ContractDID") or "",
-        "to_address": _coerce_first_address(to_address_raw, ("provider_addr", "requester_addr", "address", "addr")),
-        "from_address": _coerce_first_address(
-            to_address_raw,
-            ("requester_addr", "provider_addr", "address", "addr"),
-            allow_plain_string=False,
+        "to_address": (
+            _coerce_first_address(to_address_raw, ("requester_addr", "address", "addr"))
+            if unique_id and "orchestration-fee" in unique_id
+            else _coerce_first_address(to_address_raw, ("provider_addr", "address", "addr"))
+        ),
+        "from_address": (
+            ""
+            if unique_id and "orchestration-fee" in unique_id
+            else _coerce_first_address(to_address_raw,
+                ("requester_addr", "address", "addr"),
+                allow_plain_string=False,
+            )
         ),
         "amount": d.get("amount") or d.get("Amount") or "",
         "status": (d.get("status") or d.get("Status") or "").lower(),  # normalize to lower
@@ -236,6 +255,7 @@ def _norm_tx_keys(d: Dict[str, Any]) -> Dict[str, Any]:
         "original_amount": d.get("original_amount") or d.get("OriginalAmount") or d.get("originalAmount") or "",
         "pricing_currency": d.get("pricing_currency") or d.get("PricingCurrency") or d.get("pricingCurrency") or "",
         "requires_conversion": _coerce_bool(requires_conversion_raw, False),
+        "created_at": str(created_at_raw).strip() if created_at_raw is not None else "",
     }
 
 
@@ -274,13 +294,106 @@ def get_config():
     """
     return _get_payments_config()
 
+def _list_payments_query_has_filters(
+    limit: Optional[int],
+    offset: Optional[int],
+    sort: Optional[str],
+    status: Optional[str],
+    contract_did: Optional[str],
+    unique_id: Optional[str],
+    deployment_id: Optional[str],
+    blockchain: Optional[str],
+    to_address: Optional[str],
+    from_address: Optional[str],
+    tx_hash: Optional[str],
+) -> bool:
+    if limit is not None or offset is not None:
+        return True
+    if sort is not None and sort.strip():
+        return True
+    if status is not None and status.strip():
+        return True
+    if contract_did is not None and contract_did.strip():
+        return True
+    if unique_id is not None and unique_id.strip():
+        return True
+    if deployment_id is not None and deployment_id.strip():
+        return True
+    if blockchain is not None and blockchain.strip():
+        return True
+    if to_address is not None and to_address.strip():
+        return True
+    if from_address is not None and from_address.strip():
+        return True
+    if tx_hash is not None and tx_hash.strip():
+        return True
+    return False
+
+
+def _parse_status_csv(status: Optional[str]) -> Optional[List[str]]:
+    if not status or not str(status).strip():
+        return None
+    parts = [p.strip() for p in str(status).split(",") if p.strip()]
+    return parts or None
+
+
 @router.get("/list_payments", response_model=Dict[str, Any])
-def list_payments(mgr: DMSManager = Depends(get_mgr)):
+def list_payments(
+    limit: Optional[int] = Query(None, ge=0),
+    offset: Optional[int] = Query(None, ge=0),
+    sort: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    contract_did: Optional[str] = Query(None),
+    unique_id: Optional[str] = Query(None),
+    deployment_id: Optional[str] = Query(None),
+    blockchain: Optional[str] = Query(None),
+    to_address: Optional[str] = Query(None),
+    from_address: Optional[str] = Query(None),
+    tx_hash: Optional[str] = Query(None),
+    mgr: DMSManager = Depends(get_mgr),
+):
     """
-    Fetch all transactions from DMS, normalize, validate lightly,
-    sort by status (unpaid first, then paid), and return counts.
+    Fetch transactions from DMS, normalize, validate lightly.
+
+    Without query params: returns all transactions, sorted unpaid-first (legacy).
+
+    With limit, offset, sort, status (comma-separated), and/or contract_did:
+    forwards flags to DMS; counts reflect the current page/result set only.
+    If ``sort`` is set, ordering follows DMS; otherwise DMS default order is kept.
     """
-    out = mgr.list_transactions(blockchain=None)
+    has_filters = _list_payments_query_has_filters(
+        limit,
+        offset,
+        sort,
+        status,
+        contract_did,
+        unique_id,
+        deployment_id,
+        blockchain,
+        to_address,
+        from_address,
+        tx_hash,
+    )
+    sort_arg = sort.strip() if sort and sort.strip() else None
+    status_vals = _parse_status_csv(status)
+
+    if has_filters:
+        out = mgr.list_transactions(
+            blockchain=blockchain.strip() if blockchain and blockchain.strip() else None,
+            limit=limit,
+            offset=offset,
+            sort=sort_arg,
+            contract_did=contract_did.strip() if contract_did and contract_did.strip() else None,
+            status=status_vals,
+            unique_id=unique_id.strip() if unique_id and unique_id.strip() else None,
+            deployment_id=deployment_id.strip() if deployment_id and deployment_id.strip() else None,
+            to_address=to_address.strip() if to_address and to_address.strip() else None,
+            from_address=from_address.strip() if from_address and from_address.strip() else None,
+            tx_hash=tx_hash.strip() if tx_hash and tx_hash.strip() else None,
+        )
+    else:
+        out = mgr.list_transactions()
+
     if out.get("status") == "error":
         raise HTTPException(status_code=502, detail=out.get("message", "DMS list transactions failed"))
     raw = out.get("transactions", []) or []
@@ -303,11 +416,16 @@ def list_payments(mgr: DMSManager = Depends(get_mgr)):
         else:
             ignored.append({"unique_id": "", "reason": "transaction is not an object"})
 
-    # sort: unpaid first, then paid
-    normed.sort(key=lambda t: (_status_rank(t.get("status", "")), t.get("unique_id", "")))
+    if not has_filters:
+        # sort: unpaid first, then paid (legacy)
+        normed.sort(key=lambda t: (_status_rank(t.get("status", "")), t.get("unique_id", "")))
+    elif not sort_arg:
+        # Filtered request without explicit sort: keep DMS row order
+        pass
 
-    # counts
-    total = len(normed)
+    # total should prefer DMS-reported filtered total when available.
+    total_raw = out.get("total")
+    total = int(total_raw) if isinstance(total_raw, (int, float)) and total_raw >= 0 else len(normed)
     paid_count = sum(1 for t in normed if t.get("status") == "paid")
     unpaid_count = sum(1 for t in normed if t.get("status") == "unpaid")
 

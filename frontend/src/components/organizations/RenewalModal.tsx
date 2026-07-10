@@ -186,7 +186,7 @@ export function RenewalModal({ open, orgDid, orgName, qc, onClose }: RenewalModa
     }
   }, [statusSnapshot, phase, dmsRestarted]);
 
-  // Restart DMS automatically once processing is complete.
+  // Restart DMS once processing is complete.
   useEffect(() => {
     if (!open || phase !== "restarting" || dmsRestarted || error) {
       return;

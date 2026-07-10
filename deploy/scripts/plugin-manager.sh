@@ -29,6 +29,7 @@ CONFIG_OWNER_USER="${CONFIG_OWNER_USER:-ubuntu}"
 CONFIG_OWNER_GROUP="${CONFIG_OWNER_GROUP:-ubuntu}"
 
 mkdir -p "${STATE_ROOT}" "${LOG_ROOT}" "$(dirname "${LOCK_FILE}")"
+chmod 755 "${STATE_ROOT}" "${LOG_ROOT}" "$(dirname "${LOCK_FILE}")"
 
 log() { echo "[plugin-manager] $*"; }
 
@@ -144,8 +145,10 @@ meta["contributors"] = contributors
 merged["_meta"] = meta
 
 out_path.parent.mkdir(parents=True, exist_ok=True)
+out_path.parent.chmod(0o755)
 with out_path.open("w", encoding="utf-8") as f:
     json.dump(merged, f, indent=2, sort_keys=True)
+out_path.chmod(0o644)
 PY
   echo "$effective_path"
 }
@@ -189,7 +192,9 @@ data["last_applied_config_sha256"] = cfg_hash
 data["last_status"] = status
 data["updated_at"] = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 path.parent.mkdir(parents=True, exist_ok=True)
+path.parent.chmod(0o755)
 path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+path.chmod(0o644)
 PY
 }
 
@@ -228,6 +233,7 @@ sync_one_plugin() {
   log_dir="${LOG_ROOT}/${plugin_id}"
   state_json="${state_dir}/state.json"
   mkdir -p "$state_dir" "$log_dir"
+  chmod 755 "$state_dir" "$log_dir"
 
   local effective_config config_hash installed_version previous_hash enabled
   effective_config="$(build_effective_config "$plugin_id" "$config_path" "$state_dir")"

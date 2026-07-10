@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
@@ -29,7 +30,10 @@ from .dms_utils import (
     contract_list_outgoing,
     contract_terminate,
     contract_state,
+    get_dms_resource_info,
+    invalidate_all_dms_caches,
 )
+
 from .path_constants import (
     BACKEND_DIR,
     DMS_DEPLOYMENTS_DIR,
@@ -38,6 +42,20 @@ from .path_constants import (
     DMS_LOG_PATH,
     NUNET_CONFIG_PATH,
 )
+
+
+DMS_RAM_MIN_RATIO = 0.10
+DMS_RAM_MAX_RATIO = 0.90
+DMS_DISK_MIN_GIB = 1.0
+DMS_DISK_MAX_RATIO = 0.90
+DMS_DISK_RESERVE_GIB = 5.0
+DMS_GPU_VRAM_MIN_RATIO = 0.10
+DMS_GPU_VRAM_MAX_RATIO = 0.90
+
+ONBOARD_VERIFY_ATTEMPTS = 10
+ONBOARD_VERIFY_DELAY_SEC = 0.5
+
+_ANSI_RE = re.compile(r"\x1B\[[0-9;]*m")
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +69,170 @@ POLL_DELAY_SEC = 1.0
 
 SUPPORTED_BLOCKCHAINS = {"ETHEREUM", "CARDANO"}
 DEFAULT_BLOCKCHAIN = "ETHEREUM"
+
+
+def _bytes_to_gib(value: Any) -> Optional[float]:
+    try:
+        nbytes = float(value)
+    except (TypeError, ValueError):
+        return None
+    if nbytes <= 0:
+        return None
+    return nbytes / (1024 ** 3)
+
+
+def _resources_block_from_spec(hardware_spec: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(hardware_spec, dict):
+        return None
+    if hardware_spec.get("OK") and isinstance(hardware_spec.get("Resources"), dict):
+        return hardware_spec["Resources"]
+    if isinstance(hardware_spec.get("Resources"), dict):
+        return hardware_spec["Resources"]
+    return hardware_spec
+
+
+def _parse_hardware_resources(hardware_spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize total hardware capacity from /dms/node/hardware/spec payloads."""
+    parsed: Dict[str, Any] = {
+        "cpu_cores": None,
+        "ram_gib": None,
+        "disk_gib": None,
+        "gpus": [],
+    }
+    block = _resources_block_from_spec(hardware_spec)
+    if not block:
+        return parsed
+
+    cpu = block.get("cpu")
+    if isinstance(cpu, dict):
+        cores = cpu.get("cores")
+        if cores:
+            try:
+                parsed["cpu_cores"] = int(cores)
+            except (TypeError, ValueError):
+                pass
+
+    ram = block.get("ram")
+    if isinstance(ram, dict):
+        parsed["ram_gib"] = _bytes_to_gib(ram.get("size"))
+
+    disk = block.get("disk")
+    if isinstance(disk, dict):
+        parsed["disk_gib"] = _bytes_to_gib(disk.get("size"))
+
+    gpus = block.get("gpus")
+    if isinstance(gpus, list):
+        parsed["gpus"] = gpus
+
+    return parsed
+
+
+def _clamp_onboard_cpu_cores(total_cores: int) -> int:
+    total = max(1, int(total_cores))
+    return max(1, total - 1)
+
+
+def _clamp_onboard_ram_gib(total_gib: float, free_gib: float) -> float:
+    total = max(0.0, float(total_gib))
+    free = max(0.0, float(free_gib))
+    # rounding free RAM to the nearest 0.5
+    floored_free = math.floor(free * 2) / 2.0
+    max_ram = math.floor(total * DMS_RAM_MAX_RATIO * 10) / 10.0
+    min_ram = math.ceil(total * DMS_RAM_MIN_RATIO * 10) / 10.0
+    candidate = min(floored_free, max_ram)
+    clamped = max(min_ram, candidate) if total > 0 else candidate
+    return round(clamped, 1)
+
+
+def _clamp_onboard_disk_gib(
+    total_gib: float,
+    free_gib: float,
+    reserve_gib: float = DMS_DISK_RESERVE_GIB,
+) -> float:
+    total = max(0.0, float(total_gib))
+    free = max(0.0, float(free_gib))
+    candidate = max(0.0, free - reserve_gib)
+    cap = math.floor(total * DMS_DISK_MAX_RATIO * 10) / 10.0 if total > 0 else candidate
+    value = min(candidate, cap) if cap > 0 else candidate
+    if value < DMS_DISK_MIN_GIB:
+        return 0.0
+    return round(value, 1)
+
+
+def _clamp_onboard_gpu_vram_gib(total_vram_gib: float) -> float:
+    total = max(0.0, float(total_vram_gib))
+    if total <= 0:
+        return 0.0
+    max_vram = math.floor(total * DMS_GPU_VRAM_MAX_RATIO * 10) / 10.0
+    min_vram = math.ceil(total * DMS_GPU_VRAM_MIN_RATIO * 10) / 10.0
+    clamped = max(min_vram, max_vram)
+    return round(clamped, 1)
+
+
+def _extract_actor_json_payload(text: str) -> Optional[Dict[str, Any]]:
+    if not text or not text.strip():
+        return None
+    s = text.strip()
+    idx = s.find("{")
+    if idx == -1:
+        return None
+    try:
+        payload = json.loads(s[idx:])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _onboard_actor_error_from_output(stdout: str, stderr: str) -> Optional[str]:
+    """
+    nunet may exit 0 while printing JSON with success: false on stdout or stderr.
+    Return the error string for the API when the actor reports failure.
+    """
+    for stream in (stdout, stderr):
+        payload = _extract_actor_json_payload(stream or "")
+        if not payload:
+            continue
+        success = payload.get("success")
+        onboarded = payload.get("onboarded")
+        if success is not False and onboarded is not False:
+            continue
+        err = payload.get("error") or payload.get("message")
+        if err is None or str(err).strip() == "":
+            if onboarded is False:
+                return "Onboarding rejected by DMS (onboarded: false in actor output)"
+            return "Onboarding rejected by DMS (success: false in actor output)"
+        return str(err).strip()
+    return None
+
+
+def _is_onboarded_resource_info(info: Dict[str, Any]) -> bool:
+    status_raw = info.get("onboarding_status")
+    if isinstance(status_raw, bool):
+        return status_raw
+    if isinstance(status_raw, str):
+        cleaned = _ANSI_RE.sub("", status_raw).strip().upper()
+        return cleaned == "ONBOARDED"
+    return False
+
+
+def _verify_dms_onboarded() -> Tuple[bool, Optional[str]]:
+    """Poll DMS onboarding status after the onboard actor command."""
+    invalidate_all_dms_caches()
+    last_status = "Unknown"
+    for attempt in range(1, ONBOARD_VERIFY_ATTEMPTS + 1):
+        try:
+            info = get_dms_resource_info() or {}
+            last_status = str(info.get("onboarding_status", "Unknown"))
+            if _is_onboarded_resource_info(info):
+                return True, None
+        except Exception as exc:
+            last_status = str(exc)
+        if attempt < ONBOARD_VERIFY_ATTEMPTS:
+            time.sleep(ONBOARD_VERIFY_DELAY_SEC)
+    return (
+        False,
+        f"DMS did not report onboarded after compute onboard command (last status: {last_status})",
+    )
 
 
 class DMSManager:
@@ -293,16 +475,15 @@ class DMSManager:
         """
         Calculate CPU, RAM, Disk, and GPU resources for onboarding.
         Uses /dms/node/hardware/spec endpoint for hardware information.
-        Replicates the logic from onboard-max.sh bash script.
+        Values are clamped to DMS validation rules (e.g. disk <= 90% of total).
         """
         resources: Dict[str, Any] = {
             "cpu_cores": 1,
             "ram_gb": 0.0,
             "disk_gb": 0.0,
-            "gpus": [],  # List of (index, vram_gb) tuples for all detected GPUs
+            "gpus": [],
         }
 
-        # Get hardware specification from DMS
         hardware_spec = None
         try:
             logger.info("Querying hardware spec from DMS: /dms/node/hardware/spec")
@@ -319,70 +500,35 @@ class DMSManager:
                 except json.JSONDecodeError as exc:
                     logger.warning("Failed to parse hardware spec JSON: %s. Raw output: %s", exc, cp.stdout[:200])
             else:
-                logger.warning("Failed to get hardware spec: rc=%s, stdout=%s, stderr=%s", 
-                             cp.returncode, cp.stdout or "", cp.stderr or "")
+                logger.warning(
+                    "Failed to get hardware spec: rc=%s, stdout=%s, stderr=%s",
+                    cp.returncode,
+                    cp.stdout or "",
+                    cp.stderr or "",
+                )
         except Exception as exc:
             logger.warning("Failed to query hardware spec: %s", exc, exc_info=True)
 
-        # 1) CPU: total cores minus 1 (minimum 1)
+        hw = _parse_hardware_resources(hardware_spec)
+
+        # 1) CPU
         try:
-            # Check multiple possible response structures
-            cpu_cores = None
-            if hardware_spec:
-                # Try different response formats
-                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("cpu"):
-                    cpu_cores = hardware_spec["Resources"]["cpu"].get("cores", 0)
-                    logger.info("Using CPU cores from hardware spec (OK format): %s", cpu_cores)
-                elif hardware_spec.get("Resources", {}).get("cpu"):
-                    cpu_cores = hardware_spec["Resources"]["cpu"].get("cores", 0)
-                    logger.info("Using CPU cores from hardware spec (no OK key): %s", cpu_cores)
-                elif "cpu" in hardware_spec:
-                    cpu_cores = hardware_spec["cpu"].get("cores", 0) if isinstance(hardware_spec["cpu"], dict) else None
-                    if cpu_cores:
-                        logger.info("Using CPU cores from hardware spec (flat format): %s", cpu_cores)
-            
-            if cpu_cores is None or cpu_cores == 0:
-                # Fallback to os.cpu_count()
+            cpu_cores = hw.get("cpu_cores")
+            if not cpu_cores:
                 cpu_cores = os.cpu_count() or 1
                 logger.info("Using fallback CPU count: %s", cpu_cores)
-            
-            cpu_onboard = max(1, cpu_cores - 1)
+            else:
+                logger.info("Using CPU cores from hardware spec: %s", cpu_cores)
+            cpu_onboard = _clamp_onboard_cpu_cores(int(cpu_cores))
             resources["cpu_cores"] = cpu_onboard
-            logger.info("Final CPU cores to onboard: %s", cpu_onboard)
+            logger.info("Final CPU cores to onboard: %s (total=%s)", cpu_onboard, cpu_cores)
         except Exception as exc:
             logger.warning("Failed to determine CPU cores: %s", exc, exc_info=True)
 
-        # 2) RAM in GiB
-        #    - Total from hardware spec (bytes) -> GiB, or fallback to /proc/meminfo
-        #    - Used from "free -k" (KiB) -> GiB
-        #    - Free = (Total - Used)
-        #    - Floor free RAM to nearest 0.5 GiB
-        #    - Onboard RAM = min(floored free RAM, 89% of total)
+        # 2) RAM
         try:
-            # Get total RAM from hardware spec or fallback to /proc/meminfo
-            total_ram_gb = None
-            if hardware_spec:
-                # Try different response formats
-                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("ram"):
-                    ram_bytes = hardware_spec["Resources"]["ram"].get("size", 0)
-                    if ram_bytes > 0:
-                        total_ram_gb = ram_bytes / (1024 ** 3)
-                        logger.info("Using RAM from hardware spec (OK format): %.2f GiB", total_ram_gb)
-                elif hardware_spec.get("Resources", {}).get("ram"):
-                    ram_bytes = hardware_spec["Resources"]["ram"].get("size", 0)
-                    if ram_bytes > 0:
-                        total_ram_gb = ram_bytes / (1024 ** 3)
-                        logger.info("Using RAM from hardware spec (no OK key): %.2f GiB", total_ram_gb)
-                elif "ram" in hardware_spec:
-                    ram_data = hardware_spec["ram"]
-                    if isinstance(ram_data, dict):
-                        ram_bytes = ram_data.get("size", 0)
-                        if ram_bytes > 0:
-                            total_ram_gb = ram_bytes / (1024 ** 3)
-                            logger.info("Using RAM from hardware spec (flat format): %.2f GiB", total_ram_gb)
-            
+            total_ram_gb = hw.get("ram_gib")
             if total_ram_gb is None:
-                # Fallback to /proc/meminfo
                 logger.info("Using fallback RAM calculation from /proc/meminfo")
                 with open("/proc/meminfo", "r") as f:
                     for line in f:
@@ -394,7 +540,6 @@ class DMSManager:
                     else:
                         raise ValueError("MemTotal not found in /proc/meminfo")
 
-            # Get current used RAM from "free -k"
             free_cp = subprocess.run(
                 ["free", "-k"],
                 capture_output=True,
@@ -409,27 +554,19 @@ class DMSManager:
                             current_ram_used_kb = int(parts[2])
                             current_ram_used_gb = current_ram_used_kb / 1048576.0
                             free_ram_gb = total_ram_gb - current_ram_used_gb
-
-                            # Floor free RAM to the nearest 0.5 GiB
-                            floored_free_ram_gb = math.floor(free_ram_gb * 2) / 2.0
-                            if floored_free_ram_gb < 0:
-                                floored_free_ram_gb = 0.0
-
-                            # 89% of total RAM
-                            ram_89_percent_gb = total_ram_gb * 0.89
-
-                            # Choose the smaller value
-                            ram_onboard_gb = min(floored_free_ram_gb, ram_89_percent_gb)
-                            resources["ram_gb"] = round(ram_onboard_gb, 1)
+                            ram_onboard_gb = _clamp_onboard_ram_gib(total_ram_gb, free_ram_gb)
+                            resources["ram_gb"] = ram_onboard_gb
+                            logger.info(
+                                "RAM onboard: total=%.2f GiB free=%.2f GiB -> %.1f GiB",
+                                total_ram_gb,
+                                free_ram_gb,
+                                ram_onboard_gb,
+                            )
                             break
         except Exception as exc:
             logger.warning("Failed to calculate RAM: %s", exc)
 
-        # 3) Disk in GiB
-        #    - Use df -k on a single path (root) so we get free space on the filesystem
-        #      DMS actually uses. df --total would sum "Available" across all mounts,
-        #      which can over-report and cause "not enough free Disk" from DMS.
-        #    - Convert KiB -> GiB, subtract 5 GiB reserve.
+        # 3) Disk
         try:
             df_path = "/"
             df_cp = subprocess.run(
@@ -440,66 +577,51 @@ class DMSManager:
             )
             if df_cp.returncode == 0:
                 lines = df_cp.stdout.strip().splitlines()
-                # First data line (after header) is for df_path
                 if len(lines) >= 2:
-                    data_line = lines[1]
-                    parts = data_line.split()
-                    # Columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on
+                    parts = lines[1].split()
                     if len(parts) >= 4:
+                        total_disk_kb = int(parts[1])
                         free_disk_kb = int(parts[3])
+                        total_disk_gb = hw.get("disk_gib")
+                        if total_disk_gb is None:
+                            total_disk_gb = total_disk_kb / 1048576.0
+                            logger.info("Total disk from df -k %s: %.2f GiB", df_path, total_disk_gb)
+                        else:
+                            logger.info("Total disk from hardware spec: %.2f GiB", total_disk_gb)
                         free_disk_gb = free_disk_kb / 1048576.0
-                        disk_onboard_gb = max(0.0, free_disk_gb - 5.0)
-                        resources["disk_gb"] = round(disk_onboard_gb, 2)
+                        disk_onboard_gb = _clamp_onboard_disk_gib(total_disk_gb, free_disk_gb)
+                        resources["disk_gb"] = disk_onboard_gb
                         logger.info(
-                            "Disk from df -k %s: free=%.2f GiB, onboard=%.2f GiB (after 5 GiB reserve)",
-                            df_path,
+                            "Disk onboard: total=%.2f GiB free=%.2f GiB -> %.2f GiB",
+                            total_disk_gb,
                             free_disk_gb,
-                            resources["disk_gb"],
+                            disk_onboard_gb,
                         )
         except Exception as exc:
             logger.warning("Failed to calculate disk space: %s", exc)
 
-        # 4) GPU selection
-        #    - Get GPU info from hardware spec JSON
-        #    - Detect ALL GPUs reported
-        #    - Allocate 80% of each GPU's VRAM
-        #    - If GPUs are detected, we MUST onboard them (specify them exactly)
+        # 4) GPU
         try:
-            gpus = None
-            if hardware_spec:
-                # Try different response formats
-                if hardware_spec.get("OK") and hardware_spec.get("Resources", {}).get("gpus"):
-                    gpus = hardware_spec["Resources"]["gpus"]
-                    logger.info("Found GPUs in hardware spec (OK format): %s", gpus)
-                elif hardware_spec.get("Resources", {}).get("gpus"):
-                    gpus = hardware_spec["Resources"]["gpus"]
-                    logger.info("Found GPUs in hardware spec (no OK key): %s", gpus)
-                elif "gpus" in hardware_spec:
-                    gpus = hardware_spec["gpus"]
-                    logger.info("Found GPUs in hardware spec (flat format): %s", gpus)
-            
+            gpus = hw.get("gpus") or []
             if gpus and isinstance(gpus, list):
                 for gpu in gpus:
                     try:
                         gpu_index = gpu.get("index")
                         vram_bytes = gpu.get("vram", 0)
-                        
                         if gpu_index is not None and vram_bytes > 0:
-                            # Convert VRAM from bytes to GiB, then calculate 80%, minimum 1 GiB
                             vram_gb = vram_bytes / (1024 ** 3)
-                            gpu_vram_onboard_gb = max(1, int(vram_gb * 0.8))
+                            gpu_vram_onboard_gb = _clamp_onboard_gpu_vram_gib(vram_gb)
                             resources["gpus"].append((gpu_index, gpu_vram_onboard_gb))
-                            logger.info("Detected GPU: index=%s, vram_bytes=%s, vram_gb=%.2f, onboard_gb=%s", 
-                                       gpu_index, vram_bytes, vram_gb, gpu_vram_onboard_gb)
-                        else:
-                            logger.debug("Skipping GPU entry with missing index or vram: %s", gpu)
+                            logger.info(
+                                "GPU onboard: index=%s total_vram=%.2f GiB -> %s GiB",
+                                gpu_index,
+                                vram_gb,
+                                gpu_vram_onboard_gb,
+                            )
                     except (ValueError, TypeError) as exc:
                         logger.warning("Failed to parse GPU entry '%s': %s", gpu, exc)
             else:
-                if gpus is not None:
-                    logger.debug("GPUs not in expected list format: %s (type: %s)", gpus, type(gpus))
-                else:
-                    logger.debug("No GPU entries found in hardware spec")
+                logger.debug("No GPU entries found in hardware spec")
         except Exception as exc:
             logger.warning("Failed to process GPU info from hardware spec: %s", exc, exc_info=True)
 
@@ -561,19 +683,43 @@ class DMSManager:
                 check=False,
             )
 
+            stdout_str = cp.stdout or ""
+            stderr_str = cp.stderr or ""
+
+            actor_err = _onboard_actor_error_from_output(stdout_str, stderr_str)
+
             if cp.returncode == 0:
+                if actor_err:
+                    logger.error("Onboarding rejected by DMS actor (rc=0): %s", actor_err)
+                    return {
+                        "status": "error",
+                        "message": actor_err,
+                        "stdout": stdout_str,
+                        "stderr": stderr_str,
+                        "returncode": cp.returncode,
+                    }
+                verified, verify_err = _verify_dms_onboarded()
+                if not verified:
+                    message = verify_err or "DMS did not report onboarded after compute onboard command"
+                    logger.error("Onboarding verification failed: %s", message)
+                    return {
+                        "status": "error",
+                        "message": message,
+                        "stdout": stdout_str,
+                        "stderr": stderr_str,
+                        "returncode": cp.returncode,
+                    }
                 return {
                     "status": "success",
                     "message": "Compute resources onboarded successfully",
-                    "stdout": cp.stdout or "",
-                    "stderr": cp.stderr or "",
+                    "stdout": stdout_str,
+                    "stderr": stderr_str,
                 }
 
             # Build error message with available information
-            stdout_str = cp.stdout or ""
-            stderr_str = cp.stderr or ""
-            
-            if not stdout_str and not stderr_str:
+            if actor_err:
+                error_msg = actor_err
+            elif not stdout_str and not stderr_str:
                 error_msg = f"Command failed with return code {cp.returncode} (no output captured)"
                 logger.error("Onboarding failed: %s. Command: %s", error_msg, " ".join(cmd))
             else:
@@ -1197,11 +1343,61 @@ class DMSManager:
             payload.update(parsed)
         return payload
 
-    def list_transactions(self, blockchain: Optional[str] = None) -> Dict[str, Any]:
+    def list_transactions(
+        self,
+        blockchain: Optional[str] = None,
+        *,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort: Optional[str] = None,
+        contract_did: Optional[str] = None,
+        status: Optional[Sequence[str]] = None,
+        unique_id: Optional[str] = None,
+        deployment_id: Optional[str] = None,
+        to_address: Optional[str] = None,
+        from_address: Optional[str] = None,
+        tx_hash: Optional[str] = None,
+    ) -> Dict[str, Any]:
         base_cmd = [
             "nunet", "actor", "cmd", "--context", "dms",
             "/dms/tokenomics/contract/transactions/list",
         ]
+        if limit is not None:
+            base_cmd.extend(["--limit", str(limit)])
+        if offset is not None:
+            base_cmd.extend(["--offset", str(offset)])
+        sort_val = (sort or "").strip()
+        if sort_val:
+            base_cmd.extend(["--sort", sort_val])
+        blockchain_val = (blockchain or "").strip()
+        if blockchain_val:
+            base_cmd.extend(["--blockchain", blockchain_val.upper()])
+        contract_val = (contract_did or "").strip()
+        if contract_val:
+            base_cmd.extend(["--contract-did", contract_val])
+        unique_id_val = (unique_id or "").strip()
+        if unique_id_val:
+            base_cmd.extend(["--unique-id", unique_id_val])
+        deployment_id_val = (deployment_id or "").strip()
+        if deployment_id_val:
+            base_cmd.extend([
+                "--filter",
+                f"deployment_id={deployment_id_val}"
+            ])
+        if status:
+            for st in status:
+                part = str(st).strip()
+                if part:
+                    base_cmd.extend(["--status", part])
+        to_address_val = (to_address or "").strip()
+        if to_address_val:
+            base_cmd.extend(["--to-address", to_address_val])
+        from_address_val = (from_address or "").strip()
+        if from_address_val:
+            base_cmd.extend(["--from-address", from_address_val])
+        tx_hash_val = (tx_hash or "").strip()
+        if tx_hash_val:
+            base_cmd.extend(["--tx-hash", tx_hash_val])
         cp = run_dms_command_with_passphrase(
             base_cmd,
             capture_output=True,
@@ -1220,7 +1416,17 @@ class DMSManager:
             logger.error("Invalid JSON from transactions list command")
             return {"status": "error", "message": "Invalid JSON from DMS /transactions/list"}
         transactions = data.get("transactions", [])
-        return {"status": "success", "transactions": transactions}
+        result: Dict[str, Any] = {"status": "success", "transactions": transactions}
+        total_raw = data.get("total")
+        if isinstance(total_raw, (int, float)):
+            result["total"] = int(total_raw)
+        has_more_raw = data.get("has_more")
+        if isinstance(has_more_raw, bool):
+            result["has_more"] = has_more_raw
+        next_offset_raw = data.get("next_offset")
+        if isinstance(next_offset_raw, (int, float)):
+            result["next_offset"] = int(next_offset_raw)
+        return result
 
     def get_structured_logs(
         self,
@@ -1275,8 +1481,9 @@ class DMSManager:
             except Exception as exc:  # defensive: log request failures shouldn't abort log collection
                 logger.warning("Error requesting allocation logs: %s", exc)
 
-            stdout_path = alloc_path / "stdout.logs"
-            stderr_path = alloc_path / "stderr.logs"
+            # DMS writes stdout.log / stderr.log under LogsWrittenTo; prefer those names.
+            stdout_path = alloc_path / "stdout.log"
+            stderr_path = alloc_path / "stderr.log"
             allocation = {
                 "dir": str(alloc_path),
                 "stdout": _make_filelog(stdout_path, lines),

@@ -1,3 +1,4 @@
+import { usePollApplianceInfoAfterStatusChange } from "../hooks/usePollApplianceInfoAfterStatusChange";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardTitle } from "../components/ui/card";
@@ -23,6 +24,7 @@ import {
   offboardCompute,
   allInfo,
   allSysInfo,
+  isCommandResultOk,
 } from "../api/api";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
@@ -66,7 +68,7 @@ const actions: Action[] = [
   {
     label: "Restart",
     icon: RefreshCw,
-    color: "bg-blue-500 hover:bg-blue-600",
+    color: "bg-red-500 hover:bg-red-600",
     api: restartDms,
   },
   {
@@ -137,6 +139,9 @@ export default function Page() {
   const displayOnboardingStatus =
     cleanedOnboardingStatus || info?.onboarding_status || "Unknown";
 
+  const { startPollingUntilOnboarded, startPollingUntilNotOnboarded } =
+    usePollApplianceInfoAfterStatusChange(isOnboarded, refetchInfo);
+
   const extractErrorMessage = (error: any, fallback: string) =>
     error?.response?.data?.message ??
     error?.response?.data?.detail ??
@@ -149,9 +154,19 @@ export default function Page() {
   } = useMutation({
     mutationFn: onboardCompute,
     onSuccess: async (res) => {
-      toast.success(res?.message || "Compute onboarding started");
+      if (!isCommandResultOk(res)) {
+        toast.error(res?.message || "Compute onboarding failed", {
+          testId: "dashboard-onboard-compute-error",
+        });
+        appendLog(`[Onboard] error: ${res?.message ?? "unknown"}`);
+        return;
+      }
+      toast.success(res?.message || "Compute onboarding started", {
+        testId: "dashboard-onboard-compute-success",
+      });
       appendLog(`[Onboard] ${res?.message ?? "Onboarding started"}`);
       await Promise.allSettled([refetchInfo(), refetchSys()]);
+      startPollingUntilOnboarded();
     },
     onError: (error) => {
       toast.error(extractErrorMessage(error, "Failed to start onboarding"));
@@ -164,10 +179,20 @@ export default function Page() {
   } = useMutation({
     mutationFn: offboardCompute,
     onSuccess: async (res) => {
-      toast.success(res?.message || "Compute offboarding started");
+      if (!isCommandResultOk(res)) {
+        toast.error(res?.message || "Compute offboarding failed", {
+          testId: "dashboard-offboard-compute-error",
+        });
+        appendLog(`[Offboard] error: ${res?.message ?? "unknown"}`);
+        return;
+      }
+      toast.success(res?.message || "Compute offboarding started", {
+        testId: "dashboard-offboard-compute-success",
+      });
       appendLog(`[Offboard] ${res?.message ?? "Offboarding started"}`);
       setConfirmOffboardOpen(false);
       await Promise.allSettled([refetchInfo(), refetchSys()]);
+      startPollingUntilNotOnboarded();
     },
     onError: (error) => {
       toast.error(extractErrorMessage(error, "Failed to start offboarding"));

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 
 import yaml
 
@@ -29,6 +29,13 @@ class _DeploymentEntry:
     timestamp_iso: str
     timestamp_dt: datetime
     raw: Dict[str, Any]
+
+
+class _DeploymentListResult(TypedDict, total=False):
+    entries: List[_DeploymentEntry]
+    total: Optional[int]
+    has_more: Optional[bool]
+    next_offset: Optional[int]
 
 
 class EnsembleManagerV2:
@@ -132,7 +139,7 @@ class EnsembleManagerV2:
         offset: Optional[int] = None,
         sort: Optional[str] = None,
         metadata_filter: Optional[str] = None,
-    ) -> List[_DeploymentEntry]:
+    ) -> _DeploymentListResult:
         args = ["/dms/node/deployment/list"]
         if limit is not None:
             args.extend(["--limit", str(limit)])
@@ -201,17 +208,21 @@ class EnsembleManagerV2:
                     raw=info,
                 )
             )
-        return entries
+        result: _DeploymentListResult = {"entries": entries}
 
-    def _fetch_deployment_status(self, deployment_id: str) -> Dict[str, Any]:
-        cp = self._run_dms(
-            ["/dms/node/deployment/status", "-i", deployment_id],
-            check=False,
-        )
-        if cp.returncode != 0:
-            raise RuntimeError(cp.stderr or cp.stdout or "deployment status command failed")
-        detail = self._parse_json(cp.stdout)
-        return self._normalize_status_payload(detail)
+        total = payload.get("total") if isinstance(payload, dict) else None
+        if isinstance(total, int):
+            result["total"] = total
+
+        has_more = payload.get("has_more") if isinstance(payload, dict) else None
+        if isinstance(has_more, bool):
+            result["has_more"] = has_more
+
+        next_offset = payload.get("next_offset") if isinstance(payload, dict) else None
+        if isinstance(next_offset, int):
+            result["next_offset"] = next_offset
+
+        return result
 
     def _fetch_manifest(self, deployment_id: str) -> Dict[str, Any]:
         cp = self._run_dms(
@@ -248,57 +259,18 @@ class EnsembleManagerV2:
         refresh_status: bool = False,
     ) -> Dict[str, Any]:
         try:
-            if status_ordered and not statuses:
-                entries = []
-                seen = set()
-                target_count = None
-                if limit is not None:
-                    target_count = max((offset or 0) + limit, 0)
-
-                running_entries = self._fetch_deployments(
-                    statuses=["Running"],
-                    created_after=created_after,
-                    metadata_filter=metadata_filter,
-                    limit=target_count,
-                    offset=0,
-                    sort=sort,
-                )
-                for entry in running_entries:
-                    if entry.deployment_id in seen:
-                        continue
-                    seen.add(entry.deployment_id)
-                    entries.append(entry)
-
-                remaining = None
-                if target_count is not None:
-                    remaining = max(target_count - len(entries), 0)
-                base_entries = self._fetch_deployments(
-                    created_after=created_after,
-                    metadata_filter=metadata_filter,
-                    limit=remaining,
-                    offset=0,
-                    sort=sort,
-                )
-                for entry in base_entries:
-                    if entry.deployment_id in seen:
-                        continue
-                    seen.add(entry.deployment_id)
-                    entries.append(entry)
-            else:
-                entries = self._fetch_deployments(
-                    statuses=statuses,
-                    created_after=created_after,
-                    limit=limit,
-                    offset=offset,
-                    sort=sort,
-                    metadata_filter=metadata_filter,
-                )
+            list_result = self._fetch_deployments(
+                statuses=statuses,
+                created_after=created_after,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                metadata_filter=metadata_filter,
+            )
+            entries = list_result["entries"]
             deployment_log = self._parse_deployment_log()
         except Exception as exc:  # pragma: no cover - defensive
             return {"status": "error", "message": str(exc), "deployments": [], "count": 0}
-
-        if refresh_status:
-            self._refresh_transient_statuses(entries)
 
         if status_ordered and not statuses:
             desc = True
@@ -461,150 +433,10 @@ class EnsembleManagerV2:
             "status": "success",
             "deployments": deployments,
             "count": len(deployments),
+            "total": list_result.get("total"),
+            "has_more": list_result.get("has_more"),
+            "next_offset": list_result.get("next_offset"),
         }
-
-    def _refresh_transient_statuses(self, entries: List[_DeploymentEntry]) -> None:
-        transient: List[_DeploymentEntry] = []
-        for entry in entries:
-            status_lower = (entry.status or "").strip().lower()
-            if status_lower in {"", "running", "submitted", "pending", "processing", "in-progress"}:
-                transient.append(entry)
-
-        if not transient:
-            return
-
-        max_workers = min(4, len(transient))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_map = {
-                executor.submit(self._fetch_deployment_status, entry.deployment_id): entry
-                for entry in transient
-            }
-            for future in as_completed(future_map):
-                entry = future_map[future]
-                try:
-                    detail = future.result()
-                except Exception:
-                    continue
-
-                normalized = self._normalize_status_payload(detail)
-                status_lower = ""
-                if isinstance(normalized, dict):
-                    candidate = (
-                        normalized.get("deployment_status")
-                        or normalized.get("status")
-                        or normalized.get("Status")
-                        or normalized.get("state")
-                        or normalized.get("State")
-                    )
-                    if isinstance(candidate, str):
-                        status_lower = candidate.strip().lower()
-                if not status_lower:
-                    status_lower = self._extract_status(detail).lower()
-
-                if status_lower in _STATUS_COMPLETE:
-                    entry.status = "completed"
-                elif status_lower in _STATUS_FAILED:
-                    entry.status = "failed"
-                elif status_lower:
-                    entry.status = status_lower
-
-    def view_running_ensembles(self) -> Dict[str, Any]:
-        try:
-            entries = self._fetch_deployments()
-        except Exception as exc:  # pragma: no cover - defensive
-            return {"status": "error", "message": str(exc), "items": [], "count": 0}
-
-        items: List[Tuple[str, Dict[str, Any]]] = []
-        for entry in entries:
-            status_lower = entry.status.lower()
-            active = status_lower not in _STATUS_COMPLETE | _STATUS_FAILED
-            items.append(
-                (
-                    entry.deployment_id,
-                    {
-                        "status": entry.status or "unknown",
-                        "active": active,
-                        "timestamp": entry.timestamp_dt,
-                        "type": entry.raw.get("Type") or entry.raw.get("type") or "",
-                        "file_name": entry.raw.get("EnsembleFile") or entry.raw.get("ensemble_file") or "",
-                    },
-                )
-            )
-
-        active_count = sum(1 for _, info in items if info.get("active"))
-        message = f"{active_count} deployment(s) currently active."
-
-        return {"status": "success", "items": items, "count": len(items), "message": message}
-
-    def get_deployment_status(self, deployment_id: str) -> Dict[str, str]:
-        try:
-            entries = {entry.deployment_id: entry for entry in self._fetch_deployments()}
-            if deployment_id in entries:
-                status_lower = entries[deployment_id].status.lower()
-                if not status_lower:
-                    detail = self._fetch_deployment_status(deployment_id)
-                    status_lower = self._extract_status(detail).lower()
-                    if not status_lower and isinstance(detail, dict):
-                        status_lower = str(detail.get("status") or detail.get("Status") or "").lower()
-            else:
-                detail = self._fetch_deployment_status(deployment_id)
-                status_lower = self._extract_status(detail).lower()
-                if not status_lower and isinstance(detail, dict):
-                    status_lower = str(detail.get("status") or detail.get("Status") or "").lower()
-        except Exception as exc:  # pragma: no cover - defensive
-            return {"status": "error", "message": f"Error getting deployment status: {exc}"}
-
-        if status_lower in _STATUS_COMPLETE:
-            deployment_status = "completed"
-            message = "Deployment completed successfully"
-        elif status_lower in _STATUS_FAILED:
-            deployment_status = "failed"
-            message = "Deployment failed"
-        elif status_lower:
-            deployment_status = "running"
-            message = f"Deployment is currently {status_lower}"
-        else:
-            deployment_status = "unknown"
-            message = "Deployment status is unknown"
-
-        return {"status": "success", "deployment_status": deployment_status, "message": message}
-
-    def get_deployment_allocations(self, deployment_id: str) -> List[str]:
-        try:
-            detail = self._fetch_deployment_status(deployment_id)
-            if isinstance(detail, dict):
-                detail = self._normalize_status_payload(detail)
-        except Exception:
-            return []
-
-        allocations = {}
-        if isinstance(detail, dict):
-            allocations = detail.get("Allocations") or detail.get("allocations") or {}
-            if not allocations:
-                nested = detail.get("deployment") or detail.get("Deployment") or detail.get("manifest")
-                if isinstance(nested, dict):
-                    allocations = nested.get("Allocations") or nested.get("allocations") or {}
-        if not allocations:
-            manifest_data, _, _ = self._load_manifest_info(deployment_id)
-            if isinstance(manifest_data, dict):
-                manifest_allocations = manifest_data.get("allocations")
-                if isinstance(manifest_allocations, dict):
-                    allocations = manifest_allocations
-
-        if isinstance(allocations, dict):
-            return [str(name) for name in allocations.keys()]
-        if isinstance(allocations, list):
-            return [str(item) for item in allocations]
-        return []
-
-    def get_deployment_manifest_text(self, deployment_id: str) -> Dict[str, str]:
-        try:
-            manifest = self._fetch_manifest(deployment_id)
-        except Exception as exc:
-            return {"status": "error", "message": f"Error getting deployment manifest: {exc}"}
-
-        formatted = json.dumps(manifest, indent=2, sort_keys=True)
-        return {"status": "success", "manifest_text": formatted}
 
     def get_deployment_file_content(self, deployment_id: str) -> Dict[str, Any]:
         manifest_data, manifest_path_str, manifest_path = self._load_manifest_info(deployment_id)

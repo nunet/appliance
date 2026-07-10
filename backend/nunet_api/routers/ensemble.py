@@ -3,7 +3,6 @@ import subprocess
 import logging
 import re
 import yaml
-from modules.dms_manager import DMSManager
 from fastapi import APIRouter, HTTPException, Depends, Query, Body, BackgroundTasks, Request
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -12,13 +11,15 @@ import time
 from modules.ensemble_manager_v2 import EnsembleManagerV2
 from modules.dms_utils import run_dms_command_with_passphrase, get_dms_status_info
 from modules.path_constants import DMS_DEPLOYMENTS_DIR
-from modules.onboarding_manager import OnboardingManager
+from modules.dms_manager import DMSManager, _make_filelog, _request_allocation_logs
 from modules.path_constants import ENSEMBLES_DIR
+from modules.onboarding_manager import OnboardingManager
 from ..schemas import (
     DeploymentsWebResponse, DeploymentWebItem,
     RunningListResponse, RunningItem,
     ManifestTextResponse, LogsTextResponse,
     DeploymentFileResponse,
+    DeploymentInfoResponse,
     DeployRequest, DeployResponse,
     ShutdownResponse, TemplatesListItem, TemplatesListResponse,
     CopyRequest, CopyResponse, DownloadExamplesRequest, SimpleStatusResponse
@@ -183,12 +184,9 @@ def _read_allocations_from_disk(deployment_id: str) -> List[str]:
         return []
 
 
-def _resolve_allocation_choice(
-    mgr: EnsembleManagerV2,
-    deployment_id: str,
-    requested_alloc: str | None,
-) -> Tuple[Optional[str], List[str]]:
-    allocs = mgr.get_deployment_allocations(deployment_id) or []
+def _merge_alloc_names_with_disk_dirs(alloc_names: List[str], deployment_id: str) -> List[str]:
+    """Reconcile manifest/DMS allocation labels with on-disk directory names under the deployment."""
+    allocs = list(alloc_names)
     disk_allocs = _read_allocations_from_disk(deployment_id)
     if allocs and disk_allocs:
         disk_lower_map = {name.lower(): name for name in disk_allocs}
@@ -214,6 +212,34 @@ def _resolve_allocation_choice(
         allocs = [_to_disk(name) for name in allocs]
     if not allocs:
         allocs = disk_allocs
+    return allocs
+
+
+def _parse_allocations_csv(allocations: str) -> List[str]:
+    return [part.strip() for part in allocations.split(",") if part.strip()]
+
+
+def _resolve_allocation_from_dashboard(
+    deployment_id: str,
+    requested_alloc: str | None,
+    known_allocations: List[str],
+) -> Tuple[Optional[str], List[str]]:
+    """
+    Resolve allocation using the same name list as GET .../info?logs=true (no second /info call).
+    """
+    if not known_allocations:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "missing_allocations",
+                "message": (
+                    "Pass `allocations` as a comma-separated list of names from "
+                    "GET /ensemble/deployments/{id}/info?logs=true."
+                ),
+            },
+        )
+
+    allocs = _merge_alloc_names_with_disk_dirs(known_allocations, deployment_id)
     if not allocs:
         return None, allocs
 
@@ -233,7 +259,6 @@ def _resolve_allocation_choice(
         )
 
     requested_key = requested_clean.lower()
-    # Accept either the full allocation id or a unique suffix (e.g. "alloc1").
     normalized = {alloc.lower(): alloc for alloc in allocs}
 
     if requested_key in normalized:
@@ -241,7 +266,7 @@ def _resolve_allocation_choice(
 
     suffix_map: Dict[str, List[str]] = {}
     for alloc in allocs:
-        suffix = alloc.rsplit('.', 1)[-1].lower()
+        suffix = alloc.rsplit(".", 1)[-1].lower()
         suffix_map.setdefault(suffix, []).append(alloc)
 
     matches = suffix_map.get(requested_key, [])
@@ -263,6 +288,39 @@ def _resolve_allocation_choice(
         status_code=400,
         detail={"error": "invalid_allocation", "provided": requested_alloc, "allocations": allocs},
     )
+
+
+def _validated_log_file_under_deployment(deployment_id: str, label: str, raw: str) -> Path:
+    """Ensure stdout/stderr paths from the client stay under this deployment's DMS work directory."""
+    if not raw or not str(raw).strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "missing_log_path",
+                "path": label,
+                "message": f"Missing {label}. Use paths from GET /ensemble/deployments/{deployment_id}/info?logs=true.",
+            },
+        )
+    try:
+        p = Path(str(raw).strip()).expanduser().resolve()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_log_path", "path": label, "message": str(exc)},
+        ) from exc
+    base = (DMS_DEPLOYMENTS_DIR / deployment_id).resolve()
+    try:
+        p.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_log_path",
+                "path": label,
+                "message": f"{label} must be under {base}",
+            },
+        ) from exc
+    return p
 
 
 @router.get("/deployments", response_model=DeploymentsWebResponse)
@@ -317,50 +375,13 @@ def list_deployments(
         ))
 
     return DeploymentsWebResponse(
-        status=res["status"], deployments=items, count=res.get("count", len(items))
+        status=res["status"],
+        deployments=items,
+        count=res.get("count", len(items)),
+        total=res.get("total"),
+        has_more=res.get("has_more"),
+        next_offset=res.get("next_offset"),
     )
-
-
-@router.get("/deployments/running", response_model=RunningListResponse)
-def list_running_table(mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    res = mgr.view_running_ensembles()
-    if res.get("status") != "success":
-        raise HTTPException(status_code=500, detail=res.get("message", "Failed to get running deployments"))
-
-    items_out: List[RunningItem] = []
-    for pair in res.get("items", []):
-        # pair is (id, info)
-        dep_id, info = pair
-        ts = info.get("timestamp")
-        ts_s = ts.isoformat() if isinstance(ts, datetime) else str(ts)
-        items_out.append(RunningItem(
-            id=dep_id,
-            status=str(info.get("status", "")),
-            active=bool(info.get("active", False)),
-            type=str(info.get("type", "")),
-            timestamp=ts_s,
-            file_name=str(info.get("file_name", "")),
-        ))
-
-    return RunningListResponse(
-        status="success",
-        message=res.get("message", ""),
-        count=res.get("count", len(items_out)),
-        items=items_out
-    )
-
-
-@router.get("/deployments/{deployment_id}/status")
-def deployment_status(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    return mgr.get_deployment_status(deployment_id)
-
-
-@router.get("/deployments/{deployment_id}/manifest", response_model=ManifestTextResponse)
-def deployment_manifest_text(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    res = mgr.get_deployment_manifest_text(deployment_id)
-    if res.get("status") != "success":
-        raise HTTPException(status_code=500, detail=res.get("message", "Failed to get manifest"))
-    return ManifestTextResponse(status="success", message=res.get("manifest_text", res.get("message", "")))
 
 
 @router.get("/deployments/{deployment_id}/file", response_model=DeploymentFileResponse)
@@ -387,9 +408,245 @@ def deployment_file_content(deployment_id: str, mgr: EnsembleManagerV2 = Depends
     )
 
 
-@router.get("/deployments/{deployment_id}/allocations", response_model=List[str])
-def allocations_for_deployment(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    return mgr.get_deployment_allocations(deployment_id)
+@router.get(
+    "/deployments/{deployment_id}/info",
+    response_model=DeploymentInfoResponse,
+    response_model_exclude_none=True,
+)
+def deployment_info(
+    deployment_id: str,
+    usage: bool = Query(default=False, description="Include resource usage statistics"),
+    logs: bool = Query(default=False, description="Include log file paths"),
+    allocations: Optional[List[str]] = Query(
+        default=None,
+        description="Optional allocation names to include logs for (requires logs=true).",
+    ),
+    mgr: EnsembleManagerV2 = Depends(get_mgr),
+):
+    """
+    Consolidated deployment information endpoint backed by DMS:
+      /dms/node/deployment/info
+
+    This is intended to replace multiple frontend calls (status, manifest, allocations)
+    with a single request.
+    """
+    cmd: List[str] = ["nunet", "-c", "dms", "actor", "cmd"]
+    # The info behavior can take longer when usage is requested; bump actor timeout.
+    # Note: DMS --logs has proven slow/unreliable in practice; the backend computes log paths
+    # directly from the local DMS work directory instead of invoking DMS for them.
+    if usage:
+        cmd.extend(["--timeout", "180s"])
+        subprocess_timeout = 210
+    else:
+        subprocess_timeout = 60
+
+    cmd.extend(["/dms/node/deployment/info", "--id", deployment_id])
+    if usage:
+        cmd.append("--usage")
+
+    try:
+        cp = run_dms_command_with_passphrase(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=subprocess_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "dms_timeout",
+                "message": f"DMS deployment info request timed out after {subprocess_timeout}s",
+            },
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "nunet_not_found", "message": "nunet CLI not available"},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "dms_command_failed", "message": str(exc)},
+        ) from exc
+
+    stdout = (cp.stdout or "").strip()
+    stderr = (cp.stderr or "").strip()
+    if cp.returncode != 0:
+        message = stderr or stdout or f"Command failed with return code {cp.returncode}"
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "deployment_info_failed",
+                "message": message,
+                "returncode": cp.returncode,
+            },
+        )
+
+    try:
+        data = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError as je:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "invalid_json", "message": f"nunet returned invalid JSON: {je}"},
+        ) from je
+
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "unexpected_payload", "message": "nunet returned non-object JSON"},
+        )
+
+    raw_status = data.get("status")
+    status_lower = str(raw_status or "").strip().lower()
+    if status_lower in {"completed", "complete", "finished", "success", "done"}:
+        deployment_status = "completed"
+        status_message = "Deployment completed successfully"
+    elif status_lower in {"failed", "error", "cancelled", "canceled"}:
+        deployment_status = "failed"
+        status_message = "Deployment failed"
+    elif status_lower:
+        deployment_status = "running"
+        status_message = f"Deployment is currently {status_lower}"
+    else:
+        deployment_status = "unknown"
+        status_message = "Deployment status is unknown"
+
+    # Match the existing /manifest/raw response structure expected by the UI (manifest nested under "manifest").
+    manifest_payload: Dict[str, Any] = {"manifest": data.get("manifest")}
+    if isinstance(manifest_payload.get("manifest"), dict):
+        try:
+            manifest_payload = mgr.enrich_manifest_payload(deployment_id, manifest_payload)
+        except Exception as exc:
+            meta = manifest_payload.setdefault("meta", {})
+            meta["proxy_enrichment_error"] = str(exc)
+        try:
+            manifest_payload["dms_status"] = get_dms_status_info()
+        except Exception:
+            pass
+
+    allocs: List[str] = []
+    manifest_obj = manifest_payload.get("manifest")
+    if isinstance(manifest_obj, dict):
+        manifest_allocations = manifest_obj.get("allocations")
+        if isinstance(manifest_allocations, dict):
+            allocs = [str(k) for k in manifest_allocations.keys()]
+
+    def _alloc_name_from(candidate: Any) -> Optional[str]:
+        if not isinstance(candidate, str):
+            return None
+        s = candidate.strip()
+        if not s:
+            return None
+        # DMS commonly prefixes allocation_id as "<deployment_id>_<allocation_name>".
+        if "_" in s:
+            return s.split("_", 1)[1]
+        return s
+
+    def _normalize_alloc_map(raw: Any) -> Dict[str, Any]:
+        """
+        Normalize DMS maps keyed by allocation_id into maps keyed by allocation_name
+        (e.g. "<dep>_node1.alloc1" -> "node1.alloc1").
+        """
+        out: Dict[str, Any] = {}
+        if not isinstance(raw, dict):
+            return out
+        for key, value in raw.items():
+            alloc_id = value.get("allocation_id") if isinstance(value, dict) else None
+            name = _alloc_name_from(alloc_id) or _alloc_name_from(key)
+            if name:
+                out[name] = value
+        return out
+
+    runtime_allocations = data.get("allocations")
+    allocations_by_name = _normalize_alloc_map(runtime_allocations)
+    # Ensure allocations_info contains at least the manifest-provided allocations so optional
+    # payloads (usage/logs) can attach even if DMS runtime "allocations" is missing/empty.
+    for alloc_name in allocs:
+        allocations_by_name.setdefault(str(alloc_name), {})
+
+    # Some DMS builds return usage/logs as separate maps; merge into allocations_info
+    # for a stable frontend contract.
+    usage_by_name = _normalize_alloc_map(data.get("usage")) if usage else {}
+    logs_by_name = _normalize_alloc_map(data.get("logs")) if logs else {}
+    for alloc_name, info in allocations_by_name.items():
+        if isinstance(info, dict):
+            if alloc_name in usage_by_name and "resource_usage" not in info:
+                info["resource_usage"] = usage_by_name[alloc_name]
+            if alloc_name in logs_by_name and "logs" not in info:
+                info["logs"] = logs_by_name[alloc_name]
+
+    # Compute log paths from the local filesystem for performance/reliability.
+    fs_logs_by_name: Dict[str, Any] = {}
+    if logs:
+        requested_allocs = [
+            str(name).strip()
+            for name in (allocations or [])
+            if str(name).strip()
+        ]
+        requested_set = {name.lower() for name in requested_allocs} if requested_allocs else None
+
+        disk_allocs = _read_allocations_from_disk(deployment_id)
+        disk_lower_map = {name.lower(): name for name in disk_allocs}
+
+        def _disk_name_for(name: str) -> str:
+            return disk_lower_map.get(name.lower(), name)
+
+        for alloc_name, info in allocations_by_name.items():
+            if requested_set is not None and alloc_name.lower() not in requested_set:
+                continue
+
+            disk_name = _disk_name_for(alloc_name)
+            alloc_dir = DMS_DEPLOYMENTS_DIR / deployment_id / disk_name
+            # Always return the expected paths for UX, even if the directory hasn't been created yet.
+            # Use *_exists fields to indicate whether the paths are currently present on disk.
+            stdout_path = alloc_dir / "stdout.log"
+            stderr_path = alloc_dir / "stderr.log"
+            dir_exists = alloc_dir.exists() and alloc_dir.is_dir()
+            entry: Dict[str, Any] = {
+                "stdout_path": str(stdout_path),
+                "stderr_path": str(stderr_path),
+                "logs_written_to": str(alloc_dir),
+                "dir_exists": dir_exists,
+                "stdout_exists": stdout_path.exists() if dir_exists else False,
+                "stderr_exists": stderr_path.exists() if dir_exists else False,
+            }
+            if not dir_exists:
+                entry["error"] = f"logs directory not found for allocation {alloc_name}"
+            fs_logs_by_name[alloc_name] = entry
+
+            # Prefer filesystem-derived paths over DMS-provided error payloads.
+            if isinstance(info, dict):
+                current = info.get("logs")
+                if not isinstance(current, dict):
+                    info["logs"] = fs_logs_by_name[alloc_name]
+                else:
+                    has_paths = "stdout_path" in current or "stderr_path" in current
+                    if not has_paths:
+                        info["logs"] = fs_logs_by_name[alloc_name]
+
+    resp: Dict[str, Any] = {
+        "id": str(data.get("id") or deployment_id),
+        "error": data.get("error"),
+        "raw_status": raw_status,
+        "status": {
+            "status": "success",
+            "deployment_status": deployment_status,
+            "message": status_message,
+        },
+        "manifest": manifest_payload,
+        "allocations": allocs,
+        "allocations_info": allocations_by_name,
+    }
+
+    if usage and usage_by_name:
+        resp["usage"] = usage_by_name
+    if logs and (logs_by_name or fs_logs_by_name):
+        # Prefer filesystem-derived logs map; keep DMS logs map if present.
+        resp["logs"] = fs_logs_by_name or logs_by_name
+
+    return resp
 
 
 def _format_log_section(label: str, entry: dict | None) -> str:
@@ -477,7 +734,12 @@ def request_deployment_logs(
     deployment_id: str,
     allocation: str | None = Query(
         default=None,
-        description="Optional allocation name if multiple exist",
+        description="Allocation name (from GET .../info?logs=true); required when multiple allocations exist",
+    ),
+    allocations: str = Query(
+        ...,
+        min_length=1,
+        description="Comma-separated allocation names from GET .../info?logs=true",
     ),
     wait: bool = Query(
         default=False,
@@ -486,7 +748,8 @@ def request_deployment_logs(
     background_tasks: BackgroundTasks = None,
     mgr: EnsembleManagerV2 = Depends(get_mgr),
 ):
-    selected_alloc, allocs = _resolve_allocation_choice(mgr, deployment_id, allocation)
+    known = _parse_allocations_csv(allocations)
+    selected_alloc, allocs = _resolve_allocation_from_dashboard(deployment_id, allocation, known)
     if not selected_alloc:
         if allocs:
             raise HTTPException(
@@ -614,7 +877,19 @@ def _run_log_request_background(cmd: list[str]) -> None:
 @router.get("/deployments/{deployment_id}/logs", response_model=LogsTextResponse)
 def deployment_logs_text(
     deployment_id: str,
-    allocation: str | None = Query(default=None, description="Optional allocation name if multiple exist"),
+    allocation: str | None = Query(default=None, description="Allocation name from GET .../info?logs=true"),
+    allocations: Optional[str] = Query(
+        default=None,
+        description="Comma-separated allocation names from GET .../info?logs=true (required when include_alloc=true)",
+    ),
+    stdout_path: Optional[str] = Query(
+        default=None,
+        description="stdout.log path from allocations_info[allocation].logs (required when include_alloc=true)",
+    ),
+    stderr_path: Optional[str] = Query(
+        default=None,
+        description="stderr.log path from allocations_info[allocation].logs (required when include_alloc=true)",
+    ),
     dms_query: str | None = Query(default=None, description="Optional jq filter for DMS logs"),
     refresh_alloc: bool = Query(default=True, description="Refresh allocation logs via DMS before reading files"),
     dms_lines: int = Query(
@@ -631,35 +906,94 @@ def deployment_logs_text(
         default=True,
         description="Include allocation stdout/stderr logs in response",
     ),
-    mgr: EnsembleManagerV2 = Depends(get_mgr)
 ):
     """
-    Non-interactive logs endpoint. If a deployment has multiple allocations and none is given,
-    return 400 with available choices (so the API never blocks on input()).
+    Allocation logs require paths from the single GET .../info?logs=true call (no second /info).
     """
-    selected_alloc = None
-    if include_alloc:
-        selected_alloc, _ = _resolve_allocation_choice(mgr, deployment_id, allocation)
+    selected_alloc: Optional[str] = None
+    alloc_dir: Optional[Path] = None
+    stdout_p: Optional[Path] = None
+    stderr_p: Optional[Path] = None
 
-    alloc_dir = None
-    if include_alloc and selected_alloc:
-        alloc_dir = DMS_DEPLOYMENTS_DIR / deployment_id / selected_alloc
+    if include_alloc:
+        if not allocations or not str(allocations).strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "missing_allocations",
+                    "message": "Pass `allocations` (comma-separated) from GET /ensemble/deployments/{id}/info?logs=true.",
+                },
+            )
+        if not stdout_path or not stderr_path:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "missing_log_paths",
+                    "message": "Pass `stdout_path` and `stderr_path` from allocations_info[...].logs on GET .../info?logs=true.",
+                },
+            )
+        known = _parse_allocations_csv(allocations)
+        if not known:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "missing_allocations",
+                    "message": "`allocations` must list at least one allocation name.",
+                },
+            )
+        selected_alloc, allocs = _resolve_allocation_from_dashboard(deployment_id, allocation, known)
+        if not selected_alloc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "allocation_required",
+                    "allocations": allocs or known,
+                    "message": "Could not resolve allocation for logs.",
+                },
+            )
+        stdout_p = _validated_log_file_under_deployment(deployment_id, "stdout_path", stdout_path)
+        stderr_p = _validated_log_file_under_deployment(deployment_id, "stderr_path", stderr_path)
+        alloc_dir = stdout_p.parent
+
+        if refresh_alloc:
+            ok, msg = _request_allocation_logs(deployment_id, selected_alloc)
+            if not ok:
+                logger.warning(
+                    "DMS log refresh failed for %s/%s: %s",
+                    deployment_id,
+                    selected_alloc,
+                    msg or "no message",
+                )
 
     try:
         dm = DMSManager()
         alloc_lines_limit = 400
-        structured = dm.get_structured_logs(
-            alloc_dir if include_alloc else None,
-            lines=alloc_lines_limit,
-            refresh_alloc_logs=refresh_alloc,
-            include_dms_logs=False,
-        )
+        if include_alloc and selected_alloc and stdout_p is not None and stderr_p is not None:
+            structured = {
+                "status": "success",
+                "message": "Structured logs fetched",
+                "allocation": {
+                    "dir": str(stdout_p.parent),
+                    "stdout": _make_filelog(stdout_p, alloc_lines_limit),
+                    "stderr": _make_filelog(stderr_p, alloc_lines_limit),
+                },
+                "dms_logs": None,
+            }
+        else:
+            structured = dm.get_structured_logs(
+                None,
+                lines=alloc_lines_limit,
+                refresh_alloc_logs=False,
+                include_dms_logs=False,
+            )
         filtered_dms = dm.get_filtered_dms_logs(
             deployment_id,
             query=dms_query,
             max_lines=dms_lines,
             view=dms_view,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -807,41 +1141,6 @@ def download_examples(payload: DownloadExamplesRequest, mgr: EnsembleManagerV2 =
         target_dir=Path(payload.target_dir).expanduser() if payload.target_dir else None,
     )
     return SimpleStatusResponse(status=res.get("status", "error"), message=res.get("message", ""))
-
-
-@router.get("/deployments/{deployment_id}/manifest/raw", response_model=Dict[str, Any])
-def deployment_manifest_raw(deployment_id: str, mgr: EnsembleManagerV2 = Depends(get_mgr)):
-    """
-    Return the raw JSON manifest as produced by nunet.
-    This is a direct pass-through (parsed) of the CLI output:
-    `nunet -c dms actor cmd /dms/node/deployment/manifest -i <id>`
-    """
-    try:
-        cp = run_dms_command_with_passphrase(
-            ["nunet", "-c", "dms", "actor", "cmd", "/dms/node/deployment/manifest", "-i", deployment_id],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=502, detail=f"nunet manifest failed: {e}")
-
-    try:
-        data = json.loads(cp.stdout)
-    except json.JSONDecodeError as je:
-        raise HTTPException(status_code=502, detail=f"nunet returned invalid JSON: {je}")
-
-    if isinstance(data, dict):
-        try:
-            data = mgr.enrich_manifest_payload(deployment_id, data)
-        except Exception as exc:
-            meta = data.setdefault("meta", {})
-            meta["proxy_enrichment_error"] = str(exc)
-        try:
-            data["dms_status"] = get_dms_status_info()
-        except Exception:
-            pass
-    return data
 
 
 @router.get("/templates/yamls", response_model=dict)

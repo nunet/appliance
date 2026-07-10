@@ -174,28 +174,7 @@ export default function Page() {
               <div className="flex items-center justify-between mb-4">
                 <CardTitle>Deployments</CardTitle>
                 <div className="flex gap-2">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="flex items-center gap-2"
-                          onClick={handleRefresh}
-                          disabled={isFetchingDeployments} // disable while loading
-                          data-testid="deployments-refresh-button"
-                        >
-                          {isFetchingDeployments ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <RotateCw className="w-4 h-4" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Refresh deployments
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+
 
                   <TooltipProvider>
                     <Tooltip>

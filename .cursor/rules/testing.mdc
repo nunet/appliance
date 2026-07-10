@@ -1,0 +1,75 @@
+---
+description: Pytest and Playwright testing against DEV ON (https://localhost:8443)
+alwaysApply: true
+---
+
+# Testing (NuNet Appliance)
+
+**DEV ON is the only test environment.** The integrated `nunet-appliance-web` service on `https://localhost:8443` (repo `.venv` + `frontend/dist` via `nunet-web-mode.sh`) is required for integration, contract, and browser tests.
+
+Two runners:
+
+- **`./deploy/scripts/run-pytest.sh`** — unit (default), integration (`-m integration`), contract (`-m contract`)
+- **`pnpm e2e`** (from `frontend/`) — Playwright browser tests
+
+## Environment
+
+Copy **`.env.test.example`** to **`.env.test`** at the repo root:
+
+- `APPLIANCE_BASE_URL=https://localhost:8443`
+- `APPLIANCE_ADMIN_PASSWORD=…`
+
+Source before runs: `set -a && source .env.test && set +a`
+
+Auth: `POST /auth/token` with `APPLIANCE_ADMIN_PASSWORD`. Playwright `globalSetup` writes `frontend/playwright/.auth/admin.json` storage state.
+
+## Backend — pytest
+
+From repo root:
+
+```bash
+./deploy/scripts/run-pytest.sh                    # unit only (default markers)
+./deploy/scripts/run-pytest.sh -m integration   # live API (httpx)
+./deploy/scripts/run-pytest.sh -m contract      # Schemathesis OpenAPI (safe verbs)
+```
+
+Uses `$REPO_ROOT/.venv`, `PYTHONPATH`, and `backend/requirements-test.txt` when pytest is missing.
+
+- **Unit:** `backend/tests/` with module stubs (e.g. `test_nunet_api_api.py`)
+- **Integration:** `backend/tests/integration/` — real routers on `:8443`
+- **Contract:** `backend/tests/contract/test_openapi.py` — GET/HEAD/OPTIONS only
+
+Bring up DEV ON before integration/contract/Playwright:
+
+```bash
+./deploy/scripts/nunet-web-mode.sh dev-on
+./deploy/scripts/nunet-web-mode.sh rebuild
+```
+
+## Frontend — Playwright
+
+From `frontend/` (Node 22+, pnpm):
+
+```bash
+pnpm install --frozen-lockfile
+npx playwright install --with-deps chromium
+pnpm e2e
+pnpm e2e:ui
+```
+
+Specs live in `frontend/playwright/`. Config: `frontend/playwright.config.ts` (`baseURL`, `ignoreHTTPSErrors`, line + JSON reporters).
+
+Optional env for onboarding mail spec: `MAILHOG_USERNAME`, `MAILHOG_PASSWORD`, `MAILHOG_BASE_URL`, `MAIL_INBOX_DOMAIN`, `NUTEST_ORG_DID`.
+
+E2e sets `sessionStorage.nunet-e2e=1` to skip dashboard prefetch and payments polling (heavy DMS). Backend serializes `nunet` subprocesses (`DMS_SUBPROCESS_MIN_GAP_SEC`, default `0.4`; `DMS_CACHE_TTL_SEC`, default `45`).
+
+Skip destructive/long flows: `ENSEMBLE_SKIP_DESTRUCTIVE=1`, `DEPLOYMENTS_SKIP=1`.
+
+## What to use when
+
+- **pytest unit** — fast logic, parsing, mocked modules
+- **pytest integration** — real router JSON contracts (was Cypress `cy.intercept` stubs)
+- **pytest contract** — OpenAPI coverage for safe HTTP methods
+- **Playwright** — browser journeys (login, dashboard, org join, deployments UI, filesystem UI, etc.)
+
+After API or UI route changes, update the matching pytest integration file and/or Playwright spec.
