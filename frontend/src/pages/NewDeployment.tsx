@@ -261,6 +261,7 @@ export default function NewDeployment() {
           {currentStep === 3 && (
             <DeploymentStepThree
               template={templatePath}
+              yamlPath={yamlPath}
               formData={formData}
               setFormData={setFormData}
               formValid={formValid}

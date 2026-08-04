@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,13 @@ import {
 import { ChevronDown } from "lucide-react";
 import { Separator } from "../ui/separator";
 import { useQuery } from "@tanstack/react-query";
-import { fetchTemplates, type Template } from "../../api/deployments";
+import { getEffectiveSchema } from "../../api/ensembles";
 import { useAuth } from "../../hooks/useAuth";
+import type { FormSchema } from "@/types";
 
 interface Props {
   template: string;
+  yamlPath?: string;
   formData: Record<string, any>;
   setFormData: React.Dispatch<React.SetStateAction<Record<string, any>>>;
   formValid: boolean;
@@ -40,6 +42,7 @@ type FieldSpec = {
 
 export default function DeploymentStepThree({
   template,
+  yamlPath,
   formData,
   setFormData,
   formValid,
@@ -47,24 +50,25 @@ export default function DeploymentStepThree({
   deployment_type,
 }: Props) {
   const { token } = useAuth();
-  
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["templates-forms"],
-    queryFn: () => fetchTemplates(1),
-    enabled: !!token, // Only run the query when we have a token
+  const schemaPath = yamlPath || template;
+
+  const {
+    data: schema,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<FormSchema>({
+    queryKey: ["template-schema", schemaPath],
+    queryFn: () => getEffectiveSchema(schemaPath),
+    enabled: !!token && !!schemaPath,
   });
 
-  const tpl: Template | undefined = useMemo(() => {
-    const all: Template[] = data?.items ?? [];
-    return all.find((t) => t.path === template);
-  }, [data, template]);
-
-  const fields = (tpl?.schema?.fields ?? {}) as Record<string, FieldSpec>;
+  const fields = (schema?.fields ?? {}) as Record<string, FieldSpec>;
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Defaults
   useEffect(() => {
-    if (!tpl) return;
+    if (!schema) return;
     const next: Record<string, any> = {};
     for (const [key, spec] of Object.entries(fields)) {
       if (key === "peer_id") continue;
@@ -75,11 +79,11 @@ export default function DeploymentStepThree({
     if (Object.keys(next).length) {
       setFormData((prev) => ({ ...prev, ...next }));
     }
-  }, [tpl]);
+  }, [schema]);
 
   // Validation
   useEffect(() => {
-    if (!tpl) return;
+    if (!schema) return;
 
     const nextErrors: Record<string, string> = {};
     let valid = true;
@@ -124,7 +128,7 @@ export default function DeploymentStepThree({
 
     setFieldErrors(nextErrors);
     setFormValid(valid);
-  }, [formData, tpl, deployment_type]);
+  }, [formData, schema, deployment_type]);
 
   const handleChange = (key: string, value: any) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
@@ -208,11 +212,16 @@ export default function DeploymentStepThree({
     );
   };
 
-  if (!template)
+  if (!template && !yamlPath)
     return <p className="text-muted-foreground">Select a template first.</p>;
   if (isLoading) return <p>Loading template schema...</p>;
-  if (isError) return <p>Error loading templates</p>;
-  if (!tpl) return <p>No template found for path: {template}</p>;
+  if (isError || !schema) {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 404 || !schema) {
+      return <p>No template found for path: {schemaPath}</p>;
+    }
+    return <p>Error loading template schema</p>;
+  }
 
   // Group allocations
   const allocations: Record<string, string[]> = {};
@@ -235,7 +244,7 @@ export default function DeploymentStepThree({
 
   return (
     <div className="flex flex-col w-full max-w-3xl mx-auto" data-testid="deployment-step3">
-      <h2 className="text-xl font-semibold mb-4">{tpl.schema.name}</h2>
+      <h2 className="text-xl font-semibold mb-4">{schema.name}</h2>
       <Separator className="mb-4" />
 
       {isMultiAlloc ? (
