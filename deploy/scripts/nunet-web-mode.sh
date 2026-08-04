@@ -13,7 +13,7 @@
 #   VENV_DIR       Default: $REPO_ROOT/.venv
 #   PORT           Passed to gunicorn via deploy/gunicorn_conf.py (default: 8443)
 #   WORKERS        Gunicorn workers (default: 1)
-#   PNPM_VERSION                  Default: 10.34.4
+#   PNPM_VERSION                  Default: 10.34.5
 #   DEV_MODE_SKIP_FRONTEND_BUILD  Set to 1 to use existing frontend/dist (CI artifact)
 
 set -euo pipefail
@@ -41,7 +41,7 @@ fi
 
 PORT="${PORT:-8443}"
 WORKERS="${WORKERS:-1}"
-PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
+PNPM_VERSION="${PNPM_VERSION:-10.34.5}"
 
 # Try common unit names (historical typo vs packaged name).
 SERVICE_CANDIDATES=(
