@@ -110,7 +110,7 @@ elif [ "${CI_SKIP_FRONTEND_BUILD:-}" = "1" ]; then
 else
     install_node
 
-    PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
+    PNPM_VERSION="${PNPM_VERSION:-10.34.5}"
     STRICT_PNPM_AUDIT="${STRICT_PNPM_AUDIT:-1}"
     PNPM_CMD=(corepack pnpm)
     corepack prepare "pnpm@${PNPM_VERSION}" --activate
