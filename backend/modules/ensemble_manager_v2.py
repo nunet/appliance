@@ -224,6 +224,16 @@ class EnsembleManagerV2:
 
         return result
 
+    def _fetch_deployment_status(self, deployment_id: str) -> Dict[str, Any]:
+        cp = self._run_dms(
+            ["/dms/node/deployment/status", "-i", deployment_id],
+            check=False,
+        )
+        if cp.returncode != 0:
+            raise RuntimeError(cp.stderr or cp.stdout or "deployment status command failed")
+        detail = self._parse_json(cp.stdout)
+        return self._normalize_status_payload(detail)
+
     def _fetch_manifest(self, deployment_id: str) -> Dict[str, Any]:
         cp = self._run_dms(
             ["/dms/node/deployment/manifest", "-i", deployment_id],
@@ -244,6 +254,67 @@ class EnsembleManagerV2:
             if alt.exists():
                 return alt
         return None
+
+    def get_deployment_status(self, deployment_id: str) -> Dict[str, str]:
+        try:
+            detail = self._fetch_deployment_status(deployment_id)
+            status_lower = self._extract_status(detail).lower()
+            if not status_lower and isinstance(detail, dict):
+                status_lower = str(detail.get("status") or detail.get("Status") or "").lower()
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"status": "error", "message": f"Error getting deployment status: {exc}"}
+
+        if status_lower in _STATUS_COMPLETE:
+            deployment_status = "completed"
+            message = "Deployment completed successfully"
+        elif status_lower in _STATUS_FAILED:
+            deployment_status = "failed"
+            message = "Deployment failed"
+        elif status_lower:
+            deployment_status = "running"
+            message = f"Deployment is currently {status_lower}"
+        else:
+            deployment_status = "unknown"
+            message = "Deployment status is unknown"
+
+        return {"status": "success", "deployment_status": deployment_status, "message": message}
+
+    def get_deployment_allocations(self, deployment_id: str) -> List[str]:
+        try:
+            detail = self._fetch_deployment_status(deployment_id)
+            if isinstance(detail, dict):
+                detail = self._normalize_status_payload(detail)
+        except Exception:
+            return []
+
+        allocations = {}
+        if isinstance(detail, dict):
+            allocations = detail.get("Allocations") or detail.get("allocations") or {}
+            if not allocations:
+                nested = detail.get("deployment") or detail.get("Deployment") or detail.get("manifest")
+                if isinstance(nested, dict):
+                    allocations = nested.get("Allocations") or nested.get("allocations") or {}
+        if not allocations:
+            manifest_data, _, _ = self._load_manifest_info(deployment_id)
+            if isinstance(manifest_data, dict):
+                manifest_allocations = manifest_data.get("allocations")
+                if isinstance(manifest_allocations, dict):
+                    allocations = manifest_allocations
+
+        if isinstance(allocations, dict):
+            return [str(name) for name in allocations.keys()]
+        if isinstance(allocations, list):
+            return [str(item) for item in allocations]
+        return []
+
+    def get_deployment_manifest_text(self, deployment_id: str) -> Dict[str, str]:
+        try:
+            manifest = self._fetch_manifest(deployment_id)
+        except Exception as exc:
+            return {"status": "error", "message": f"Error getting deployment manifest: {exc}"}
+
+        formatted = json.dumps(manifest, indent=2, sort_keys=True)
+        return {"status": "success", "manifest_text": formatted}
 
     def get_deployments_for_web(
         self,
