@@ -49,6 +49,7 @@ def stub_external_modules(tmp_path_factory):
     mod_path_constants.ADMIN_CREDENTIALS_PATH = stubs_root / "credentials.json"
     mod_path_constants.DMS_INIT_SCRIPT = stubs_root / "dms_init.sh"
     mod_path_constants.DMS_DEPLOYMENTS_DIR = stubs_root / "deployments"
+    mod_path_constants.APPLIANCE_DEPLOYMENTS_DIR = stubs_root / "appliance-deployments"
     mod_path_constants.ENSEMBLES_DIR = ensembles_dir
     mod_path_constants.DEFAULT_CONTRACT_JSON_TEMPLATE = default_contract_template
     mod_path_constants.DEFAULT_ENSEMBLE_JSON_TEMPLATE = default_ensemble_template
@@ -221,6 +222,8 @@ def stub_external_modules(tmp_path_factory):
             return _
 
     mod_dms_manager.DMSManager = DummyDMSManager
+    mod_dms_manager._make_filelog = lambda *args, **kwargs: {"path": "", "exists": False}
+    mod_dms_manager._request_allocation_logs = lambda *args, **kwargs: (False, "stub")
 
     def _make_filelog(path, lines: int) -> dict[str, Any]:
         return {
@@ -247,6 +250,102 @@ def stub_external_modules(tmp_path_factory):
     mod_dms_utils.get_dms_status_info = lambda *args, **kwargs: {}
     mod_dms_utils.run_dms_command_with_passphrase = lambda *args, **kwargs: _command_result("run")
     mod_dms_utils.invalidate_all_dms_caches = lambda *args, **kwargs: None
+
+    mod_deployment_info = add_submodule("deployment_info_builder")
+
+    class DeploymentInfoError(Exception):
+        def __init__(self, *, error: str, message: str, status_code: int = 502, **extra: Any):
+            super().__init__(message)
+            self.error = error
+            self.message = message
+            self.status_code = status_code
+            self.extra = extra
+
+    def _stub_fetch_dms_deployment_info(deployment_id: str, *, usage: bool = False):
+        raise DeploymentInfoError(
+            error="deployment_info_unavailable",
+            message="stub: DMS deployment info not available in tests",
+            status_code=502,
+        )
+
+    def _stub_assemble_deployment_info_payload(
+        deployment_id: str,
+        data: dict,
+        mgr,
+        *,
+        usage: bool = False,
+        logs: bool = False,
+        allocations=None,
+    ):
+        manifest_obj = data.get("manifest") if isinstance(data, dict) else None
+        payload = {"manifest": manifest_obj}
+        if isinstance(manifest_obj, dict) and hasattr(mgr, "enrich_manifest_payload"):
+            try:
+                payload = mgr.enrich_manifest_payload(deployment_id, payload)
+            except Exception as exc:
+                payload.setdefault("meta", {})["proxy_enrichment_error"] = str(exc)
+        enriched = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
+        allocs = list((enriched.get("allocations") or {}).keys()) if isinstance(enriched, dict) else []
+        allocations_info: dict[str, Any] = {name: {} for name in allocs}
+        if logs:
+            for name in allocs:
+                alloc_dir = mod_path_constants.DMS_DEPLOYMENTS_DIR / deployment_id / name
+                stdout_path = alloc_dir / "stdout.log"
+                stderr_path = alloc_dir / "stderr.log"
+                dir_exists = alloc_dir.exists() and alloc_dir.is_dir()
+                allocations_info[name] = {
+                    "logs": {
+                        "stdout_path": str(stdout_path),
+                        "stderr_path": str(stderr_path),
+                        "logs_written_to": str(alloc_dir),
+                        "dir_exists": dir_exists,
+                        "stdout_exists": stdout_path.exists() if dir_exists else False,
+                        "stderr_exists": stderr_path.exists() if dir_exists else False,
+                    }
+                }
+        status_lower = str((data or {}).get("status") or "").strip().lower()
+        deployment_status = "running" if status_lower else "unknown"
+        return {
+            "id": str((data or {}).get("id") or deployment_id),
+            "error": (data or {}).get("error"),
+            "raw_status": (data or {}).get("status"),
+            "status": {
+                "status": "success",
+                "deployment_status": deployment_status,
+                "message": f"Deployment is currently {deployment_status}",
+            },
+            "manifest": payload,
+            "allocations": allocs,
+            "allocations_info": allocations_info,
+        }
+
+    def _stub_resolve_allocation_log_paths(deployment_id: str, allocation: str):
+        from pathlib import Path as _Path
+
+        requested = (allocation or "").strip()
+        if not requested:
+            raise DeploymentInfoError(
+                error="allocation_required",
+                message="Query parameter `allocation` is required",
+                status_code=400,
+            )
+        alloc_dir = (mod_path_constants.DMS_DEPLOYMENTS_DIR / deployment_id / requested).resolve()
+        base = (mod_path_constants.DMS_DEPLOYMENTS_DIR / deployment_id).resolve()
+        try:
+            alloc_dir.relative_to(base)
+        except ValueError as exc:
+            raise DeploymentInfoError(
+                error="invalid_allocation",
+                message=f"Allocation path must be under {base}",
+                status_code=400,
+            ) from exc
+        return requested, alloc_dir / "stdout.log", alloc_dir / "stderr.log"
+
+    mod_deployment_info.DeploymentInfoError = DeploymentInfoError
+    mod_deployment_info.fetch_dms_deployment_info = _stub_fetch_dms_deployment_info
+    mod_deployment_info.assemble_deployment_info_payload = _stub_assemble_deployment_info_payload
+    mod_deployment_info.resolve_allocation_log_paths = _stub_resolve_allocation_log_paths
+    mod_deployment_info.read_allocations_from_disk = lambda deployment_id: []
 
     mod_ensemble_mgr = add_submodule("ensemble_manager_v2")
 
@@ -510,7 +609,7 @@ def client(app):
             body = status.json()
             if not body.get("password_set"):
                 setup_token = security_module.ensure_setup_token()
-                assert setup_token, "ensure_setup_token should create a setup token for first boot"
+                assert setup_token, "security helper should create setup_token when no password is set"
                 setup_resp = test_client.post(
                     f"/auth/setup?setup_token={setup_token}",
                     json={"password": _TEST_CLIENT_PASSWORD},
@@ -548,6 +647,45 @@ def test_health_endpoint(raw_client):
     assert response.json() == {"ok": True}
 
 
+def test_ensemble_manager_status_uses_direct_status_without_list(monkeypatch, tmp_path):
+    from backend.modules import ensemble_manager_v2 as manager_module
+
+    monkeypatch.setattr(manager_module, "ENSEMBLES_DIR", tmp_path / "ensembles")
+    monkeypatch.setattr(manager_module, "DMS_DEPLOYMENTS_DIR", tmp_path / "dms-deployments")
+    monkeypatch.setattr(manager_module, "APPLIANCE_DEPLOYMENT_LOGS_DIR", tmp_path / "logs")
+
+    calls: list[list[str]] = []
+
+    def fake_run_dms(args, *, check=True):
+        args = list(args)
+        calls.append(args)
+        if args == ["/dms/node/deployment/list"]:
+            raise AssertionError("get_deployment_status must not call full deployment/list")
+        if args == ["/dms/node/deployment/status", "-i", "remote-abc"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout='{"deployment": {"Status": "Completed", "Allocations": {"alloc1": {}}}}',
+                stderr="",
+            )
+        raise AssertionError(f"unexpected DMS args: {args}")
+
+    monkeypatch.setattr(manager_module.EnsembleManagerV2, "_run_dms", staticmethod(fake_run_dms))
+
+    manager = manager_module.EnsembleManagerV2()
+
+    assert manager.get_deployment_status("remote-abc") == {
+        "status": "success",
+        "deployment_status": "completed",
+        "message": "Deployment completed successfully",
+    }
+    assert manager.get_deployment_allocations("remote-abc") == ["alloc1"]
+    assert calls == [
+        ["/dms/node/deployment/status", "-i", "remote-abc"],
+        ["/dms/node/deployment/status", "-i", "remote-abc"],
+    ]
+    assert ["/dms/node/deployment/list"] not in calls
+
+
 def test_auth_setup_and_token_flow(raw_client):
     try:
         status_response = raw_client.get("/auth/status")
@@ -555,7 +693,7 @@ def test_auth_setup_and_token_flow(raw_client):
         status_data = status_response.json()
         assert status_data["password_set"] is False
         setup_token = security_module.ensure_setup_token()
-        assert setup_token, "ensure_setup_token should create a setup token for first boot"
+        assert setup_token, "security helper should create setup_token when no password is set"
 
         expected_conflict = raw_client.post("/auth/token", json={"password": "wrong"})
         assert expected_conflict.status_code == 409
