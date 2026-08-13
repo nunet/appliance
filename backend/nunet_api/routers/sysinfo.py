@@ -45,6 +45,9 @@ _TELEMETRY_DEFAULTS = {
     "local_enabled": False,
     "dcgm_exporter_enabled": False,
     "grafana_enabled": False,
+    "dms_metrics_enabled": True,
+    "dms_metrics_listen": "127.0.0.1:9105",
+    "dms_metrics_scrape_interval": "60s",
     "gateway_url": "https://telemetry.orgs.nunet.network",
     "telemetry_token": "",
     "generated_config_path": "/home/ubuntu/nunet/appliance/alloy/config.generated.alloy",
@@ -114,6 +117,13 @@ def _telemetry_config_response(raw: Dict[str, Any]) -> TelemetryPluginConfig:
         local_enabled=bool(raw.get("local_enabled", False)),
         dcgm_exporter_enabled=bool(raw.get("dcgm_exporter_enabled", False)),
         grafana_enabled=bool(raw.get("grafana_enabled", False)),
+        dms_metrics_enabled=bool(raw.get("dms_metrics_enabled", True)),
+        dms_metrics_listen=(
+            raw.get("dms_metrics_listen") or _TELEMETRY_DEFAULTS["dms_metrics_listen"]
+        ).strip(),
+        dms_metrics_scrape_interval=(
+            raw.get("dms_metrics_scrape_interval") or _TELEMETRY_DEFAULTS["dms_metrics_scrape_interval"]
+        ).strip(),
         nvidia_gpu_available=bool((live or {}).get("nvidia_gpu_available", False)),
         gateway_url=(raw.get("gateway_url") or _TELEMETRY_DEFAULTS["gateway_url"]).strip(),
         token_set=bool(token),
@@ -121,6 +131,7 @@ def _telemetry_config_response(raw: Dict[str, Any]) -> TelemetryPluginConfig:
         generated_config_path=(raw.get("generated_config_path") or _TELEMETRY_DEFAULTS["generated_config_path"]).strip(),
         local_grafana_running=bool((live or {}).get("local_grafana_running", False)),
         cadvisor_running=bool((live or {}).get("cadvisor_running", False)),
+        dms_metrics_running=bool((live or {}).get("dms_metrics_running", False)),
         grafana_url=str((live or {}).get("grafana_url") or "/sys/plugins/telemetry-exporter/grafana/"),
     )
 
@@ -251,6 +262,17 @@ def update_telemetry_plugin_config(payload: TelemetryPluginConfigUpdate):
         raw["dcgm_exporter_enabled"] = payload.dcgm_exporter_enabled
     if payload.grafana_enabled is not None:
         raw["grafana_enabled"] = payload.grafana_enabled
+    if payload.dms_metrics_enabled is not None:
+        raw["dms_metrics_enabled"] = payload.dms_metrics_enabled
+    if payload.dms_metrics_listen is not None:
+        raw["dms_metrics_listen"] = (
+            payload.dms_metrics_listen.strip() or _TELEMETRY_DEFAULTS["dms_metrics_listen"]
+        )
+    if payload.dms_metrics_scrape_interval is not None:
+        raw["dms_metrics_scrape_interval"] = (
+            payload.dms_metrics_scrape_interval.strip()
+            or _TELEMETRY_DEFAULTS["dms_metrics_scrape_interval"]
+        )
     if payload.gateway_url is not None:
         raw["gateway_url"] = payload.gateway_url.strip() or _TELEMETRY_DEFAULTS["gateway_url"]
     if payload.generated_config_path is not None:
@@ -292,6 +314,13 @@ def get_telemetry_plugin_status():
         dcgm_exporter_running=(parsed_raw_status or {}).get("dcgm_exporter_running"),
         local_grafana_running=(parsed_raw_status or {}).get("local_grafana_running"),
         cadvisor_running=(parsed_raw_status or {}).get("cadvisor_running"),
+        dms_metrics_enabled=bool(config.get("dms_metrics_enabled", True)),
+        dms_metrics_running=(parsed_raw_status or {}).get("dms_metrics_running"),
+        dms_metrics_listen=str(
+            (parsed_raw_status or {}).get("dms_metrics_listen")
+            or config.get("dms_metrics_listen")
+            or _TELEMETRY_DEFAULTS["dms_metrics_listen"]
+        ),
         grafana_enabled=bool(config.get("grafana_enabled", False)),
         grafana_url=str((parsed_raw_status or {}).get("grafana_url") or "/sys/plugins/telemetry-exporter/grafana/"),
         nvidia_gpu_available=(parsed_raw_status or {}).get("nvidia_gpu_available"),

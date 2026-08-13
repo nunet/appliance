@@ -23,9 +23,26 @@ Supported keys:
 - `enabled` (bool): desired plugin state
 - `remote_enabled` (bool): desired remote push state
 - `local_enabled` (bool): desired local collection state
+- `dcgm_exporter_enabled` (bool): enable NVIDIA DCGM exporter scrape when a GPU is present
+- `grafana_enabled` (bool): enable local Grafana + cAdvisor
+- `dms_metrics_enabled` (bool, default true): run the independent DMS metrics exporter and scrape it
+- `dms_metrics_listen` (string, default `127.0.0.1:9105`): exporter bind address
+- `dms_metrics_scrape_interval` (string, default `60s`): Alloy scrape interval for DMS metrics
 - `gateway_url` (string): remote destination base URL
 - `telemetry_token` (string): token for `X-Telemetry-Token`; empty means not configured
 - `generated_config_path` (string): path to generated Alloy config
+
+## DMS metrics exporter
+
+`dms-metrics/server.py` is a stdlib-only always-on Prometheus exporter. It queries DMS actor
+endpoints (`resources/*`, onboarding, hardware, peers, deployments) and serves `/metrics` for
+Alloy to scrape into remote and/or local Mimir via the existing remote_write pipeline.
+
+Lifecycle:
+
+- `install.sh` installs `nunet-dms-metrics.service`
+- `apply.sh` starts/stops it based on `dms_metrics_enabled` and adds an Alloy scrape target
+- `remove.sh` stops and removes the unit
 
 ## Lifecycle Sequence
 
