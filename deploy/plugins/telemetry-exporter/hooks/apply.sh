@@ -10,6 +10,9 @@ set -euo pipefail
 #   local_enabled (bool)
 #   dcgm_exporter_enabled (bool)
 #   grafana_enabled (bool)
+#   dms_metrics_enabled (bool)
+#   dms_metrics_listen (string, host:port)
+#   dms_metrics_scrape_interval (string, e.g. 60s)
 #   generated_config_path (string)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -230,11 +233,47 @@ REMOTE_ENABLED="$(read_config remote_enabled)"
 LOCAL_ENABLED="$(read_config local_enabled)"
 DCGM_ENABLED="$(read_config dcgm_exporter_enabled)"
 GRAFANA_ENABLED="$(read_config grafana_enabled)"
+DMS_METRICS_ENABLED="$(read_config dms_metrics_enabled)"
+DMS_METRICS_LISTEN="$(read_config dms_metrics_listen)"
+DMS_METRICS_SCRAPE_INTERVAL="$(read_config dms_metrics_scrape_interval)"
 GENERATED_CONFIG_PATH="$(read_config generated_config_path)"
 GATEWAY_URL="$(read_config gateway_url)"
 TOKEN="$(read_config telemetry_token)"
 DID_LABEL="$(sanitize_label_value "${DID_RAW}")"
 PEER_ID_LABEL="$(sanitize_label_value "${PEER_ID_RAW}")"
+
+# Default: collect DMS metrics whenever telemetry is enabled.
+if [ -z "${DMS_METRICS_ENABLED}" ]; then
+  DMS_METRICS_ENABLED="true"
+fi
+if [ -z "${DMS_METRICS_LISTEN}" ]; then
+  DMS_METRICS_LISTEN="127.0.0.1:9105"
+fi
+if [ -z "${DMS_METRICS_SCRAPE_INTERVAL}" ]; then
+  DMS_METRICS_SCRAPE_INTERVAL="60s"
+fi
+
+manage_dms_metrics_exporter() {
+  local desired="$1"
+  local unit="nunet-dms-metrics.service"
+  if [ ! -f /etc/systemd/system/${unit} ] && [ ! -f /lib/systemd/system/${unit} ]; then
+    return 0
+  fi
+  if [ "${desired}" = "start" ]; then
+    # Keep listen address / TTL in sync with plugin config.
+    mkdir -p /etc/systemd/system/${unit}.d
+    cat > /etc/systemd/system/${unit}.d/listen.conf <<EOF
+[Service]
+Environment=NUNET_DMS_METRICS_LISTEN=${DMS_METRICS_LISTEN}
+EOF
+    systemctl daemon-reload
+    systemctl enable "${unit}" >/dev/null 2>&1 || true
+    systemctl restart "${unit}" || systemctl start "${unit}" || true
+  else
+    systemctl stop "${unit}" >/dev/null 2>&1 || true
+    systemctl disable "${unit}" >/dev/null 2>&1 || true
+  fi
+}
 
 if [ "${GRAFANA_ENABLED}" = "true" ]; then
   # Pro monitoring relies on local Mimir as Grafana datasource.
@@ -250,6 +289,7 @@ fi
 
 if [ "${ENABLED}" != "true" ]; then
   echo "Plugin disabled in config; stopping Alloy."
+  manage_dms_metrics_exporter stop
   if [ -f "${COMPOSE_FILE}" ]; then
     docker compose -f "${COMPOSE_FILE}" -p "${COMPOSE_PROJECT}" stop mimir dcgm-exporter cadvisor grafana >> "${LOG_DIR}/apply.log" 2>&1 || true
   else
@@ -263,6 +303,7 @@ fi
 
 if [ "${REMOTE_ENABLED}" != "true" ] && [ "${LOCAL_ENABLED}" != "true" ]; then
   echo "Both remote_enabled and local_enabled are false; stopping Alloy."
+  manage_dms_metrics_exporter stop
   systemctl stop alloy >> "${LOG_DIR}/apply.log" 2>&1 || true
   if [ -f "${COMPOSE_FILE}" ]; then
     docker compose -f "${COMPOSE_FILE}" -p "${COMPOSE_PROJECT}" stop mimir dcgm-exporter cadvisor grafana >> "${LOG_DIR}/apply.log" 2>&1 || true
@@ -330,6 +371,21 @@ prometheus.scrape "cadvisor" {
 '
 fi
 
+DMS_METRICS_SCRAPE_BLOCK=""
+if [ "${DMS_METRICS_ENABLED}" = "true" ]; then
+  manage_dms_metrics_exporter start
+  DMS_METRICS_SCRAPE_BLOCK="
+prometheus.scrape \"dms_metrics\" {
+  targets    = [{ __address__ = \"${DMS_METRICS_LISTEN}\" }]
+  scrape_interval = \"${DMS_METRICS_SCRAPE_INTERVAL}\"
+  metrics_path = \"/metrics\"
+  forward_to = [prometheus.relabel.telemetry.receiver]
+}
+"
+else
+  manage_dms_metrics_exporter stop
+fi
+
 LOKI_FORWARD_TO=""
 if [ "${REMOTE_ENABLED}" = "true" ]; then
   LOKI_FORWARD_TO="loki.write.loki.receiver"
@@ -351,6 +407,7 @@ prometheus.scrape "node" {
 }
 ${NVIDIA_SCRAPE_BLOCK}
 ${CADVISOR_SCRAPE_BLOCK}
+${DMS_METRICS_SCRAPE_BLOCK}
 prometheus.relabel "telemetry" {
   forward_to = [${NODE_FORWARD_TO}]${RELABEL_RULES}
 }

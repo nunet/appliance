@@ -32,11 +32,19 @@ REMOTE_ENABLED="$(json_get remote_enabled)"
 LOCAL_ENABLED="$(json_get local_enabled)"
 DCGM_ENABLED="$(json_get dcgm_exporter_enabled)"
 GRAFANA_ENABLED="$(json_get grafana_enabled)"
+DMS_METRICS_ENABLED="$(json_get dms_metrics_enabled)"
+DMS_METRICS_LISTEN="$(json_get dms_metrics_listen)"
 GATEWAY_URL="$(json_get gateway_url)"
 TOKEN="$(json_get telemetry_token)"
 TOKEN_SET="false"
 if [ -n "${TOKEN}" ]; then
   TOKEN_SET="true"
+fi
+if [ -z "${DMS_METRICS_ENABLED}" ]; then
+  DMS_METRICS_ENABLED="true"
+fi
+if [ -z "${DMS_METRICS_LISTEN}" ]; then
+  DMS_METRICS_LISTEN="127.0.0.1:9105"
 fi
 
 ALLOY_INSTALLED="false"
@@ -47,6 +55,11 @@ fi
 ALLOY_RUNNING="false"
 if systemctl is-active --quiet alloy; then
   ALLOY_RUNNING="true"
+fi
+
+DMS_METRICS_RUNNING="false"
+if systemctl is-active --quiet nunet-dms-metrics; then
+  DMS_METRICS_RUNNING="true"
 fi
 
 LOCAL_MIMIR_RUNNING="false"
@@ -125,6 +138,9 @@ cat <<EOF
   "local_enabled": ${LOCAL_ENABLED:-false},
   "dcgm_exporter_enabled": ${DCGM_ENABLED:-false},
   "grafana_enabled": ${GRAFANA_ENABLED:-false},
+  "dms_metrics_enabled": ${DMS_METRICS_ENABLED:-true},
+  "dms_metrics_listen": "${DMS_METRICS_LISTEN}",
+  "dms_metrics_running": ${DMS_METRICS_RUNNING},
   "nvidia_gpu_available": ${NVIDIA_GPU_AVAILABLE},
   "gateway_url": "${GATEWAY_URL:-https://telemetry.orgs.nunet.network}",
   "token_set": ${TOKEN_SET},
