@@ -15,7 +15,7 @@ import DeploymentStepThree from "../components/deployments/DeploymentStep3";
 import DeploymentStepFour from "../components/deployments/DeploymentStep4";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { deployFromTemplate, autoStartDeploymentLogsAfterDeploy, getTemplateNodesCount } from "../api/deployments";
+import { deployFromTemplate, getTemplateNodesCount } from "../api/deployments";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react"; // ⬅️ loader icon
 
@@ -187,10 +187,6 @@ export default function NewDeployment() {
       }
 
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-
-      if (res.deployment_id) {
-        void autoStartDeploymentLogsAfterDeploy(res.deployment_id);
-      }
 
       navigate("/deploy");
       toast.success("Deployment started successfully!");

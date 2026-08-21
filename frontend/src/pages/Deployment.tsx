@@ -7,9 +7,7 @@ import {
   type DeploymentInfoResponse,
   getDeploymentLogs,
   type DeploymentLogsResponse,
-  getDeploymentLogsAsyncStatus,
-  startDeploymentLogsAsync,
-  stopDeploymentLogsAsync,
+  requestDeploymentLogs,
   shutdownDeployment,
   getDeploymentFile,
 } from "@/api/deployments";
@@ -22,8 +20,6 @@ import {
   Loader2,
   Maximize2,
   FileText,
-  Play,
-  Square,
 } from "lucide-react";
 import {
   Card,
@@ -810,7 +806,7 @@ function DeploymentLogsCard({
     ? `${logQuery.allocation}|${logQuery.allocationsCsv}|${logQuery.stdoutPath}|${logQuery.stderrPath}`
     : "__pending__";
 
-  const [isAsyncActionPending, setIsAsyncActionPending] = useState(false);
+  const [isRequesting, setIsRequesting] = useState(false);
   const dmsLevels = [
     {
       value: "all",
@@ -890,27 +886,6 @@ function DeploymentLogsCard({
   const isDmsTailActive = isDmsTailEnabled;
 
   const {
-    data: asyncLogsStatus,
-    refetch: refetchAsyncLogsStatus,
-    isFetching: isFetchingAsyncStatus,
-  } = useQuery({
-    queryKey: ["deployment-logs-async-status", deploymentId, logQueryKey],
-    queryFn: () =>
-      getDeploymentLogsAsyncStatus(deploymentId, {
-        allocation: logQuery!.allocation,
-        allocations: logQuery!.allocationsCsv,
-      }),
-    enabled: Boolean(logQuery),
-    refetchOnMount: "always",
-    refetchOnWindowFocus: false,
-    staleTime: Infinity,
-    gcTime: Infinity,
-  });
-
-  const isAsyncRunning =
-    (asyncLogsStatus?.fetch_status ?? "").trim().toLowerCase() === "running";
-
-  const {
     data: baseLogsData,
     refetch: refetchBaseLogs,
     isFetching: isFetchingBaseLogs,
@@ -928,12 +903,11 @@ function DeploymentLogsCard({
         includeAlloc: true,
       }),
     enabled: Boolean(logQuery),
-    refetchOnMount: "always",
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchInterval: isAsyncRunning ? 30000 : false,
-    refetchIntervalInBackground: true,
     staleTime: Infinity,
     gcTime: Infinity,
+    placeholderData: keepPreviousData,
   });
 
   const {
@@ -961,55 +935,32 @@ function DeploymentLogsCard({
     placeholderData: keepPreviousData,
   });
 
-  // Re-read file logs immediately when the selected allocation changes (do not wait for 30s poll).
-  useEffect(() => {
-    if (!logQuery) return;
-    void refetchAsyncLogsStatus();
-    void refetchBaseLogs();
-  }, [logQueryKey, logQuery, refetchAsyncLogsStatus, refetchBaseLogs]);
-
   useEffect(() => {
     if (isDmsTailActive) {
       void refetchDmsLogs();
     }
   }, [isDmsTailActive, dmsLevel, dmsLinesValue, refetchDmsLogs]);
 
-  const handleStartAsyncLogs = async () => {
-    if (!logQuery || isAsyncRunning || isAsyncActionPending) return;
-    setIsAsyncActionPending(true);
+  const handleRefresh = async () => {
+    setIsRequesting(true);
     try {
-      await startDeploymentLogsAsync(deploymentId, {
-        allocation: logQuery.allocation,
-        allocations: logQuery.allocationsCsv,
-      });
-      await Promise.all([
-        refetchAsyncLogsStatus({ throwOnError: true }),
-        refetchBaseLogs({ throwOnError: true }),
-      ]);
-    } catch (error: any) {
-      toast.error("Failed to start log streaming", {
-        description: error?.response?.data?.detail?.message || error?.message || "Unexpected error",
-      });
+      if (logQuery) {
+        await requestDeploymentLogs(deploymentId, {
+          allocation: logQuery.allocation,
+          allocations: logQuery.allocationsCsv,
+          wait: true,
+        });
+        await Promise.all([
+          refetchBaseLogs({ throwOnError: true }),
+          refetchDmsLogs({ throwOnError: true }),
+        ]);
+      } else {
+        await refetchDmsLogs({ throwOnError: true });
+      }
+    } catch (error) {
+      throw error;
     } finally {
-      setIsAsyncActionPending(false);
-    }
-  };
-
-  const handleStopAsyncLogs = async () => {
-    if (!logQuery || !isAsyncRunning || isAsyncActionPending) return;
-    setIsAsyncActionPending(true);
-    try {
-      await stopDeploymentLogsAsync(deploymentId, {
-        allocation: logQuery.allocation,
-        allocations: logQuery.allocationsCsv,
-      });
-      await refetchAsyncLogsStatus({ throwOnError: true });
-    } catch (error: any) {
-      toast.error("Failed to stop log streaming", {
-        description: error?.response?.data?.detail?.message || error?.message || "Unexpected error",
-      });
-    } finally {
-      setIsAsyncActionPending(false);
+      setIsRequesting(false);
     }
   };
 
@@ -1122,11 +1073,7 @@ function DeploymentLogsCard({
     ? "Loading DMS logs..."
     : hasFilteredDms
       ? "No DMS logs available yet."
-      : "Filtered DMS logs unavailable.";
-
-  const isAsyncControlsBusy = isAsyncActionPending || isFetchingAsyncStatus;
-  const canStartAsyncLogs = Boolean(logQuery) && !isAsyncRunning && !isAsyncControlsBusy;
-  const canStopAsyncLogs = Boolean(logQuery) && isAsyncRunning && !isAsyncControlsBusy;
+      : "Filtered DMS logs unavailable. Refresh to retry.";
 
   const renderDmsControls = () => (
     <div className="rounded-xl border border-border/50 bg-gradient-to-br from-muted/60 via-muted/30 to-background/80 px-4 py-3 shadow-sm backdrop-blur-sm">
@@ -1246,36 +1193,11 @@ function DeploymentLogsCard({
               Deployment Logs ({logQuery?.allocation ?? alloc ?? "auto"})
             </CardDescription>
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleStartAsyncLogs}
-                disabled={!canStartAsyncLogs}
-                className="flex items-center gap-1"
-                data-testid="deployment-logs-start"
-              >
-                {isAsyncActionPending && !isAsyncRunning ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                Start
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleStopAsyncLogs}
-                disabled={!canStopAsyncLogs}
-                className="flex items-center gap-1"
-                data-testid="deployment-logs-stop"
-              >
-                {isAsyncActionPending && isAsyncRunning ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Square className="h-4 w-4" />
-                )}
-                Stop
-              </Button>
+              <RefreshButton
+                onClick={handleRefresh}
+                isLoading={isFetchingBaseLogs || isFetchingDmsLogs || isRequesting}
+                tooltip="Refresh Logs"
+              />
               <Button
                 variant="outline"
                 size="sm"

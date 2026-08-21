@@ -31,7 +31,6 @@ __all__ = [
     "CopyResponse",
     "DownloadExamplesRequest",
     "SimpleStatusResponse",
-    "AsyncDeploymentLogsResponse",
     "FilesystemEntry",
     "FilesystemListResponse",
     "FilesystemUploadItem",
@@ -721,17 +720,6 @@ class DownloadExamplesRequest(BaseModel):
 class SimpleStatusResponse(BaseModel):
     status: str
     message: str
-
-
-class AsyncDeploymentLogsResponse(BaseModel):
-    status: str
-    message: str
-    logs_written_to: Optional[str] = None
-    fetch_status: Optional[str] = None
-    bytes_written: Optional[int] = None
-    follow: Optional[bool] = None
-    follow_interval: Optional[str] = None
-    error: Optional[str] = None
 
 
 class FilesystemEntry(BaseModel):
