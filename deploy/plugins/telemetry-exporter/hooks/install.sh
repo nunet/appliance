@@ -71,6 +71,19 @@ Environment=CONFIG_FILE=/var/lib/nunet-appliance/alloy/config.alloy
 ExecStart=
 ExecStart=/usr/bin/alloy run $CUSTOM_ARGS --storage.path=/var/lib/alloy/data /var/lib/nunet-appliance/alloy/config.alloy
 DROPIN
+
+  # Independent DMS metrics exporter (stdlib Python HTTP /metrics).
+  UNIT_SRC="${PLUGIN_DIR}/dms-metrics/nunet-dms-metrics.service"
+  if [ -f "${UNIT_SRC}" ]; then
+    install -m 0644 "${UNIT_SRC}" /etc/systemd/system/nunet-dms-metrics.service
+    # Prefer packaged plugin path; fall back to repo checkout path for dev installs.
+    if [ ! -f /usr/lib/nunet-appliance-web/plugins/telemetry-exporter/dms-metrics/server.py ]; then
+      sed -i "s|/usr/lib/nunet-appliance-web/plugins/telemetry-exporter|${PLUGIN_DIR}|g" \
+        /etc/systemd/system/nunet-dms-metrics.service
+    fi
+    chmod 0755 "${PLUGIN_DIR}/dms-metrics/server.py" 2>/dev/null || true
+  fi
+
   systemctl daemon-reload
   systemctl enable alloy.service 2>/dev/null || true
   usermod -aG systemd-journal,adm alloy 2>/dev/null || true

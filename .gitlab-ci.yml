@@ -23,7 +23,7 @@ default:
     - docker
 
 variables:
-  PNPM_VERSION: "10.34.4"
+  PNPM_VERSION: "10.34.5"
   STRICT_PNPM_AUDIT: "0"
   GIT_DEPTH: "0"
 

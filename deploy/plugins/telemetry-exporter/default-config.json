@@ -4,6 +4,9 @@
   "local_enabled": false,
   "dcgm_exporter_enabled": false,
   "grafana_enabled": false,
+  "dms_metrics_enabled": true,
+  "dms_metrics_listen": "127.0.0.1:9105",
+  "dms_metrics_scrape_interval": "60s",
   "gateway_url": "https://telemetry.orgs.nunet.network",
   "telemetry_token": "",
   "generated_config_path": "/home/ubuntu/nunet/appliance/alloy/config.generated.alloy"

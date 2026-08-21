@@ -108,6 +108,9 @@ export interface TelemetryPluginConfig {
   local_enabled: boolean;
   dcgm_exporter_enabled: boolean;
   grafana_enabled: boolean;
+  dms_metrics_enabled?: boolean;
+  dms_metrics_listen?: string;
+  dms_metrics_scrape_interval?: string;
   nvidia_gpu_available: boolean;
   gateway_url: string;
   token_set: boolean;
@@ -115,6 +118,7 @@ export interface TelemetryPluginConfig {
   generated_config_path: string;
   local_grafana_running: boolean;
   cadvisor_running: boolean;
+  dms_metrics_running?: boolean;
   grafana_url: string;
 }
 
@@ -124,6 +128,9 @@ export interface TelemetryPluginConfigUpdate {
   local_enabled?: boolean;
   dcgm_exporter_enabled?: boolean;
   grafana_enabled?: boolean;
+  dms_metrics_enabled?: boolean;
+  dms_metrics_listen?: string;
+  dms_metrics_scrape_interval?: string;
   gateway_url?: string;
   telemetry_token?: string;
   generated_config_path?: string;
@@ -139,6 +146,9 @@ export interface TelemetryPluginStatus {
   dcgm_exporter_running?: boolean | null;
   local_grafana_running?: boolean | null;
   cadvisor_running?: boolean | null;
+  dms_metrics_enabled?: boolean | null;
+  dms_metrics_running?: boolean | null;
+  dms_metrics_listen?: string | null;
   grafana_enabled?: boolean | null;
   grafana_url?: string | null;
   nvidia_gpu_available?: boolean | null;

@@ -1,0 +1,30 @@
+[Unit]
+Description=NuNet DMS Prometheus metrics exporter
+Documentation=file:///usr/lib/nunet-appliance-web/plugins/telemetry-exporter/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+KeyringMode=shared
+WorkingDirectory=/usr/lib/nunet-appliance-web/plugins/telemetry-exporter/dms-metrics
+Environment=NUNET_DMS_METRICS_LISTEN=127.0.0.1:9105
+Environment=NUNET_DMS_METRICS_TTL=50
+Environment=NUNET_DMS_CONTEXT=dms
+Environment=HOME=/home/ubuntu
+ExecStart=/usr/bin/python3 /usr/lib/nunet-appliance-web/plugins/telemetry-exporter/dms-metrics/server.py
+Restart=on-failure
+RestartSec=3
+
+# Keep this exporter independent of the web UI/API process.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/.cache
+ReadOnlyPaths=/home/ubuntu/.secrets /home/ubuntu/.nunet /home/nunet/.nunet /home/nunet/config
+
+[Install]
+WantedBy=multi-user.target
