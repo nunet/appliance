@@ -94,6 +94,17 @@ export async function getDeploymentFile(id) {
   return res.data;
 }
 
+export interface AsyncDeploymentLogsResponse {
+  status: string;
+  message: string;
+  logs_written_to?: string | null;
+  fetch_status?: string | null;
+  bytes_written?: number | null;
+  follow?: boolean | null;
+  follow_interval?: string | null;
+  error?: string | null;
+}
+
 export interface GetDeploymentLogsOptions {
   allocation?: string | null;
   dmsQuery?: string | null;
@@ -158,6 +169,88 @@ export async function requestDeploymentLogs(
     params,
   });
   return res.data;
+}
+
+export interface AsyncDeploymentLogsRequestOptions {
+  allocation?: string | null;
+  /** Comma-separated names from GET /ensemble/deployments/{id}/info?logs=true */
+  allocations: string;
+}
+
+function buildAsyncLogsParams(options: AsyncDeploymentLogsRequestOptions): Record<string, string> {
+  const { allocation = null, allocations } = options;
+  const params: Record<string, string> = { allocations };
+  if (allocation) params.allocation = allocation;
+  return params;
+}
+
+export async function startDeploymentLogsAsync(
+  id: string,
+  options: AsyncDeploymentLogsRequestOptions
+): Promise<AsyncDeploymentLogsResponse> {
+  const res = await api.post(
+    `/ensemble/deployments/${id}/logs/async/start`,
+    null,
+    { params: buildAsyncLogsParams(options) }
+  );
+  return res.data;
+}
+
+export async function getDeploymentLogsAsyncStatus(
+  id: string,
+  options: AsyncDeploymentLogsRequestOptions
+): Promise<AsyncDeploymentLogsResponse> {
+  const res = await api.get(`/ensemble/deployments/${id}/logs/async/status`, {
+    params: buildAsyncLogsParams(options),
+  });
+  return res.data;
+}
+
+export async function stopDeploymentLogsAsync(
+  id: string,
+  options: AsyncDeploymentLogsRequestOptions
+): Promise<AsyncDeploymentLogsResponse> {
+  const res = await api.post(
+    `/ensemble/deployments/${id}/logs/async/stop`,
+    null,
+    { params: buildAsyncLogsParams(options) }
+  );
+  return res.data;
+}
+
+export async function autoStartDeploymentLogsAfterDeploy(deploymentId: string): Promise<void> {
+  try {
+    const info = await getDeploymentInfo(deploymentId, { logs: true });
+    const allocations = (info.allocations ?? [])
+      .map((name) => String(name ?? "").trim())
+      .filter((name) => name.length > 0);
+    if (allocations.length === 0) {
+      console.warn(`Auto-start deployment logs skipped: no allocations for ${deploymentId}`);
+      return;
+    }
+
+    const csv = allocations.join(",");
+    const allHaveLogPaths = allocations.every((alloc) => {
+      const logs = (info.allocations_info as Record<string, any>)?.[alloc]?.logs;
+      const stdoutPath = typeof logs?.stdout_path === "string" ? logs.stdout_path.trim() : "";
+      const stderrPath = typeof logs?.stderr_path === "string" ? logs.stderr_path.trim() : "";
+      return stdoutPath.length > 0 && stderrPath.length > 0;
+    });
+    if (!allHaveLogPaths) {
+      console.warn(`Auto-start deployment logs skipped: log paths not ready for ${deploymentId}`);
+      return;
+    }
+
+    for (const allocation of allocations) {
+      try {
+        await startDeploymentLogsAsync(deploymentId, { allocation, allocations: csv });
+      } catch (err) {
+        console.warn(`Failed to start async logs for allocation ${allocation}:`, err);
+      }
+    }
+  } catch (err) {
+    console.warn(`Auto-start deployment logs failed for ${deploymentId}:`, err);
+  }
 }
 
 export async function getDeploymentInfo(

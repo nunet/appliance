@@ -1,7 +1,7 @@
 {
   "id": "telemetry-exporter",
   "name": "Telemetry Exporter",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "plugin_api_version": "v1",
   "description": "Installs and manages Grafana Alloy telemetry export for appliance metrics/logs.",
   "owner": "nunet-appliance",
@@ -23,6 +23,7 @@
     "apt",
     "systemd",
     "filesystem:/etc/systemd/system/alloy.service.d",
+    "filesystem:/etc/systemd/system/nunet-dms-metrics.service",
     "filesystem:/var/lib/nunet-appliance/alloy"
   ],
   "artifacts": {

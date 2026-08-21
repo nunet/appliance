@@ -129,6 +129,7 @@ if [ -d "$ROOT/deploy/plugins" ]; then
     find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type d -exec chmod 0755 {} \;
     find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -exec chmod 0644 {} \;
     find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -name "*.sh" -exec chmod 0755 {} \;
+    find "$PKGDIR/usr/lib/nunet-appliance-web/plugins" -type f -name "*.py" -exec chmod 0755 {} \;
   fi
 fi
 # Include default ensembles (if present in repo)

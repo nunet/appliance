@@ -31,6 +31,7 @@ __all__ = [
     "CopyResponse",
     "DownloadExamplesRequest",
     "SimpleStatusResponse",
+    "AsyncDeploymentLogsResponse",
     "FilesystemEntry",
     "FilesystemListResponse",
     "FilesystemUploadItem",
@@ -499,6 +500,9 @@ class TelemetryPluginConfig(BaseModel):
     local_enabled: bool = False
     dcgm_exporter_enabled: bool = False
     grafana_enabled: bool = False
+    dms_metrics_enabled: bool = True
+    dms_metrics_listen: str = "127.0.0.1:9105"
+    dms_metrics_scrape_interval: str = "60s"
     nvidia_gpu_available: bool = False
     gateway_url: str = "https://telemetry.orgs.nunet.network"
     token_set: bool = False
@@ -506,6 +510,7 @@ class TelemetryPluginConfig(BaseModel):
     generated_config_path: str = "/home/ubuntu/nunet/appliance/alloy/config.generated.alloy"
     local_grafana_running: bool = False
     cadvisor_running: bool = False
+    dms_metrics_running: bool = False
     grafana_url: str = "/sys/plugins/telemetry-exporter/grafana/"
 
 
@@ -515,6 +520,9 @@ class TelemetryPluginConfigUpdate(BaseModel):
     local_enabled: Optional[bool] = None
     dcgm_exporter_enabled: Optional[bool] = None
     grafana_enabled: Optional[bool] = None
+    dms_metrics_enabled: Optional[bool] = None
+    dms_metrics_listen: Optional[str] = None
+    dms_metrics_scrape_interval: Optional[str] = None
     gateway_url: Optional[str] = None
     telemetry_token: Optional[str] = None  # Empty string clears token
     generated_config_path: Optional[str] = None
@@ -530,6 +538,9 @@ class TelemetryPluginStatus(BaseModel):
     dcgm_exporter_running: Optional[bool] = None
     local_grafana_running: Optional[bool] = None
     cadvisor_running: Optional[bool] = None
+    dms_metrics_enabled: Optional[bool] = None
+    dms_metrics_running: Optional[bool] = None
+    dms_metrics_listen: Optional[str] = None
     grafana_enabled: Optional[bool] = None
     grafana_url: Optional[str] = None
     nvidia_gpu_available: Optional[bool] = None
@@ -710,6 +721,17 @@ class DownloadExamplesRequest(BaseModel):
 class SimpleStatusResponse(BaseModel):
     status: str
     message: str
+
+
+class AsyncDeploymentLogsResponse(BaseModel):
+    status: str
+    message: str
+    logs_written_to: Optional[str] = None
+    fetch_status: Optional[str] = None
+    bytes_written: Optional[int] = None
+    follow: Optional[bool] = None
+    follow_interval: Optional[str] = None
+    error: Optional[str] = None
 
 
 class FilesystemEntry(BaseModel):

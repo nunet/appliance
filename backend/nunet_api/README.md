@@ -184,6 +184,8 @@ When deploying to a new environment, verify sudo rules listed in the comments of
 ### Deployments / Ensembles
 * `GET /ensemble/deployments`, `/deployments/running`, `/deployments/{id}/status`
 * `GET /ensemble/deployments/{id}/manifest/raw`, `/file`, `/logs`, `/allocations`
+* `POST /ensemble/deployments/{id}/logs/request`, `/logs/async/start`, `/logs/async/stop`
+* `GET /ensemble/deployments/{id}/logs/async/status`
 * `POST /ensemble/deployments` (submit), `/deployments/{id}/shutdown`
 * Template management: `GET /ensemble/templates`, `POST /ensemble/templates/copy`, `/upload`, `/forms`, `/schema`
 * `POST /ensemble/deploy/from-template`

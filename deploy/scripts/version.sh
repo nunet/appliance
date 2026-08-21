@@ -16,20 +16,28 @@ if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(release)$ ) && $CI_PIPELIN
     git config --global user.email "ci@nunet.io"
     git config --global user.name "NuNet GitLab CI"
     git tag -a "r$LAST_VERSION" -m "r$LAST_VERSION"
-    git push https://oauth2:"$CI_TAG_PUSH_TOKEN@gitlab.com/$CI_PROJECT_PATH".git --tags
+    git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/${CI_PROJECT_PATH}.git" --tags
 
     echo "Applied r$LAST_VERSION to release branch"
     exit 0
 fi
 
-
 # Parse commits since last tag for version bump
-MAJOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^BREAKING CHANGE\|MAJOR VERSION" || true)
-MINOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(feat:\|feature:\)" || true)
-PATCH=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(fix:\|patch:\)" || true)
+MAJOR=0; MINOR=0; PATCH=0
+if [ $LAST_TAG != "v0.0.0" ]; then
+    MAJOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^BREAKING CHANGE\|MAJOR VERSION" || true)
+    MINOR=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(feat:\|feature:\)" || true)
+    PATCH=$(git log --oneline $LAST_TAG..HEAD --format=%s | grep -i -c "^\(fix:\|patch:\)" || true)
+    echo "Commits since last tag: $(git log --oneline $LAST_TAG..HEAD | wc -l)"
+else
+    # new tag: search all commits
+    MAJOR=$(git log HEAD --format=%s | grep -i -c "^BREAKING CHANGE\|MAJOR VERSION" || true)
+    MINOR=$(git log HEAD --format=%s | grep -i -c "^\(feat:\|feature:\)" || true)
+    PATCH=$(git log HEAD --format=%s | grep -i -c "^\(fix:\|patch:\)" || true)
+    echo "Commits since last tag: $(git log --oneline HEAD | wc -l)"
+fi
 
 echo "Last version: $LAST_VERSION"
-echo "Commits since last tag: $(git log --oneline $LAST_TAG..HEAD | wc -l)"
 echo "Detected bumps - Major: $MAJOR, Minor: $MINOR, Patch: $PATCH"
 
 # Determine bump type (major > minor > patch)
@@ -51,8 +59,7 @@ if [[ -n ${GITLAB_CI+x} && ( $CI_COMMIT_REF_NAME =~ ^(main|master)$ ) ]]; then
     git config --global user.email "ci@nunet.io"
     git config --global user.name "NuNet GitLab CI"
     git tag -a "v$APPLIANCE_NEW_VERSION" -m "v$APPLIANCE_NEW_VERSION"
-    git push https://oauth2:"$CI_TAG_PUSH_TOKEN@gitlab.com/$CI_PROJECT_PATH".git --tags
-
+    git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/${CI_PROJECT_PATH}.git" --tags
     echo "Bumped to $APPLIANCE_NEW_VERSION"
 else
     echo "New version would be: $APPLIANCE_NEW_VERSION"

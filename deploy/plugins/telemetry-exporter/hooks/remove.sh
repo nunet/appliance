@@ -22,6 +22,11 @@ docker compose -f "${COMPOSE_FILE}" -p "${COMPOSE_PROJECT}" down -v 2>/dev/null 
 systemctl stop alloy 2>/dev/null || true
 systemctl disable alloy 2>/dev/null || true
 
+systemctl stop nunet-dms-metrics 2>/dev/null || true
+systemctl disable nunet-dms-metrics 2>/dev/null || true
+rm -f /etc/systemd/system/nunet-dms-metrics.service 2>/dev/null || true
+rm -rf /etc/systemd/system/nunet-dms-metrics.service.d 2>/dev/null || true
+
 rm -f /etc/systemd/system/alloy.service.d/nunet-appliance.conf 2>/dev/null || true
 systemctl daemon-reload || true
 

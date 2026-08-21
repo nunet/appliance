@@ -30,6 +30,37 @@ test.describe.skip("Deployments wizard + details", () => {
     logStep("Deployment wizard loaded with templates");
   });
 
+  test("configure step resolves schema for Load More ensemble", async ({ page }) => {
+    test.skip(skipDeployments, "DEPLOYMENTS_SKIP is set");
+    test.setTimeout(180_000);
+    await page.goto("/#/deploy/new", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("deployment-template-card").first()).toBeVisible({
+      timeout: 60_000,
+    });
+
+    const loadMore = page.getByTestId("deployment-template-load-more");
+    test.skip(!(await loadMore.isVisible()), "Fewer than one page of templates");
+
+    const firstPageCount = await page.getByTestId("deployment-template-card").count();
+    await loadMore.click();
+    await expect
+      .poll(async () => page.getByTestId("deployment-template-card").count(), {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(firstPageCount);
+
+    const cards = page.getByTestId("deployment-template-card");
+    await cards.nth(firstPageCount).click();
+    await page.getByTestId("deployment-next-button").click();
+    await expect(page.getByTestId("deployment-step2")).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId("deployment-target-non-targeted").click();
+    await page.getByTestId("deployment-next-button").click();
+
+    await expect(page.getByTestId("deployment-step3")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(/No template found for path:/i)).toHaveCount(0);
+    logStep("Configure step loaded schema for Load More ensemble");
+  });
+
   test("filters deployments list when deployments exist", async ({ page }) => {
     test.skip(skipDeployments, "DEPLOYMENTS_SKIP is set");
     await openDeploymentsList(page);

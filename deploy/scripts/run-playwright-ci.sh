@@ -15,7 +15,7 @@ USER="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FRONTEND_DIR="$USER/frontend"
 
 PLAYWRIGHT_IMAGE="${PLAYWRIGHT_IMAGE:-mcr.microsoft.com/playwright:v1.60.0-jammy}"
-PNPM_VERSION="${PNPM_VERSION:-10.34.4}"
+PNPM_VERSION="${PNPM_VERSION:-10.34.5}"
 DEFAULT_BASE_URL="https://localhost:8443"
 
 if [[ -f "$USER/.env.test" ]]; then
